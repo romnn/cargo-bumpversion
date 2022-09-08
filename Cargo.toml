@@ -1,0 +1,53 @@
+[package]
+name = "bumpversion"
+version = "0.1.0"
+edition = "2021"
+authors = ["romnn <contact@romnn.com>"]
+description = "bump semver git version"
+license-file = "LICENSE"
+readme = "README.md"
+homepage = "https://github.com/romnn/bumpversion"
+repository = "https://github.com/romnn/bumpversion"
+categories = [
+  "multimedia::images",
+  "command-line-utilities",
+  "wasm",
+  "web-programming"
+]
+keywords = [
+  "image",
+  "35mm",
+  "film",
+  "photography",
+  "borders"
+]
+exclude = []
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "bumpversion"
+path = "src/cli.rs"
+
+[profile.release]
+lto = true
+
+[features]
+default = ["native"]
+native = []
+git2 = ["dep:git2"]
+git-repository = ["dep:git-repository"]
+
+[dependencies]
+git-repository = { version = "0.23", optional = true }
+git2 = { version = "0.15", optional = true }
+clap = { version = "3.2", features = ["derive"] }
+tempdir = "0.3"
+thiserror = "1"
+regex = "1"
+
+[dev-dependencies]
+anyhow = "1"
+rand = "0.8"
+pretty_assertions = "1.3"
