@@ -16,6 +16,11 @@ jobs:
         with:
           toolchain: stable
           override: true
+      - name: Configure git author
+        run: |
+          git config --global user.email "test@example.com"
+          git config --global user.name "test"
+
       - name: Test
         run: >-
           cargo test
