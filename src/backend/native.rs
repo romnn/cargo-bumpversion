@@ -28,15 +28,15 @@ impl GitRepository for NativeGitRepository {
         let mut tmp_file = fs::File::create(&tmp_file_path)?;
         tmp_file.write_all(message.as_bytes())?;
 
-        let output = self.run_command(
+        let commit_output = self.run_command(
             Command::new("git")
                 .arg("commit")
                 .arg("-F")
                 .arg(tmp_file_path.to_string_lossy().to_string())
-                // .args(files)
+                // need extra args?
                 .env("HGENCODING", "utf-8"),
         )?;
-        println!("{:?}", output);
+        dbg!(&commit_output);
         Ok(())
     }
 
@@ -47,13 +47,19 @@ impl GitRepository for NativeGitRepository {
         let files = files
             .iter()
             .map(|f| f.as_ref().to_string_lossy().to_string());
-        let _ = self.run_command(Command::new("git").arg("add").arg("--update").args(files))?;
+        let mut cmd = Command::new("git");
+        cmd.arg("add").arg("--update").args(files);
+        let add_output = self.run_command(&mut cmd)?;
+        dbg!(&add_output);
         Ok(())
     }
 
     fn dirty_files(&self) -> Result<Vec<PathBuf>, Error> {
-        let status = self.run_command(Command::new("git").args(["status", "-u", "--porcelain"]))?;
-        let dirty = status
+        let mut cmd = Command::new("git");
+        cmd.args(["status", "-u", "--porcelain"]);
+        let status_output = self.run_command(&mut cmd)?;
+        dbg!(&status_output);
+        let dirty = status_output
             .stdout
             .lines()
             .filter_map(|f| f.trim().split_once(' '))
@@ -72,8 +78,8 @@ impl GitRepository for NativeGitRepository {
         if let Some(message) = message {
             cmd.args(["--message", message]);
         }
-        let output = self.run_command(&mut cmd)?;
-        println!("{:?} output {:?}", cmd, &output);
+        let tag_output = self.run_command(&mut cmd)?;
+        dbg!(&tag_output);
         Ok(())
     }
 
@@ -81,50 +87,28 @@ impl GitRepository for NativeGitRepository {
         let mut cmd = Command::new("git");
         cmd.args(["update-index", "--refresh"]);
         let _ = self.run_command(&mut cmd)?;
-        // .current_dir(&self.repo_path()),
 
-        // let _ = Command::new("git")
-        //     .arg("update-index")
-        //     .arg("--refresh")
-        //     .output();
         let mut cmd = Command::new("git");
         cmd.args(["describe", "--dirty", "--tags", "--long", "--abbrev=40"]);
         if let Some(pattern) = pattern {
             cmd.arg("--match=v*");
         }
-        println!("get tags");
         match self.run_command(&mut cmd) {
             Ok(tag_info) => {
-                let mut tag_out: Vec<&str> = tag_info.stdout.split("-").collect();
-                println!("tags: {:?}", &tag_out);
+                let mut tag_parts: Vec<&str> = tag_info.stdout.split("-").collect();
+                dbg!(&tag_parts);
 
                 let mut dirty = false;
-                if let Some(t) = tag_out.last() {
+                if let Some(t) = tag_parts.last() {
                     if t.trim() == "dirty" {
                         dirty = true;
-                        tag_out.pop().unwrap();
+                        tag_parts.pop().unwrap();
                     }
                 }
-                // let dirty = if tag_out
-                //     .last()
-                //     .map(|t| *t)
-                //     .map(str::trim)
-                //     .map(|t| t == "dirty")
-                //     .unwrap_or(false)
-                // {
-                //     true
-                // } else {
-                //     false
-                // };
 
-                // let mut Tag = Tag::default();
-                // info["commit_sha"] = describe_out.pop().lstrip("g")
-                // info["distance_to_latest_tag"] = int(describe_out.pop())
-                // info["current_version"] = "-".join(describe_out).lstrip("v")
-
-                let commit_sha = tag_out.pop().unwrap().trim_left_matches("g").to_string();
-                let distance_to_latest_tag = tag_out.pop().unwrap().parse::<usize>().unwrap();
-                let current_version = tag_out.join("-").trim_left_matches("v").to_string();
+                let commit_sha = tag_parts.pop().unwrap().trim_left_matches("g").to_string();
+                let distance_to_latest_tag = tag_parts.pop().unwrap().parse::<usize>().unwrap();
+                let current_version = tag_parts.join("-").trim_left_matches("v").to_string();
                 Ok(Some(Tag {
                     dirty,
                     commit_sha,
@@ -132,9 +116,7 @@ impl GitRepository for NativeGitRepository {
                     current_version,
                 }))
             }
-            // Err(CommandError::Io(err)) => {
             Err(err) => {
-                println!("get tag error {:?}", &err);
                 if let CommandError::Failed { ref output, .. } = err {
                     if utils::contains(&output.stderr, "No names found, cannot describe anything")
                         .map(|m| m.is_some())
@@ -142,33 +124,9 @@ impl GitRepository for NativeGitRepository {
                     {
                         return Ok(None);
                     }
-                    // else {
-                    //     Err(err.into())
                 }
                 Err(err.into())
             }
         }
-
-        // let tag_info = Command::new("git")
-        //     .arg("describe")
-        //     .arg("--dirty")
-        //     .arg("--tags")
-        //     .arg("--long")
-        //     .arg("--abbrev=40")
-        //     .arg("--match=v*")
-        //     .stderr(Stdio::piped())
-        //     .output()?;
-        // assert!(tag_info.status.success());
-        // let tag_info = std::str::from_utf8(&tag_info.stdout)?;
-        // let tags = String::from_utf8_lossy(&tag_info.stdout).split("-");
-
-        // return info
-        // let dirty = status
-        //     .lines()
-        //     .map(|f| f.trim())
-        //     .filter(|f| !f.starts_with("??"))
-        //     .map(|f| self.repo_dir.join(f))
-        //     .collect();
-        // Ok(tag)
     }
 }

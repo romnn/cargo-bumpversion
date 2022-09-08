@@ -79,7 +79,6 @@ pub enum Error {
 }
 
 pub trait GitRepository {
-    // def commit(cls, message, context, extra_args=None):
     fn open<P: Into<PathBuf>>(path: P) -> Result<Self, Error>
     where
         Self: Sized;
@@ -97,7 +96,6 @@ pub trait GitRepository {
     fn dirty_files(&self) -> Result<Vec<PathBuf>, Error>;
 
     fn latest_tag_info(&self, pattern: Option<&str>) -> Result<Option<Tag>, Error>;
-    // fn usable(&self) -> bool;
 
     fn run_command(&self, cmd: &mut Command) -> Result<CommandOutput, CommandError> {
         cmd.current_dir(self.repo_dir());

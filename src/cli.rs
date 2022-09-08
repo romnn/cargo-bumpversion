@@ -1,21 +1,7 @@
 #![allow(warnings)]
 
 use clap::Parser;
-// use git::objs::tree;
-// use git_repository as git;
 use std::path::{Path, PathBuf};
-
-// #[derive(thiserror::Error, Debug)]
-// pub enum Error {
-//     #[error("image error: {0}")]
-//     Git(#[from] String),
-//     // Git(#[from] git::Error),
-//     // #[error("border error: {0}")]
-//     // Border(#[from] BorderError),
-
-//     // #[error("io error: {0}")]
-//     // Io(#[from] std::io::Error),
-// }
 
 #[derive(Parser, Debug, Clone)]
 struct ApplyOpts {
