@@ -35,6 +35,7 @@ lto = true
 
 [features]
 default = ["native"]
+all = ["native", "git2", "git-repository"]
 native = []
 git2 = ["dep:git2"]
 git-repository = ["dep:git-repository"]
