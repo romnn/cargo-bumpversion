@@ -23,3 +23,11 @@ cargo install bumpversion
 For usage instructions, please refer to [the Python version](https://github.com/c4urself/bump2version).
 
 #### Library usage
+
+TODO
+
+#### TODO
+- add a git2 backend and make the tests into macros
+- add the versioning functions
+- add the config file parsing
+- add the main CLI loop

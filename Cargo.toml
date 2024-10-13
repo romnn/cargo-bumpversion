@@ -47,6 +47,14 @@ clap = { version = "3.2", features = ["derive"] }
 tempdir = "0.3"
 thiserror = "1"
 regex = "1"
+lazy_static = "1"
+configparser = "3"
+derive_builder = "0"
+# syn = "1.0"
+# quote = "1.0"
+# anyhow = "1"
+# serde = "1"
+# toml = "0.5"
 
 [dev-dependencies]
 anyhow = "1"
