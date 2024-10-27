@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 #![allow(warnings)]
 
 pub mod backend;
@@ -13,7 +14,11 @@ use std::path::PathBuf;
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("backend error: {0}")]
-    Backend(#[source] #[from] backend::Error),
+    Backend(
+        #[source]
+        #[from]
+        backend::Error,
+    ),
 }
 
 pub struct GitRepository<R>

@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 #![allow(warnings)]
 
 use bumpversion::{Config, GitRepository};

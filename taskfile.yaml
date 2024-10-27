@@ -44,6 +44,14 @@ tasks:
     cmds:
       - cargo audit {{.CLI_ARGS}}
 
+  format:
+    cmds:
+      - cargo fmt {{.CLI_ARGS}}
+
+  test:
+    cmds:
+      - cargo test {{.CLI_ARGS}}
+
   lint:
     cmds:
       # prettier-ignore
