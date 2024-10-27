@@ -4,21 +4,10 @@ on: [push, pull_request]
 
 jobs:
   feature-matrix:
-    uses: ./.github/workflows/feature-matrix.yml
-
-  audit:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Audit
-        continue-on-error: true
-        run: |
-          cargo install cargo-audit
-          cargo audit
+    uses: ./.github/workflows/feature-matrix.yaml
 
   test:
-    name: test (features ${{ matrix.features }})
+    name: test ${{ matrix.package.name }} (features ${{ matrix.features }})
     runs-on: ubuntu-latest
     needs: [feature-matrix]
     strategy:
