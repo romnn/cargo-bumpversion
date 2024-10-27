@@ -1,0 +1,44 @@
+name: lint
+
+on:
+  push: {}
+  pull_request: {}
+  schedule:
+    # run every first friday of the month
+    - cron: "0 0 12 ? 1/1 FRI#1 *"
+
+jobs:
+  feature-matrix:
+    uses: ./.github/workflows/feature-matrix.yml
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-task@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Lint
+        # prettier-ignore
+        run: >-
+          task lint --
+          --package "${{ matrix.package.name }}"
+          --features "${{ matrix.features }}"
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Audit
+        run: |
+          cargo install cargo-audit
+          cargo audit
+
+  outdated:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-task@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check for outdated dependencies
+        run: task outdated

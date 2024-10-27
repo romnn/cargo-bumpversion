@@ -3,6 +3,7 @@ name = "bumpversion-cli"
 publish = false
 description = "bump semver version in your project"
 readme = "README.md"
+default-run = "bumpversion"
 exclude = []
 
 version.workspace = true

@@ -1,0 +1,74 @@
+version: "3"
+tasks:
+  default:
+    cmds:
+      - task: run
+
+  run:
+    ignore_error: true
+    interactive: true
+    cmds:
+      - cargo run -p bumpversion-cli --bin bumpversion -- {{.CLI_ARGS}}
+
+  run:cargo:
+    ignore_error: true
+    interactive: true
+    cmds:
+      - cargo run -p bumpversion-cli --bin cargo-bumpversion -- {{.CLI_ARGS}}
+
+  build:
+    cmds:
+      - cargo build {{.CLI_ARGS}}
+
+  build:release:
+    cmds:
+      - cargo build --release {{.CLI_ARGS}}
+
+  check:
+    cmds:
+      - cargo check {{.CLI_ARGS}}
+
+  check:features:
+    cmds:
+      - cargo fc check {{.CLI_ARGS}}
+
+  clean:
+    cmds:
+      - cargo clean {{.CLI_ARGS}}
+
+  outdated:
+    cmds:
+      - cargo outdated {{.CLI_ARGS}}
+
+  audit:
+    cmds:
+      - cargo audit {{.CLI_ARGS}}
+
+  lint:
+    cmds:
+      # prettier-ignore
+      - >-
+        cargo clippy
+        --tests --benches --examples --all-features
+        {{.CLI_ARGS}}
+        -- -Dclippy::all -Dclippy::pedantic
+
+  lint:features:
+    cmds:
+      # prettier-ignore
+      - >-
+        cargo fc clippy
+        --tests --benches --examples --all-features
+        {{.CLI_ARGS}}
+        -- -Dclippy::all -Dclippy::pedantic
+
+  fix:
+    aliases: ["lint:fix"]
+    cmds:
+      # prettier-ignore
+      - >-
+        cargo clippy
+        --fix --allow-dirty --allow-staged
+        --tests --benches --examples --all-features
+        {{.CLI_ARGS}}
+        -- -Dclippy::all -Dclippy::pedantic
