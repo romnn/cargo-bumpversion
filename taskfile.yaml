@@ -18,19 +18,19 @@ tasks:
 
   build:
     cmds:
-      - cargo build {{.CLI_ARGS}}
+      - cargo build --all-targets {{.CLI_ARGS}}
 
   build:release:
     cmds:
-      - cargo build --release {{.CLI_ARGS}}
+      - cargo build --all-targets --release {{.CLI_ARGS}}
 
   check:
     cmds:
-      - cargo check {{.CLI_ARGS}}
+      - cargo check --all-targets {{.CLI_ARGS}}
 
   check:features:
     cmds:
-      - cargo fc check {{.CLI_ARGS}}
+      - cargo fc check --all-targets {{.CLI_ARGS}}
 
   clean:
     cmds:

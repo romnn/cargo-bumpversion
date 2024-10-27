@@ -270,7 +270,7 @@ impl traits::VersionParser for SemVerParser {
 mod tests {
     use super::traits::*;
     use super::*;
-    use anyhow::Result;
+    use color_eyre::eyre;
     use pretty_assertions::assert_eq;
     use std::borrow::Borrow;
 
@@ -284,14 +284,14 @@ mod tests {
     }
 
     impl traits::Version for SimpleVersion {
-        type Error = anyhow::Error;
+        type Error = eyre::Report;
     }
 
     #[derive(Debug, Default, PartialEq)]
     struct SimpleVersionParser {}
 
     impl traits::VersionParser for SimpleVersionParser {
-        type Error = anyhow::Error;
+        type Error = eyre::Report;
         type Version = SimpleVersion;
 
         fn parse<S: AsRef<str>>(&self, version: S) -> Result<Self::Version, Self::Error> {
@@ -305,7 +305,7 @@ mod tests {
     }
 
     #[test]
-    fn test_simple_version() -> Result<()> {
+    fn test_simple_version() -> eyre::Result<()> {
         let version = SimpleVersion(42);
         let parser = SimpleVersionParser::default();
         let serialized = parser.serialize(&version)?;
@@ -315,7 +315,7 @@ mod tests {
     }
 
     #[test]
-    fn test_semver_version() -> Result<()> {
+    fn test_semver_version() -> eyre::Result<()> {
         let version = SemVer::new(1, 3, 2);
         let parser = SemVerParser::default();
         let serialized = parser.serialize(&version)?;
@@ -325,7 +325,7 @@ mod tests {
     }
 
     #[test]
-    fn test_generic_version() -> Result<()> {
+    fn test_generic_version() -> eyre::Result<()> {
         let version: super::Version<String, String> =
             HashMap::from_iter([("major", "1"), ("minor", "3"), ("patch", "2")]).into();
         let parser = super::VersionParser {

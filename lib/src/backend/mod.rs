@@ -107,7 +107,7 @@ pub trait GitRepository {
 mod tests {
     use super::*;
     use crate::utils;
-    use anyhow::Result;
+    use color_eyre::eyre;
     use pretty_assertions::assert_eq;
     use regex::Regex;
     use std::fs;
@@ -126,11 +126,11 @@ mod tests {
     }
 
     #[inline]
-    fn create_dirs<P: AsRef<Path>>(path: P) -> Result<()> {
+    fn create_dirs<P: AsRef<Path>>(path: P) -> eyre::Result<()> {
         let path = path.as_ref();
         let dir = if path.extension().is_some() {
             path.parent()
-                .ok_or(anyhow::anyhow!("no parent for {:?}", path))?
+                .ok_or(eyre::eyre!("no parent for {:?}", path))?
         } else {
             path
         };
@@ -160,25 +160,25 @@ mod tests {
     where
         Repo: GitRepository,
     {
-        pub fn new() -> Result<Self> {
+        pub fn new() -> eyre::Result<Self> {
             Self::with_name(&random_string_of_length(10))
         }
 
-        pub fn with_name(name: &str) -> Result<Self> {
+        pub fn with_name(name: &str) -> eyre::Result<Self> {
             let dir = TempDir::new(name)?;
             Self::init(dir.path())?;
             let inner = Repo::open(dir.path())?;
             Ok(Self { inner, dir })
         }
 
-        fn init<P: AsRef<Path>>(path: P) -> Result<()> {
+        fn init<P: AsRef<Path>>(path: P) -> eyre::Result<()> {
             let path = path.as_ref();
             fs::create_dir_all(&path)?;
             let _ = run_command(Command::new("git").args(["init"]).current_dir(&path))?;
             Ok(())
         }
 
-        fn add<P>(&self, files: &[P]) -> Result<()>
+        fn add<P>(&self, files: &[P]) -> eyre::Result<()>
         where
             P: AsRef<Path>,
         {
@@ -199,7 +199,7 @@ mod tests {
     }
 
     #[test]
-    fn test_create_empty_git_repo() -> Result<()> {
+    fn test_create_empty_git_repo() -> eyre::Result<()> {
         let repo: TempGitRepository<native::NativeGitRepository> = TempGitRepository::new()?;
         let status = repo.run_command(Command::new("git").args(["status"]))?;
         assert!(utils::contains(&status.stdout, "No commits yet")?.is_some());
@@ -207,7 +207,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tag() -> Result<()> {
+    fn test_tag() -> eyre::Result<()> {
         let repo: TempGitRepository<native::NativeGitRepository> = TempGitRepository::new()?;
         let tags = vec![
             None,
@@ -236,7 +236,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dirty_tree() -> Result<()> {
+    fn test_dirty_tree() -> eyre::Result<()> {
         let repo: TempGitRepository<native::NativeGitRepository> = TempGitRepository::new()?;
         assert_eq!(repo.dirty_files()?.len(), 0);
 

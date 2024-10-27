@@ -23,6 +23,9 @@ path = "src/bumpversion.rs"
 name = "cargo-bumpversion"
 path = "src/cargo_bumpversion.rs"
 
+[package.metadata.cargo-feature-combinations]
+denylist = ["default"]
+
 [dependencies]
 color-eyre.workspace = true
 clap.workspace = true

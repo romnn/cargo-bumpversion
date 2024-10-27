@@ -1,9 +1,9 @@
 use configparser::ini::Ini;
+use derive_builder::Builder;
 use std::fs;
 use std::io;
 use std::io::Read;
 use std::path::PathBuf;
-use derive_builder::Builder;
 
 #[derive(thiserror::Error, Debug)]
 pub enum ParseError {
@@ -219,11 +219,11 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anyhow::Result;
+    use color_eyre::eyre;
     use std::io::Read;
 
     #[test]
-    fn test_parse_python_setup_cfg_with_bumpversion() -> Result<()> {
+    fn test_parse_python_setup_cfg_with_bumpversion() -> eyre::Result<()> {
         let setup_cfg = r#"
 [bumpversion]
 current_version = 0.1.8
@@ -300,7 +300,7 @@ testpaths = tests/
     }
 
     #[test]
-    fn test_parse_complex_python_setup_cfg() -> Result<()> {
+    fn test_parse_complex_python_setup_cfg() -> eyre::Result<()> {
         let setup_cfg = r#"
 [metadata]
 name = my_package
