@@ -1,0 +1,30 @@
+[package]
+name = "bumpversion-cli"
+publish = false
+description = "bump semver version in your project"
+readme = "README.md"
+exclude = []
+
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license-file.workspace = true
+homepage.workspace = true
+repository.workspace = true
+categories.workspace = true
+keywords.workspace = true
+
+[[bin]]
+name = "bumpversion"
+path = "src/bumpversion.rs"
+
+[[bin]]
+name = "cargo-bumpversion"
+path = "src/cargo_bumpversion.rs"
+
+[dependencies]
+color-eyre.workspace = true
+clap.workspace = true
+
+bumpversion.workspace = true
+common.workspace = true
