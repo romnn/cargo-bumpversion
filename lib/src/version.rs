@@ -271,7 +271,6 @@ mod tests {
     use super::traits::*;
     use super::*;
     use color_eyre::eyre;
-    use pretty_assertions::assert_eq;
     use std::borrow::Borrow;
 
     #[derive(Debug, Default, PartialEq)]

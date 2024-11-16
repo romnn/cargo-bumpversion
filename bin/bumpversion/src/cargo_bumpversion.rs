@@ -1,10 +1,13 @@
 #![forbid(unsafe_code)]
 #![allow(warnings)]
 
+mod logging;
+mod options;
+
 use bumpversion::{Config, GitRepository};
 use clap::Parser;
 use color_eyre::eyre;
-use common::Opts;
+use options::Opts;
 
 fn main() -> eyre::Result<()> {
     let opts: Opts = Opts::parse();
@@ -15,7 +18,7 @@ fn main() -> eyre::Result<()> {
     // let current_version = repo.latest_tag_info();
     // println!("current version: {}", current_version);
 
-    let config = Config::open(opts.config_file);
+    // let config = Config::open(opts.config_file);
     // config_file = _determine_config_file(explicit_config)
     // config, config_file_exists, config_newlines, part_configs, files = _load_configuration(
     //     config_file, explicit_config, defaults,

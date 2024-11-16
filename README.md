@@ -1,13 +1,18 @@
 ## bumpversion
 
-[<img alt="build status" src="https://img.shields.io/github/actions/workflow/status/romnn/cargo-bumpversion/build.yml?branch=main&label=build">](https://github.com/romnn/cargo-bumpversion/actions/workflows/build.yml)
-[<img alt="test status" src="https://img.shields.io/github/actions/workflow/status/romnn/cargo-bumpversion/test.yml?branch=main&label=test">](https://github.com/romnn/cargo-bumpversion/actions/workflows/test.yml)
+[<img alt="build status" src="https://img.shields.io/github/actions/workflow/status/romnn/cargo-bumpversion/build.yaml?branch=main&label=build">](https://github.com/romnn/cargo-bumpversion/actions/workflows/build.yaml)
+[<img alt="test status" src="https://img.shields.io/github/actions/workflow/status/romnn/cargo-bumpversion/test.yaml?branch=main&label=test">](https://github.com/romnn/cargo-bumpversion/actions/workflows/test.yaml)
 [<img alt="crates.io" src="https://img.shields.io/crates/v/bumpversion">](https://crates.io/crates/bumpversion)
 [<img alt="docs.rs" src="https://img.shields.io/docsrs/bumpversion/latest?label=docs.rs">](https://docs.rs/taski)
 
-This is an improved version of the popular Python package `bumpversion` (now maintained under [`bump2version`](https://github.com/c4urself/bump2version)) written in Rust.
+This is an improved version of the popular [callowayproject/bump-my-version](https://github.com/callowayproject/bump-my-version) (formerly [peritus/bumpversion](https://github.com/peritus/bumpversion) and [c4urself/bump2version](https://github.com/c4urself/bump2version)) written in Rust.
 
-It is fully compatible with your existing configuration in `.bumpversion.cfg` or `setup.cfg` and includes both a Rust library and a command line utility, with usage instructions below.
+#### Features
+
+- No more global `pip` installs! Easy to install via `brew`, `cargo`, or precompiled static binary.
+- Fully compatible with your existing configuration in `.bumpversion.cfg`, `setup.cfg`, or `pyproject.toml`
+- Also supports configuration in your `Cargo.toml`
+- Additional hook system
 
 ### Improvements
 

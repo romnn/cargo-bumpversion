@@ -19,16 +19,25 @@ keywords.workspace = true
 name = "bumpversion"
 path = "src/bumpversion.rs"
 
-[[bin]]
-name = "cargo-bumpversion"
-path = "src/cargo_bumpversion.rs"
+# [[bin]]
+# name = "cargo-bumpversion"
+# path = "src/cargo_bumpversion.rs"
 
 [package.metadata.cargo-feature-combinations]
 denylist = ["default"]
 
 [dependencies]
 color-eyre.workspace = true
-clap.workspace = true
+clap = { version = "4", features = ["derive", "env", "color"] }
+clap-verbosity-flag = "2"
+
+# logging
+tracing.workspace = true
+tracing-subscriber = { version = "0", features = ["json", "env-filter"] }
+
+# colors and diagnostics
+atty = "0"
+termcolor = "1"
+codespan-reporting = "0"
 
 bumpversion.workspace = true
-common.workspace = true

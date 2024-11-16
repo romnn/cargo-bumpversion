@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "lib",
+  "crates/serde-ini",
   "bin/bumpversion",
   # "bin/cargo-bumpversion",
 ]
@@ -31,7 +32,7 @@ codegen-units = 1
 
 [workspace.dependencies]
 color-eyre = "0"
-clap = { version = "4", features = ["derive"] }
+tracing = "0"
 
 bumpversion = { path = "./lib" }
-common = { path = "./bin/common" }
+# common = { path = "./bin/common" }

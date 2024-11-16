@@ -1,0 +1,5 @@
+- test with python how ini files should handle booleans (is "True" valid?)
+- rename repo to bumpversion only
+- release the bumpversion crate
+- use spanned ini parser?
+- use toml_spanned for better diagnostics?
