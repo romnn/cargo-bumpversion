@@ -3,7 +3,7 @@ resolver = "2"
 members = [
   "lib",
   "crates/serde-ini",
-  "bin/bumpversion",
+  "bin/bumpversion", "crates/serde-ini-spanned",
   # "bin/cargo-bumpversion",
 ]
 
@@ -31,6 +31,7 @@ lto = true
 codegen-units = 1
 
 [workspace.dependencies]
+thiserror = "1"
 color-eyre = "0"
 tracing = "0"
 

@@ -75,28 +75,12 @@ pub fn setup_logging(
 
     // autodetect logging format
     let log_format = log_format.unwrap_or(LogFormat::PrettyCompact);
-    // let log_format = log_format.unwrap_or_else(|| {
-    //     if atty::is(atty::Stream::Stdout) {
-    //         // terminal
-    //         LogFormat::PrettyCompact
-    //     } else {
-    //         // not a terminal
-    //         LogFormat::Json
-    //     }
-    // });
     let use_color = match color_choice {
         ColorChoice::Always => true,
         ColorChoice::AlwaysAnsi => true,
         ColorChoice::Never => false,
         ColorChoice::Auto => atty::is(atty::Stream::Stdout),
     };
-    // let (color_choice, use_color) = match  {
-    //     ColorChoice::Always => (ColorChoice::Always, true),
-    //     ColorChoice::AlwaysAnsi => (ColorChoice::AlwaysAnsi, true),
-    //     ColorChoice::Never => (ColorChoice::Never, true),
-    //     ColorChoice::Auto if atty::is(atty::Stream::Stdout) => (ColorChoice::Always, true),
-    //     ColorChoice::Auto => (ColorChoice::Never, false),
-    // };
 
     let fmt_layer_pretty = tracing_subscriber::fmt::Layer::new()
         .pretty()

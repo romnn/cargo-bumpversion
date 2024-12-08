@@ -87,7 +87,7 @@ impl<T> Parser<T> {
         } else {
             // println!("line: {line}");
             let mut line = line.splitn(2, '=');
-            // println!("line: {:?}", line.clone().into_iter().collect::<Vec<_>>());
+            println!("line: {:?}", line.clone().into_iter().collect::<Vec<_>>());
             if let Some(key) = line.next() {
                 let key = key.trim();
                 if let Some(value) = line.next() {

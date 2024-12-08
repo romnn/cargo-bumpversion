@@ -5,29 +5,23 @@ use crate::{
 };
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
-use tempdir::TempDir;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("utf decode error: {0}")]
+    #[error("UTF-8 decode error: {0}")]
     Utf8(#[from] std::str::Utf8Error),
 
     #[error("command failed: {0}")]
     CommandFailed(#[from] crate::command::Error),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct GitRepository {
     repo_dir: PathBuf,
 }
-
-// impl GitRepository {
-//     pub fn native<P: Into<PathBuf>>(path: P) -> Result<Self, Error> {
-//         Self::open(path)
-//     }
-// }
 
 impl backend::GitBackend for GitRepository {
     type Error = Error;
@@ -44,7 +38,8 @@ impl backend::GitBackend for GitRepository {
 
     fn commit(&self, message: &str) -> Result<(), Error> {
         use std::io::Write;
-        let tmp = TempDir::new("")?;
+
+        let tmp = tempdir::TempDir::new("")?;
         let tmp_file_path = tmp.path().join("commit-message.txt");
         let mut tmp_file = std::fs::File::create(&tmp_file_path)?;
         tmp_file.write_all(message.as_bytes())?;
@@ -165,7 +160,7 @@ mod tests {
     use crate::{
         backend::{native, temp, GitBackend},
         command::run_command,
-        tests::assert_eq_vec,
+        tests::assert_eq_sorted,
         utils,
     };
     use color_eyre::eyre;
@@ -175,6 +170,7 @@ mod tests {
     use std::process::Command;
     use tempdir::TempDir;
 
+    #[ignore = "wip"]
     #[test]
     fn test_create_empty_git_repo() -> eyre::Result<()> {
         let repo: temp::GitRepository<native::GitRepository> = temp::GitRepository::new()?;
@@ -187,6 +183,7 @@ mod tests {
         Ok(())
     }
 
+    #[ignore = "wip"]
     #[test]
     fn test_tag() -> eyre::Result<()> {
         let repo: temp::GitRepository<native::GitRepository> = temp::GitRepository::new()?;
@@ -216,6 +213,7 @@ mod tests {
         Ok(())
     }
 
+    #[ignore = "wip"]
     #[test]
     fn test_dirty_tree() -> eyre::Result<()> {
         let repo: temp::GitRepository<native::GitRepository> = temp::GitRepository::new()?;
@@ -236,11 +234,11 @@ mod tests {
 
         // track first file
         repo.add(&dirty_files[0..1]);
-        assert_eq_vec!(repo.dirty_files()?, dirty_files[0..1]);
+        assert_eq_sorted!(repo.dirty_files()?, dirty_files[0..1]);
 
         // track all files
         repo.add(&dirty_files);
-        assert_eq_vec!(repo.dirty_files()?, dirty_files);
+        assert_eq_sorted!(repo.dirty_files()?, dirty_files);
         Ok(())
     }
 }

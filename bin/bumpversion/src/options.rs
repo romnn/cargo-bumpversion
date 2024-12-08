@@ -2,6 +2,16 @@
 use clap::Parser;
 use std::path::{Path, PathBuf};
 
+pub trait Invert {
+    fn invert(self) -> Self;
+}
+
+impl Invert for Option<bool> {
+    fn invert(self) -> Self {
+        self.map(|value| !value)
+    }
+}
+
 #[derive(Parser, Debug, Clone)]
 enum Bump {
     #[clap(name = "major")]

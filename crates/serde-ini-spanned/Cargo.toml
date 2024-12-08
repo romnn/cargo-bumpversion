@@ -1,0 +1,36 @@
+[package]
+name = "serde-ini-spanned"
+version = "0.2.0"
+publish = true
+description = "Windows INI file {de,}serialization"
+edition.workspace = true
+authors.workspace = true
+license-file.workspace = true
+documentation.workspace = true
+homepage.workspace = true
+repository.workspace = true
+readme.workspace = true
+categories.workspace = true
+exclude.workspace = true
+keywords = [
+  "ini",
+  "cfg",
+  "serde"
+]
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+serde = "1"
+thiserror = "1"
+indexmap = { version = "2", features = ["serde"] }
+
+# diagnostics
+codespan-reporting = "0"
+unindent = "0"
+
+[dev-dependencies]
+color-eyre = "0"
+similar-asserts = "1"
+indoc = "2"
