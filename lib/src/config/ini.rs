@@ -367,22 +367,26 @@ impl Config {
 
     pub fn from_ini(
         config: &str,
+        options: &ini::value::Options,
         file_id: FileId,
         strict: bool,
         diagnostics: &mut Vec<Diagnostic<FileId>>,
     ) -> Result<Option<Self>, Error> {
-        let config = ini::from_str(&config).map_err(|source| Error::Ini { source })?;
+        let config = ini::from_str(&config, options, file_id, diagnostics)
+            .map_err(|source| Error::Ini { source })?;
         let allow_unknown = false;
         Self::from_ini_value(config, file_id, strict, allow_unknown, diagnostics)
     }
 
     pub fn from_setup_cfg_ini(
         config: &str,
+        options: &ini::value::Options,
         file_id: FileId,
         strict: bool,
         diagnostics: &mut Vec<Diagnostic<FileId>>,
     ) -> Result<Option<Self>, Error> {
-        let config = ini::from_str(&config).map_err(|source| Error::Ini { source })?;
+        let config = ini::from_str(&config, options, file_id, diagnostics)
+            .map_err(|source| Error::Ini { source })?;
         let allow_unknown = true;
         Self::from_ini_value(config, file_id, strict, allow_unknown, diagnostics)
     }
@@ -415,14 +419,19 @@ mod tests {
     use codespan_reporting::diagnostic;
     use color_eyre::eyre;
     use indexmap::IndexMap;
+    use serde_ini_spanned as ini;
     use std::io::Read;
     use std::path::PathBuf;
 
-    fn parse_ini(config: &str, printer: &Printer) -> (Result<Option<Config>, super::Error>, usize) {
+    fn parse_ini(
+        config: &str,
+        options: &ini::value::Options,
+        printer: &Printer,
+    ) -> (Result<Option<Config>, super::Error>, usize) {
         let mut diagnostics = vec![];
         let file_id = printer.add_source_file("bumpversion.cfg".to_string(), config.to_string());
         let strict = true;
-        let config = Config::from_ini(config, file_id, strict, &mut diagnostics);
+        let config = Config::from_ini(config, options, file_id, strict, &mut diagnostics);
         if let Err(ref err) = config {
             for diagnostic in err.to_diagnostics(file_id) {
                 printer.emit(&diagnostic);
@@ -446,7 +455,12 @@ mod tests {
             replace = {current_version}...{new_version}
         "#};
 
-        let config = parse_ini(bumpversion_cfg, &Printer::default()).0?;
+        let config = parse_ini(
+            bumpversion_cfg,
+            &ini::value::Options::default(),
+            &Printer::default(),
+        )
+        .0?;
 
         let expected = Config {
             global: FileConfig::default(),
@@ -522,7 +536,12 @@ mod tests {
             select = B,C,E,F,W,T4
         "#};
 
-        let config = parse_ini(setup_cfg_ini, &Printer::default()).0?;
+        let config = parse_ini(
+            setup_cfg_ini,
+            &ini::value::Options::default(),
+            &Printer::default(),
+        )
+        .0?;
 
         let expected = Config {
             global: FileConfig {
@@ -616,7 +635,12 @@ mod tests {
                 gamma
         "#};
 
-        let config = parse_ini(bumpversion_cfg, &Printer::default()).0?;
+        let config = parse_ini(
+            bumpversion_cfg,
+            &ini::value::Options::default(),
+            &Printer::default(),
+        )
+        .0?;
         let expected = Config {
             global: FileConfig {
                 commit: Some(true),

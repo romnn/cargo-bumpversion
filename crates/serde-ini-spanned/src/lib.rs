@@ -1,27 +1,24 @@
 #![allow(warnings)]
 
-// pub mod de;
+pub mod diagnostics;
 pub mod lines;
 pub mod parse;
 pub mod spanned;
 pub mod value;
-// pub mod ser;
-// pub mod write;
 
 pub use parse::Error;
 pub use spanned::{Span, Spanned};
 pub use value::{from_reader, from_str, Section, SectionProxy, SectionProxyMut, Value};
 
-// pub use de::{from_bufread, from_read, from_str, Deserializer};
-// pub use parse::{Item, Parser};
-// pub use ser::{to_string, to_vec, to_writer, Serializer};
-// pub use write::{LineEnding, Writer};
-
 #[cfg(test)]
 pub mod tests {
-    use crate::value::Value;
+    use crate::{
+        diagnostics,
+        value::{Options, Value},
+        Spanned,
+    };
     use codespan_reporting::{diagnostic::Diagnostic, files, term};
-    use std::sync::RwLock;
+    use std::sync::{Mutex, RwLock};
 
     static INIT: std::sync::Once = std::sync::Once::new();
 
@@ -34,9 +31,23 @@ pub mod tests {
         });
     }
 
+    // this makes writing tests quick and concise but is confusing if included in the library
+    impl From<&str> for Spanned<String> {
+        fn from(value: &str) -> Self {
+            Spanned::dummy(value.to_string())
+        }
+    }
+
+    // this makes writing tests quick and concise but is confusing if included in the library
+    impl From<String> for Spanned<String> {
+        fn from(value: String) -> Self {
+            Spanned::dummy(value)
+        }
+    }
+
     #[derive(Debug)]
     pub struct Printer {
-        writer: term::termcolor::StandardStream,
+        writer: Mutex<term::termcolor::Buffer>,
         diagnostic_config: term::Config,
         files: RwLock<files::SimpleFiles<String, String>>,
     }
@@ -49,13 +60,14 @@ pub mod tests {
 
     impl Printer {
         pub fn new(color_choice: term::termcolor::ColorChoice) -> Self {
-            let writer = term::termcolor::StandardStream::stderr(color_choice);
+            use term::termcolor::WriteColor;
+            let writer = term::termcolor::Buffer::ansi();
             let diagnostic_config = term::Config {
                 styles: term::Styles::with_blue(term::termcolor::Color::Blue),
                 ..term::Config::default()
             };
             Self {
-                writer,
+                writer: Mutex::new(writer),
                 diagnostic_config,
                 files: RwLock::new(files::SimpleFiles::new()),
             }
@@ -68,29 +80,39 @@ pub mod tests {
 
         pub fn emit(&self, diagnostic: &Diagnostic<usize>) -> Result<(), files::Error> {
             term::emit(
-                &mut self.writer.lock(),
+                &mut *self.writer.lock().unwrap(),
                 &self.diagnostic_config,
                 &*self.files.read().unwrap(),
                 diagnostic,
             )
         }
+
+        /// Print written diagnostics to stderr.
+        ///
+        /// This is a workaround for https://github.com/BurntSushi/termcolor/issues/51.
+        pub fn print(&self) {
+            use std::io::Write;
+            let mut writer = self.writer.lock().unwrap();
+            writer.flush();
+            eprintln!("{}", String::from_utf8_lossy(writer.as_slice()));
+        }
     }
 
-    pub fn parse(config: &str, printer: &Printer) -> (Result<Value, super::Error>, usize) {
+    pub fn parse(
+        config: &str,
+        options: &Options,
+        printer: &Printer,
+    ) -> (Result<Value, super::Error>, usize, Vec<Diagnostic<usize>>) {
         let file_id = printer.add_source_file("config.ini".to_string(), config.to_string());
-        // let strict = true;
-        let config = crate::from_str(config);
-        // , file_id, strict, &mut diagnostics).map_err(|err| {
-        //     for diagnostic in err.to_diagnostics(file_id) {
-        //         printer.emit(&diagnostic);
-        //     }
-        //     err
-        // });
+        let mut diagnostics = vec![];
+        let config = crate::from_str(config, &options, file_id, &mut diagnostics);
         if let Err(ref err) = config {
-            for diagnostic in err.to_diagnostics(file_id) {
-                printer.emit(&diagnostic);
-            }
+            diagnostics.extend(err.to_diagnostics(file_id));
         }
-        (config, file_id)
+        for diagnostic in diagnostics.iter() {
+            printer.emit(&diagnostic);
+        }
+        printer.print();
+        (config, file_id, diagnostics)
     }
 }

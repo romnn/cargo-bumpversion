@@ -154,10 +154,15 @@ impl Config {
         let path = path.as_ref();
         let config = std::fs::read_to_string(path)?;
         let file_id = printer.add_source_file(path.to_string_lossy().to_string(), config.clone());
+
         match path.extension().and_then(|ext| ext.to_str()) {
             Some("cfg") => {
                 tracing::warn!("the .cfg file format is deprecated. Please use .toml instead");
-                Self::from_ini(&config, file_id, strict, diagnostics).map_err(Into::into)
+                let options = serde_ini_spanned::value::Options {
+                    strict,
+                    ..serde_ini_spanned::value::Options::default()
+                };
+                Self::from_ini(&config, &options, file_id, strict, diagnostics).map_err(Into::into)
             }
             None | Some("toml") => {
                 Self::from_pyproject_toml(&config, file_id, strict, diagnostics).map_err(Into::into)

@@ -2,6 +2,9 @@ use crate::spanned::{Span, Spanned};
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use std::collections::{HashMap, HashSet};
 
+pub const DEFAULT_DELIMITERS: [char; 2] = ['=', ':'];
+pub const DEFAULT_COMMENT_PREFIXES: [char; 2] = [';', '#'];
+
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum Item {
     Empty,
@@ -28,6 +31,9 @@ pub enum SyntaxError {
     InvalidSectionName {
         span: Span,
     },
+    EmptyOptionName {
+        span: Span,
+    },
     MissingAssignmentDelimiter {
         span: Span,
         assignment_delimiters: Vec<char>,
@@ -39,6 +45,7 @@ impl std::fmt::Display for SyntaxError {
         match self {
             Self::SectionNotClosed { span } => write!(f, r"section was not closed: missing ']'"),
             Self::InvalidSectionName { span } => write!(f, r"invalid section name: contains ']'"),
+            Self::EmptyOptionName { span } => write!(f, r"empty option name"),
             Self::MissingAssignmentDelimiter {
                 span,
                 assignment_delimiters,
@@ -67,6 +74,10 @@ impl SyntaxError {
                 .with_message(self.to_string())
                 .with_labels(vec![Label::primary(file_id, span.clone())
                     .with_message("section must not contain `]`")]),
+            Self::EmptyOptionName { span } => Diagnostic::error()
+                .with_message(self.to_string())
+                .with_labels(vec![Label::primary(file_id, span.clone())
+                    .with_message("option name must not be empty")]),
             Self::MissingAssignmentDelimiter {
                 span,
                 assignment_delimiters,
@@ -90,7 +101,7 @@ impl SyntaxError {
 pub enum Error {
     #[error(transparent)]
     Io(#[from] std::io::Error),
-    #[error("INI syntax error")]
+    #[error("syntax error: {0}")]
     Syntax(#[from] SyntaxError),
 }
 
@@ -670,7 +681,12 @@ where
             // dbg!(&value_span);
             let value_span = compact_span(&line, value_span);
             let value = &line[value_span.clone()];
-            // dbg!(&value);
+
+            if key.is_empty() {
+                return Err(Error::Syntax(SyntaxError::EmptyOptionName {
+                    span: to_byte_span(&line, key_span.clone()).add_offset(offset),
+                }));
+            }
 
             state.option_name = Some(key.to_string());
             state
@@ -713,11 +729,17 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::string::ParseError;
+
+    use crate::parse::{DEFAULT_COMMENT_PREFIXES, DEFAULT_DELIMITERS};
     use crate::spanned::{DerefInner, Spanned};
     use crate::tests::{parse, Printer};
-    use crate::value::{ClearSpans, RawSection, Section, Value};
+    use crate::value::{ClearSpans, NoSectionError, Options, RawSection, Section, Value};
     // use codespan_reporting::{diagnostic::Diagnostic, files, term};
     use color_eyre::eyre;
+    use indexmap::map::Keys;
+    use serde::de::Error;
+    use unindent::unindent;
     // use std::sync::RwLock;
 
     // macro_rules! get_key {
@@ -782,50 +804,29 @@ mod tests {
             User = QEDK
         "#};
 
-        let have = parse(config, &Printer::default()).0?;
-        let expected = Value::new(
+        let have = parse(config, &Options::default(), &Printer::default()).0?;
+        let mut expected = Value::with_defaults([].into_iter().collect());
+
+        expected.add_section(
+            Spanned::from("DEFAULT"),
             [
-                (
-                    Spanned::dummy("DEFAULT".to_string()),
-                    [
-                        (
-                            Spanned::dummy("key1".to_string()),
-                            Spanned::dummy("value1".to_string()),
-                        ),
-                        (
-                            Spanned::dummy("pizzatime".to_string()),
-                            Spanned::dummy("yes".to_string()),
-                        ),
-                        (
-                            Spanned::dummy("cost".to_string()),
-                            Spanned::dummy("9".to_string()),
-                        ),
-                    ]
-                    .into_iter()
-                    .collect(),
-                ),
-                (
-                    Spanned::dummy("topsecrets".to_string()),
-                    [(
-                        Spanned::dummy("nuclear launch codes".to_string()),
-                        Spanned::dummy("topsecret".to_string()),
-                    )]
-                    .into_iter()
-                    .collect(),
-                ),
-                (
-                    Spanned::dummy("github.com".to_string()),
-                    [(
-                        Spanned::dummy("User".to_string()),
-                        Spanned::dummy("QEDK".to_string()),
-                    )]
-                    .into_iter()
-                    .collect(),
-                ),
-            ]
-            .into_iter()
-            .collect(),
-            [].into_iter().collect(),
+                (Spanned::from("key1"), Spanned::from("value1")),
+                (Spanned::from("pizzatime"), Spanned::from("yes")),
+                (Spanned::from("cost"), Spanned::from("9")),
+            ],
+        );
+
+        expected.add_section(
+            Spanned::from("topsecrets"),
+            [(
+                Spanned::from("nuclear launch codes"),
+                Spanned::from("topsecret"),
+            )],
+        );
+
+        expected.add_section(
+            Spanned::from("github.com"),
+            [(Spanned::from("user"), Spanned::from("QEDK"))],
         );
 
         sim_assert_eq!(have.clone().cleared_spans(), expected, "values match");
@@ -883,14 +884,8 @@ mod tests {
         );
 
         let spacey_bar_beginning_expected: RawSection = [
-            (
-                Spanned::dummy("foo".to_string()),
-                Spanned::dummy("bar3".to_string()),
-            ),
-            (
-                Spanned::dummy("baz".to_string()),
-                Spanned::dummy("qwe".to_string()),
-            ),
+            (Spanned::from("foo"), Spanned::from("bar3")),
+            (Spanned::from("baz"), Spanned::from("qwe")),
         ]
         .into_iter()
         .collect();
@@ -1205,14 +1200,10 @@ mod tests {
         // Make sure the right things happen for remove_section() and
         // remove_option(); added to include check for SourceForge bug #123324.
 
-        have.defaults_mut().set(
-            Spanned::dummy("this_value".to_string()),
-            Spanned::dummy("1".to_string()),
-        );
-        have.defaults_mut().set(
-            Spanned::dummy("that_value".to_string()),
-            Spanned::dummy("2".to_string()),
-        );
+        have.defaults_mut()
+            .set(Spanned::from("this_value"), Spanned::from("1"));
+        have.defaults_mut()
+            .set(Spanned::from("that_value"), Spanned::from("2"));
 
         // API access
         assert!(have.remove_section("Spaces").is_some());
@@ -1313,15 +1304,873 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn configparser_compat_case_sensitivity() -> eyre::Result<()> {
+        use similar_asserts::assert_eq as sim_assert_eq;
+        crate::tests::init();
+
+        let mut config = Value::default();
+        config.add_section(Spanned::from("A"), []);
+        config.add_section(Spanned::from("a"), []);
+        config.add_section(Spanned::from("B"), []);
+
+        sim_assert_eq!(
+            config
+                .section_names()
+                // .map(|name| name.as_ref().as_str())
+                .collect::<Vec<_>>(),
+            ["A", "a", "B"]
+        );
+
+        config.set("a", Spanned::from("B"), Spanned::from("value"))?;
+        sim_assert_eq!(
+            config
+                .options("a")
+                // .map(|option| option.as_ref().as_str())
+                .collect::<Vec<_>>(),
+            ["b"]
+        );
+        sim_assert_eq!(
+            config.get("a", "b").deref_inner(),
+            Some("value"),
+            "could not locate option, expecting case-insensitive option names"
+        );
+
+        // with self.assertRaises(configparser.NoSectionError):
+        //     # section names are case-sensitive
+        //     cf.set("b", "A", "value")
+
+        sim_assert_eq!(
+            config
+                .set("b", Spanned::from("A"), Spanned::from("value"))
+                .unwrap_err()
+                .to_string(),
+            r#"missing section: "b""#,
+        );
+
+        sim_assert_eq!(config.has_option("a", "b"), true);
+        sim_assert_eq!(config.has_option("b", "b"), false);
+
+        config.set("A", Spanned::from("A-B"), Spanned::from("A-B value"))?;
+
+        for option in ["a-b", "A-b", "a-B", "A-B"] {
+            // dbg!(config.get())
+            sim_assert_eq!(
+                config.has_option("A", option),
+                true,
+                "has_option() returned false for option which should exist",
+            );
+        }
+
+        sim_assert_eq!(
+            config
+                .options("A")
+                // .map(|option| option.as_ref().as_str())
+                .collect::<Vec<_>>(),
+            ["a-b"]
+        );
+        sim_assert_eq!(
+            config
+                .options("a")
+                // .map(|option| option.as_ref().as_str())
+                .collect::<Vec<_>>(),
+            ["b"]
+        );
+
+        config.remove_option("a", "B");
+        sim_assert_eq!(
+            config
+                .options("a")
+                // .map(|option| option.as_ref().as_str())
+                .collect::<Vec<_>>(),
+            [] as [&str; 0]
+        );
+
+        // SF bug #432369:
+        let config = unindent::unindent(&format!(
+            "
+            [MySection]
+            Option{} first line   
+            \tsecond line   
+            ",
+            DEFAULT_DELIMITERS[0],
+        ));
+        let mut config = parse(&config, &Options::default(), &Printer::default()).0?;
+
+        sim_assert_eq!(
+            config
+                .options("MySection")
+                // .map(|option| option.as_ref().as_str())
+                .collect::<Vec<_>>(),
+            ["option"]
+        );
+        sim_assert_eq!(
+            config.get("MySection", "Option").deref_inner(),
+            Some("first line\nsecond line")
+        );
+
+        // SF bug #561822:
+        let config = unindent::unindent(&format!(
+            r#"
+            [section]
+            nekey{}nevalue\n
+            "#,
+            DEFAULT_DELIMITERS[0],
+        ));
+        let mut config = parse(&config, &Options::default(), &Printer::default()).0?;
+
+        // cf = self.fromstring("[section]\n"
+        //                      "nekey{}nevalue\n".format(self.delimiters[0]),
+        //                      defaults={"key":"value"})
+        // self.assertTrue(cf.has_option("section", "Key"))
+        // TODO(roman): this was true but we do not implement defaults
+        sim_assert_eq!(config.has_option("section", "Key"), false);
+        Ok(())
+    }
+
+    #[test]
+    fn configparser_compat_case_insensitivity_mapping_access() -> eyre::Result<()> {
+        use similar_asserts::assert_eq as sim_assert_eq;
+        crate::tests::init();
+
+        let mut config = Value::default();
+        config.add_section(Spanned::from("A"), []);
+        config.add_section(
+            Spanned::from("a"),
+            [(Spanned::from("B"), Spanned::from("value"))],
+        );
+        config.add_section(Spanned::from("B"), []);
+
+        sim_assert_eq!(
+            config
+                .section_names()
+                // .map(|name| name.as_ref().as_str())
+                .collect::<Vec<_>>(),
+            ["A", "a", "B"]
+        );
+
+        sim_assert_eq!(
+            config
+                .section("a")
+                .unwrap()
+                .keys()
+                // .map(|name| name.as_ref().as_str())
+                .collect::<Vec<_>>(),
+            ["b"]
+        );
+
+        sim_assert_eq!(
+            config.section("a").unwrap()["b"].as_ref().as_str(),
+            "value",
+            "could not locate option, expecting case-insensitive option names"
+        );
+
+        // with self.assertRaises(KeyError):
+        //     # section names are case-sensitive
+        //     cf["b"]["A"] = "value"
+
+        sim_assert_eq!(
+            std::panic::catch_unwind(|| config.section("b").unwrap()["A"].clone()).is_err(),
+            true,
+        );
+
+        sim_assert_eq!(config.section("a").unwrap().has_option("b"), true);
+
+        config
+            .section_mut("A")
+            .unwrap()
+            .set(Spanned::from("A-B"), Spanned::from("A-B value"));
+
+        for option in ["a-b", "A-b", "a-B", "A-B"] {
+            sim_assert_eq!(
+                config.get("A", option).is_some(),
+                true,
+                "has_option() returned false for option which should exist"
+            )
+        }
+
+        sim_assert_eq!(
+            config.section("A").unwrap().keys().collect::<Vec<_>>(),
+            ["a-b"]
+        );
+        sim_assert_eq!(
+            config.section("a").unwrap().keys().collect::<Vec<_>>(),
+            ["b"]
+        );
+        config.remove_option("a", "B");
+
+        sim_assert_eq!(
+            config.section("a").unwrap().keys().collect::<Vec<_>>(),
+            [] as [&str; 0]
+        );
+
+        // SF bug #432369:
+        let config = format!(
+            "[MySection]\nOption{} first line   \n\tsecond line   \n",
+            DEFAULT_DELIMITERS[0],
+        );
+        let mut config = parse(&config, &Options::default(), &Printer::default()).0?;
+
+        sim_assert_eq!(
+            config
+                .section("MySection")
+                .unwrap()
+                .keys()
+                .collect::<Vec<_>>(),
+            ["option"]
+        );
+        sim_assert_eq!(
+            config.section("MySection").unwrap()["Option"]
+                .as_ref()
+                .as_str(),
+            "first line\nsecond line",
+        );
+
+        // SF bug #561822:
+        // let config = format!(
+        //     "[MySection]\nOption{} first line   \n\tsecond line   \n",
+        //     DEFAULT_DELIMITERS[0],
+        // );
+        // let mut config = parse(&config, &Printer::default()).0?;
+
+        // cf = self.fromstring("[section]\n"
+        //                      "nekey{}nevalue\n".format(self.delimiters[0]),
+        //                      defaults={"key":"value"})
+        // self.assertTrue("Key" in cf["section"])
+        Ok(())
+    }
+
+    #[test]
+    fn configparser_compat_default_case_sensitivity() -> eyre::Result<()> {
+        use similar_asserts::assert_eq as sim_assert_eq;
+        crate::tests::init();
+
+        let mut config = Value::with_defaults(
+            [(Spanned::from("foo"), Spanned::from("Bar"))]
+                .into_iter()
+                .collect(),
+        );
+
+        dbg!(&config);
+
+        sim_assert_eq!(
+            config.defaults().get("Foo").deref_inner(),
+            Some("Bar"),
+            "could not locate option, expecting case-insensitive option names",
+        );
+
+        let config = Value::with_defaults(
+            [(Spanned::from("Foo"), Spanned::from("Bar"))]
+                .into_iter()
+                .collect(),
+        );
+
+        sim_assert_eq!(
+            config.defaults().get("Foo").deref_inner(),
+            Some("Bar"),
+            "could not locate option, expecting case-insensitive defaults",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn configparser_compat_parse_errors() -> eyre::Result<()> {
+        use similar_asserts::assert_eq as sim_assert_eq;
+        crate::tests::init();
+
+        let config = format!("[Foo]\n{}val-without-opt-name\n", DEFAULT_DELIMITERS[0]);
+        let config = parse(&config, &Options::default(), &Printer::default()).0;
+        sim_assert_eq!(
+            config.err().map(|err| err.to_string()).as_deref(),
+            Some("syntax error: empty option name")
+        );
+
+        let config = format!("[Foo]\n{}val-without-opt-name\n", DEFAULT_DELIMITERS[1]);
+        let config = parse(&config, &Options::default(), &Printer::default()).0;
+        sim_assert_eq!(
+            config.err().map(|err| err.to_string()).as_deref(),
+            Some("syntax error: empty option name")
+        );
+
+        let config = "No Section!\n"; // python configparser raises `MissingSectionHeaderError`
+        let config = parse(config, &Options::default(), &Printer::default()).0;
+        sim_assert_eq!(
+            config.err().map(|err| err.to_string()).as_deref(),
+            Some("syntax error: variable assignment missing one of: `=`, `:`")
+        );
+        // self.assertEqual(e.args, ('<???>', 1, "No Section!\n"))
+
+        let config = "[Foo]\n  wrong-indent\n";
+        let config = parse(config, &Options::default(), &Printer::default()).0;
+        sim_assert_eq!(
+            config.err().map(|err| err.to_string()).as_deref(),
+            Some("syntax error: variable assignment missing one of: `=`, `:`")
+        );
+
+        // # read_file on a real file
+        // tricky = support.findfile("cfgparser.3", subdir="configdata")
+        // if self.delimiters[0] == '=':
+        //     error = configparser.ParsingError
+        //     expected = (tricky,)
+        // else:
+        //     error = configparser.MissingSectionHeaderError
+        //     expected = (tricky, 1,
+        //                 '  # INI with as many tricky parts as possible\n')
+        // with open(tricky, encoding='utf-8') as f:
+        //     e = self.parse_error(cf, error, f)
+        // self.assertEqual(e.args, expected)
+
+        Ok(())
+    }
+
+    #[test]
+    fn configparser_compat_query_errors() -> eyre::Result<()> {
+        use similar_asserts::assert_eq as sim_assert_eq;
+        crate::tests::init();
+
+        let mut config = Value::default();
+        sim_assert_eq!(
+            config.section_names().collect::<Vec<_>>(),
+            [] as [&str; 0],
+            "new ConfigParser should have no defined sections"
+        );
+        sim_assert_eq!(
+            config.has_section("Foo"),
+            false,
+            "new ConfigParser should have no acknowledged sections"
+        );
+
+        // with self.assertRaises(configparser.NoSectionError):
+        sim_assert_eq!(config.options("Foo").collect::<Vec<_>>(), [] as [&str; 0]);
+
+        // with self.assertRaises(configparser.NoSectionError):
+        //     cf.set("foo", "bar", "value")
+        sim_assert_eq!(
+            config
+                .set("foo", Spanned::from("bar"), Spanned::from("value"))
+                .err(),
+            Some(NoSectionError("foo".to_string()))
+        );
+
+        config.add_section(Spanned::from("foo"), []);
+        sim_assert_eq!(config.get("foo", "bar"), None);
+
+        sim_assert_eq!(
+            config
+                .set("foo", Spanned::from("bar"), Spanned::from("value"))
+                .err(),
+            None,
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn configparser_compat_boolean() -> eyre::Result<()> {
+        use similar_asserts::assert_eq as sim_assert_eq;
+        crate::tests::init();
+
+        let config = unindent::unindent(&format!(
+            "
+            [BOOLTEST]\n
+            T1{equals}1\n
+            T2{equals}TRUE\n
+            T3{equals}True\n
+            T4{equals}oN\n
+            T5{equals}yes\n
+            F1{equals}0\n
+            F2{equals}FALSE\n
+            F3{equals}False\n
+            F4{equals}oFF\n
+            F5{equals}nO\n
+            E1{equals}2\n
+            E2{equals}foo\n
+            E3{equals}-1\n
+            E4{equals}0.1\n
+            E5{equals}FALSE AND MORE",
+            equals = DEFAULT_DELIMITERS[0],
+        ));
+        let config = parse(&config, &Options::default(), &Printer::default()).0?;
+
+        for x in 1..5 {
+            sim_assert_eq!(
+                config
+                    .get_bool("BOOLTEST", &format!("t{}", x))?
+                    .map(Spanned::into_inner),
+                Some(true)
+            );
+            sim_assert_eq!(
+                config
+                    .get_bool("BOOLTEST", &format!("f{}", x))?
+                    .map(Spanned::into_inner),
+                Some(false)
+            );
+            assert!(config
+                .get_bool("BOOLTEST", &format!("e{}", x))
+                .unwrap_err()
+                .to_string()
+                .starts_with("invalid boolean: "));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn configparser_compat_weird_errors() -> eyre::Result<()> {
+        use similar_asserts::assert_eq as sim_assert_eq;
+        crate::tests::init();
+
+        let mut config = Value::default();
+        config.add_section(Spanned::from("Foo"), []);
+
+        // unlike configparser, we do not raise `DuplicateSectionError`,
+        // however, the user can manuelly detect when a key is present more than once
+        sim_assert_eq!(
+            config.add_section(Spanned::from("Foo"), []),
+            Some(Section::from_iter([]).with_name(Spanned::from("Foo"))),
+        );
+
+        // our implementation is very relaxed in that we collect all the options from all the
+        // occurences of the same of section
+        let config = unindent(&format!(
+            "
+            [Foo]
+            will this be added{equals}True
+            [Bar]
+            what about this{equals}True
+            [Foo]
+            oops{equals}this won't
+            ",
+            equals = DEFAULT_DELIMITERS[0],
+        ));
+        let config = parse(&config, &Options::default(), &Printer::default()).0?;
+        let mut expected = Value::default();
+        expected.add_section(
+            Spanned::from("Foo"),
+            [
+                (Spanned::from("will this be added"), Spanned::from("True")),
+                (Spanned::from("oops"), Spanned::from("this won't")),
+            ],
+        );
+        expected.add_section(
+            Spanned::from("Bar"),
+            [(Spanned::from("what about this"), Spanned::from("True"))],
+        );
+
+        sim_assert_eq!(config.cleared_spans(), expected);
+        Ok(())
+    }
+
+    #[test]
+    fn configparser_compat_get_after_duplicate_option_error() -> eyre::Result<()> {
+        use similar_asserts::assert_eq as sim_assert_eq;
+        crate::tests::init();
+
+        let config = unindent(&format!(
+            "
+            [Foo]
+            x{equals}1
+            y{equals}2
+            y{equals}3
+            ",
+            equals = DEFAULT_DELIMITERS[0],
+        ));
+        let options = Options {
+            strict: true,
+            ..Options::default()
+        };
+        let config = parse(&config, &options, &Printer::default()).0?;
+        let mut expected = Value::default();
+        sim_assert_eq!(config.get("Foo", "x").deref_inner(), Some("1"));
+        sim_assert_eq!(config.get("Foo", "y").deref_inner(), Some("2"));
+        Ok(())
+    }
+
+    #[test]
+    fn configparser_compat_set_string_types() -> eyre::Result<()> {
+        use similar_asserts::assert_eq as sim_assert_eq;
+        crate::tests::init();
+
+        let config = unindent(&format!(
+            "
+            [sect]
+            option1{equals}foo
+            ",
+            equals = DEFAULT_DELIMITERS[0],
+        ));
+        let mut config = parse(&config, &Options::default(), &Printer::default()).0?;
+
+        // check that we don't get an exception when setting values in
+        // an existing section using strings:
+
+        config.set("sect", "option1".into(), "splat".into());
+        config.set("sect", "option1".into(), "splat".to_string().into());
+        config.set("sect", "option2".into(), "splat".into());
+        config.set("sect", "option2".into(), "splat".to_string().into());
+        config.set("sect", "option1".into(), "splat".into());
+        config.set("sect", "option2".into(), "splat".into());
+        Ok(())
+    }
+
+    #[test]
+    fn configparser_compat_check_items_config() -> eyre::Result<()> {
+        use similar_asserts::assert_eq as sim_assert_eq;
+        crate::tests::init();
+
+        let config = unindent(&format!(
+            r#"
+            default {delim0} <default>
+
+            [section]
+            name {delim0} %(value)s
+            key{delim1} |%(name)s|
+            getdefault{delim1} |%(default)s|
+            "#,
+            delim0 = DEFAULT_DELIMITERS[0],
+            delim1 = DEFAULT_DELIMITERS[1],
+        ));
+        let mut config = parse(&config, &Options::default(), &Printer::default()).0?;
+        let mut items = config
+            .section("section")
+            .unwrap()
+            .iter()
+            .map(|(k, v)| (k.as_ref().as_str(), v.as_ref().as_str()))
+            .collect::<Vec<_>>();
+        sim_assert_eq!(
+            items,
+            vec![
+                ("default", "<default>"),
+                ("name", "%(value)s"),
+                ("key", "|%(name)s|"),
+                ("getdefault", "|%(default)s|"),
+            ]
+        );
+        // self.assertEqual(L, expected);
+        sim_assert_eq!(config.section("no such section"), None);
+        Ok(())
+    }
+
+    #[test]
+    fn configparser_compat_popitem() -> eyre::Result<()> {
+        use similar_asserts::assert_eq as sim_assert_eq;
+        crate::tests::init();
+
+        let config = unindent(&format!(
+            r#"
+            [section1]
+            name1 {delim0} value1
+            [section2]
+            name2 {delim0} value2
+            [section3]
+            name3 {delim0} value3
+            "#,
+            delim0 = DEFAULT_DELIMITERS[0],
+        ));
+        let mut config = parse(&config, &Options::default(), &Printer::default()).0?;
+
+        sim_assert_eq!(
+            config
+                .pop()
+                .map(|section| section.name)
+                .as_ref()
+                .deref_inner(),
+            Some("section1")
+        );
+        sim_assert_eq!(
+            config
+                .pop()
+                .map(|section| section.name)
+                .as_ref()
+                .deref_inner(),
+            Some("section2")
+        );
+        sim_assert_eq!(
+            config
+                .pop()
+                .map(|section| section.name)
+                .as_ref()
+                .deref_inner(),
+            Some("section3")
+        );
+        sim_assert_eq!(config.pop(), None);
+        Ok(())
+    }
+
+    #[test]
+    fn configparser_compat_clear() -> eyre::Result<()> {
+        use similar_asserts::assert_eq as sim_assert_eq;
+        crate::tests::init();
+
+        let mut config = Value::default();
+        config.defaults_mut().set("foo".into(), "Bar".into());
+        sim_assert_eq!(
+            config.defaults().get("Foo").deref_inner(),
+            Some("Bar"),
+            "could not locate option, expecting case-insensitive option names"
+        );
+
+        config.add_section(
+            "zing".into(),
+            [
+                ("option1".into(), "value1".into()),
+                ("option2".into(), "value2".into()),
+            ],
+        );
+
+        sim_assert_eq!(config.section_names().collect::<Vec<_>>(), vec!["zing"]);
+        sim_assert_eq!(
+            config.section("zing").map(|section| section
+                .keys()
+                .map(|k| k.as_ref().as_str())
+                .collect::<Vec<&str>>()),
+            Some(vec!["option1", "option2", "foo"]),
+        );
+
+        config.clear();
+        sim_assert_eq!(
+            config.section_names().collect::<Vec<&Spanned<String>>>(),
+            vec![] as Vec<&Spanned<String>>
+        );
+        sim_assert_eq!(
+            config
+                .defaults()
+                .keys()
+                .map(|k| k.as_ref().as_str())
+                .collect::<Vec<&str>>(),
+            vec!["foo"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn configparser_compat_setitem() -> eyre::Result<()> {
+        use similar_asserts::assert_eq as sim_assert_eq;
+        crate::tests::init();
+
+        let config = unindent(&format!(
+            r#"
+            nameD {equals} valueD
+            [section1]
+            name1 {equals} value1
+            [section2]
+            name2 {equals} value2
+            [section3]
+            name3 {equals} value3
+            "#,
+            equals = DEFAULT_DELIMITERS[0],
+        ));
+        let mut config = parse(&config, &Options::default(), &Printer::default()).0?;
+
+        sim_assert_eq!(
+            config.section("section1").map(|section| section
+                .keys()
+                .map(|k| k.as_ref().as_str())
+                .collect::<Vec<_>>()),
+            Some(vec!["name1", "named"])
+        );
+        sim_assert_eq!(
+            config.section("section2").map(|section| section
+                .keys()
+                .map(|k| k.as_ref().as_str())
+                .collect::<Vec<_>>()),
+            Some(vec!["name2", "named"])
+        );
+        sim_assert_eq!(
+            config.section("section3").map(|section| section
+                .keys()
+                .map(|k| k.as_ref().as_str())
+                .collect::<Vec<_>>()),
+            Some(vec!["name3", "named"])
+        );
+        sim_assert_eq!(
+            config
+                .section("section1")
+                .and_then(|section| section.get("name1"))
+                .deref_inner(),
+            Some("value1")
+        );
+        sim_assert_eq!(
+            config
+                .section("section2")
+                .and_then(|section| section.get("name2"))
+                .deref_inner(),
+            Some("value2")
+        );
+        sim_assert_eq!(
+            config
+                .section("section3")
+                .and_then(|section| section.get("name3"))
+                .deref_inner(),
+            Some("value3")
+        );
+        sim_assert_eq!(
+            config.section_names().collect::<Vec<_>>(),
+            vec!["section1", "section2", "section3"]
+        );
+        config.add_section("section2".into(), [("name22".into(), "value22".into())]);
+        sim_assert_eq!(
+            config.section("section2").map(|section| section
+                .keys()
+                .map(|k| k.as_ref().as_str())
+                .collect::<Vec<_>>()),
+            Some(vec!["name22", "named"]),
+        );
+        sim_assert_eq!(
+            config
+                .section("section2")
+                .and_then(|section| section.get("name22"))
+                .deref_inner(),
+            Some("value22")
+        );
+        assert!(!config.section("section2").unwrap().has_option("name2"));
+        sim_assert_eq!(config.section("section2").unwrap().get("name2"), None);
+
+        sim_assert_eq!(
+            config.section_names().collect::<Vec<_>>(),
+            vec!["section1", "section2", "section3"]
+        );
+        config.add_section("section3".into(), []);
+        sim_assert_eq!(
+            config.section("section3").map(|section| section
+                .keys()
+                .map(|k| k.as_ref().as_str())
+                .collect::<Vec<_>>()),
+            Some(vec!["named"])
+        );
+
+        assert!(!config.section("section3").unwrap().has_option("name3"));
+        sim_assert_eq!(config.section("section3").unwrap().get("name3"), None);
+
+        sim_assert_eq!(
+            config.section_names().collect::<Vec<_>>(),
+            vec!["section1", "section2", "section3"]
+        );
+        // For bpo-32108, assigning default_section to itself.
+        *config.defaults_mut() = config.defaults().clone();
+        assert_ne!(
+            config.defaults().keys().collect::<Vec<&Spanned<String>>>(),
+            vec![] as Vec<&Spanned<String>>
+        );
+        *config.defaults_mut() = Section::default();
+
+        sim_assert_eq!(
+            config.defaults().keys().collect::<Vec<_>>(),
+            vec![] as Vec<&Spanned<String>>
+        );
+        sim_assert_eq!(
+            config
+                .section("section1")
+                .unwrap()
+                .keys()
+                .collect::<Vec<_>>(),
+            vec!["name1"]
+        );
+        sim_assert_eq!(
+            config
+                .section("section2")
+                .unwrap()
+                .keys()
+                .collect::<Vec<_>>(),
+            vec!["name22"]
+        );
+        sim_assert_eq!(
+            config
+                .section("section3")
+                .unwrap()
+                .keys()
+                .collect::<Vec<_>>(),
+            vec![] as Vec<&Spanned<String>>
+        );
+        sim_assert_eq!(
+            config.section_names().collect::<Vec<_>>(),
+            vec!["section1", "section2", "section3"]
+        );
+
+        // For bpo-32108, assigning section to itself.
+        // *config.section_mut("section2").unwrap().as_mut() =
+        //     config.section("section2").unwrap().clone();
+        let section2: Section = config.section("section2").unwrap().as_ref().clone();
+        config
+            .section_mut("section2")
+            .unwrap()
+            .replace_with(section2);
+        sim_assert_eq!(
+            config
+                .section("section2")
+                .unwrap()
+                .keys()
+                .collect::<Vec<_>>(),
+            vec!["name22"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn configparser_compat_invalid_multiline_value() -> eyre::Result<()> {
+        use similar_asserts::assert_eq as sim_assert_eq;
+        crate::tests::init();
+
+        let config = unindent(&format!(
+            "\
+            [DEFAULT]
+            test {equals} test
+            invalid\
+            ",
+            equals = DEFAULT_DELIMITERS[0],
+        ));
+        let res = parse(&config, &Options::default(), &Printer::default()).0;
+        let err = res.err().map(|err| err.to_string());
+        sim_assert_eq!(
+            err.as_deref(),
+            Some("syntax error: variable assignment missing one of: `=`, `:`")
+        );
+
+        // sim_assert_eq!(
+        //     config.section("DEFAULT").unwrap().get("test").deref_inner(),
+        //     Some("test")
+        // );
+        // sim_assert_eq!(
+        //     config.section("DEFAULT").unwrap().get("test").deref_inner(),
+        //     Some("test")
+        // );
+        Ok(())
+    }
+
+    #[test]
+    fn configparser_compat_parse_cfgparser_1() -> eyre::Result<()> {
+        use similar_asserts::assert_eq as sim_assert_eq;
+        crate::tests::init();
+        let config = include_str!("../test-data/cfgparser.1.ini");
+        let mut config = parse(&config, &Options::default(), &Printer::default()).0?;
+        dbg!(&config);
+        Ok(())
+    }
+
+    #[test]
+    fn configparser_compat_parse_cfgparser_2() -> eyre::Result<()> {
+        use similar_asserts::assert_eq as sim_assert_eq;
+        crate::tests::init();
+        let config = include_str!("../test-data/cfgparser.2.ini");
+        let mut config = parse(&config, &Options::default(), &Printer::default()).0?;
+        dbg!(&config);
+        Ok(())
+    }
+
+    #[test]
+    fn configparser_compat_parse_cfgparser_3() -> eyre::Result<()> {
+        use similar_asserts::assert_eq as sim_assert_eq;
+        crate::tests::init();
+        let config = include_str!("../test-data/cfgparser.3.ini");
+        let mut config = parse(&config, &Options::default(), &Printer::default()).0?;
+        dbg!(&config);
+        Ok(())
+    }
+
     /// Basic configparser compat test
     ///
     /// adapted from: https://github.com/python/cpython/blob/3.13/Lib/test/test_configparser.py#L294
     #[test]
     fn configparser_compat_basic() -> eyre::Result<()> {
         crate::tests::init();
-
-        let delimiters = ['=', ':'];
-        let comment_prefixes = [';', '#'];
 
         let config = unindent::unindent(&format!(
             r#"
@@ -1355,50 +2204,50 @@ mod tests {
             [This One Has A ] In It]
               forks {d0} spoons
             "#,
-            d0 = delimiters[0],
-            d1 = delimiters[1],
-            c0 = comment_prefixes[0],
-            c1 = comment_prefixes[1],
+            d0 = DEFAULT_DELIMITERS[0],
+            d1 = DEFAULT_DELIMITERS[1],
+            c0 = DEFAULT_COMMENT_PREFIXES[0],
+            c1 = DEFAULT_COMMENT_PREFIXES[1],
         ));
 
-        let mut have = parse(&config, &Printer::default()).0?;
+        let mut have = parse(&config, &Options::default(), &Printer::default()).0?;
         check_configparser_compat_basic(&mut have)?;
         // let have = super::value::from_str(&config).map_?;
         // let expected = Value {
         //     sections: [
         //         (
-        //             Spanned::dummy("DEFAULT".to_string()),
+        //             Spanned::from("DEFAULT".to_string()),
         //             [
         //                 (
-        //                     Spanned::dummy("key1".to_string()),
-        //                     Spanned::dummy("value1".to_string()),
+        //                     Spanned::from("key1".to_string()),
+        //                     Spanned::from("value1".to_string()),
         //                 ),
         //                 (
-        //                     Spanned::dummy("pizzatime".to_string()),
-        //                     Spanned::dummy("yes".to_string()),
+        //                     Spanned::from("pizzatime".to_string()),
+        //                     Spanned::from("yes".to_string()),
         //                 ),
         //                 (
-        //                     Spanned::dummy("cost".to_string()),
-        //                     Spanned::dummy("9".to_string()),
+        //                     Spanned::from("cost".to_string()),
+        //                     Spanned::from("9".to_string()),
         //                 ),
         //             ]
         //             .into_iter()
         //             .collect(),
         //         ),
         //         (
-        //             Spanned::dummy("topsecrets".to_string()),
+        //             Spanned::from("topsecrets".to_string()),
         //             [(
-        //                 Spanned::dummy("nuclear launch codes".to_string()),
-        //                 Spanned::dummy("topsecret".to_string()),
+        //                 Spanned::from("nuclear launch codes".to_string()),
+        //                 Spanned::from("topsecret".to_string()),
         //             )]
         //             .into_iter()
         //             .collect(),
         //         ),
         //         (
-        //             Spanned::dummy("github.com".to_string()),
+        //             Spanned::from("github.com".to_string()),
         //             [(
-        //                 Spanned::dummy("User".to_string()),
-        //                 Spanned::dummy("QEDK".to_string()),
+        //                 Spanned::from("User".to_string()),
+        //                 Spanned::from("QEDK".to_string()),
         //             )]
         //             .into_iter()
         //             .collect(),
@@ -1469,56 +2318,29 @@ mod tests {
                 gamma
         "#};
 
-        // let mut state = super::ReadState::default();
-        // let cursor = std::io::Cursor::new(config);
-        // let reader = std::io::BufReader::new(cursor);
-        // let mut lines = super::lines::Lines::new(reader);
-        // while let Some(value) = lines.new_parse_next(&mut state).transpose() {
-        //     dbg!(value?);
-        // }
-
-        let have = parse(config, &Printer::default()).0?;
-        // let have = crate::from_str(config)?;
+        let have = parse(config, &Options::default(), &Printer::default()).0?;
         dbg!(&have);
-        let expected = Value::new(
+        let mut expected = Value::with_defaults([].into_iter().collect());
+        expected.add_section(
+            Spanned::from("options.packages.find"),
+            [(
+                Spanned::from("exclude"),
+                Spanned::from("\nexample*\ntests*\ndocs*\nbuild"),
+            )],
+        );
+        expected.add_section(
+            Spanned::from("bumpversion:file:CHANGELOG.md"),
+            [(
+                Spanned::from("replace"),
+                Spanned::from("**unreleased**\n**v{new_version}**"),
+            )],
+        );
+        expected.add_section(
+            Spanned::from("bumpversion:part:release"),
             [
-                (
-                    Spanned::dummy("options.packages.find".to_string()),
-                    [(
-                        Spanned::dummy("exclude".to_string()),
-                        Spanned::dummy("\nexample*\ntests*\ndocs*\nbuild".to_string()),
-                    )]
-                    .into_iter()
-                    .collect(),
-                ),
-                (
-                    Spanned::dummy("bumpversion:file:CHANGELOG.md".to_string()),
-                    [(
-                        Spanned::dummy("replace".to_string()),
-                        Spanned::dummy("**unreleased**\n**v{new_version}**".to_string()),
-                    )]
-                    .into_iter()
-                    .collect(),
-                ),
-                (
-                    Spanned::dummy("bumpversion:part:release".to_string()),
-                    [
-                        (
-                            Spanned::dummy("optional_value".to_string()),
-                            Spanned::dummy("gamma".to_string()),
-                        ),
-                        (
-                            Spanned::dummy("values".to_string()),
-                            Spanned::dummy("\ndev\ngamma".to_string()),
-                        ),
-                    ]
-                    .into_iter()
-                    .collect(),
-                ),
-            ]
-            .into_iter()
-            .collect(),
-            [].into_iter().collect(),
+                (Spanned::from("optional_value"), Spanned::from("gamma")),
+                (Spanned::from("values"), Spanned::from("\ndev\ngamma")),
+            ],
         );
 
         similar_asserts::assert_eq!(have.clone().cleared_spans(), expected);

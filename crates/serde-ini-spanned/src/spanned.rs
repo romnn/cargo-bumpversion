@@ -7,6 +7,12 @@ pub struct Spanned<T> {
     pub span: Span,
 }
 
+impl std::borrow::Borrow<String> for Spanned<String> {
+    fn borrow(&self) -> &String {
+        &self.inner
+    }
+}
+
 impl std::borrow::Borrow<str> for Spanned<String> {
     fn borrow(&self) -> &str {
         self.inner.as_str()
@@ -76,9 +82,9 @@ impl<T> Spanned<T> {
         }
     }
 
-    pub fn dummy(value: T) -> Self {
+    pub const fn dummy(value: T) -> Self {
         Self {
-            span: Span::default(),
+            span: Span { start: 0, end: 0 },
             inner: value,
         }
     }
@@ -121,6 +127,18 @@ where
 {
     fn eq(&self, other: &&T) -> bool {
         (&self.inner as &dyn PartialEq<T>).eq(*other)
+    }
+}
+
+impl PartialEq<str> for Spanned<String> {
+    fn eq(&self, other: &str) -> bool {
+        std::cmp::PartialEq::eq(self.as_ref().as_str(), other)
+    }
+}
+
+impl<'a> PartialEq<str> for &'a Spanned<String> {
+    fn eq(&self, other: &str) -> bool {
+        std::cmp::PartialEq::eq(self.as_ref().as_str(), other)
     }
 }
 
