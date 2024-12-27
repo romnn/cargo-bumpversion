@@ -1,6 +1,6 @@
 pub mod ini;
 pub mod pyproject_toml;
-// pub mod toml;
+pub mod toml;
 
 use crate::diagnostics::{DiagnosticExt, FileId, Printer, Span, Spanned};
 use codespan_reporting::diagnostic::{Diagnostic, Label};
@@ -145,9 +145,9 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn parse(
+    pub fn parse<W>(
         path: impl AsRef<Path>,
-        printer: &Printer,
+        printer: &Printer<W>,
         strict: bool,
         diagnostics: &mut Vec<Diagnostic<FileId>>,
     ) -> eyre::Result<Option<Self>> {
@@ -168,7 +168,7 @@ impl Config {
                 Self::from_pyproject_toml(&config, file_id, strict, diagnostics).map_err(Into::into)
             }
             Some(other) => {
-                eyre::bail!("unkown config file format: {other:?}");
+                eyre::bail!("unknown config file format: {other:?}");
             }
         }
     }

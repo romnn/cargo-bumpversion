@@ -33,7 +33,7 @@ pub struct Tag {
 pub mod tests {
     use color_eyre::eyre;
 
-    macro_rules! assert_eq_sorted {
+    macro_rules! sim_assert_eq_sorted {
         ($left:expr, $right:expr $(,)?) => {
             $left.sort();
             $right.sort();
@@ -45,7 +45,7 @@ pub mod tests {
             similar_asserts::assert_eq!($left, $right, $($arg)+);
         };
     }
-    pub(crate) use assert_eq_sorted;
+    pub(crate) use sim_assert_eq_sorted;
 
     static INIT: std::sync::Once = std::sync::Once::new();
 

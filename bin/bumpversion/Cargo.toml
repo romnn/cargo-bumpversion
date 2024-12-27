@@ -29,7 +29,7 @@ denylist = ["default"]
 [dependencies]
 color-eyre.workspace = true
 clap = { version = "4", features = ["derive", "env", "color"] }
-clap-verbosity-flag = "2"
+clap-verbosity-flag = "3"
 
 # logging
 tracing.workspace = true

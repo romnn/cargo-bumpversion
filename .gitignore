@@ -3,3 +3,6 @@ target/
 deprecated/
 crates/serde-ini/
 __pycache__/
+dist/
+.intentionally-empty-file.o
+tmpbuild/

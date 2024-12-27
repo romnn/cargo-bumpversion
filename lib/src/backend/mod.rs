@@ -1,9 +1,8 @@
+pub mod native;
+
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Output, Stdio};
-
-#[cfg(feature = "native")]
-pub mod native;
 
 #[cfg(test)]
 pub mod temp;

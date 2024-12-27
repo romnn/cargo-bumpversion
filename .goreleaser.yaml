@@ -1,0 +1,27 @@
+version: 2
+before:
+  hooks:
+    - rustup default stable
+    - cargo install --locked cargo-zigbuild
+
+builds:
+  - id: "bumpversion"
+    builder: rust
+    binary: bumpversion
+    targets:
+      # - x86_64-unknown-linux-gnu
+      # - x86_64-apple-darwin
+      # - x86_64-pc-windows-gnu
+      # - aarch64-unknown-linux-gnu
+      - aarch64-apple-darwin
+    dir: bin/bumpversion
+    # dir: ./
+    tool: cargo
+    command: zigbuild
+    flags:
+      - "--release"
+      - "--package=bumpversion-cli"
+      - "--target-dir=./"
+      # - "--target-dir=./bin/bumpversion/"
+      # target/{{.Target}}/release"
+      # - "--bin=bumpversion"

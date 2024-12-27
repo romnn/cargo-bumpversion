@@ -37,97 +37,7 @@ pub trait ClearSpans {
     }
 }
 
-// pub trait Cast {
-//     fn get_int(&self, key: &str) -> Result<Option<Spanned<i32>>, std::num::ParseIntError>;
-//
-//     fn get_float(&self, key: &str) -> Result<Option<Spanned<f64>>, std::num::ParseFloatError>;
-//
-//     fn get_bool(&self, key: &str) -> Result<Option<Spanned<bool>>, InvalidBooleanError>;
-// }
-
 pub type RawSection = IndexMap<Spanned<String>, Spanned<String>>;
-
-// #[derive(Debug, Clone, Default, PartialEq, Eq)]
-// pub struct Sections(IndexMap<Spanned<String>, Section>);
-
-// impl Sections {
-//     pub fn drain<R>(&mut self, range: R) -> indexmap::map::Drain<'_, Spanned<String>, Section>
-//     where
-//         R: std::ops::RangeBounds<usize>,
-//     {
-//         self.0.drain(range)
-//     }
-//
-//     pub fn keys(&self) -> indexmap::map::Keys<'_, Spanned<String>, Section> {
-//         self.0.keys()
-//     }
-//
-//     pub fn entry(
-//         &mut self,
-//         key: Spanned<String>,
-//     ) -> indexmap::map::Entry<'_, Spanned<String>, Section> {
-//         self.0.entry(key)
-//     }
-//
-//     pub fn remove<Q>(&mut self, key: &Q) -> Option<Section>
-//     where
-//         Q: ?Sized + Hash + Equivalent<Spanned<String>>,
-//     {
-//         self.0.shift_remove(key)
-//     }
-//
-//     pub fn get<Q>(&self, key: &Q) -> Option<&Section>
-//     where
-//         Q: ?Sized + Hash + Equivalent<Spanned<String>>,
-//     {
-//         self.0.get(key)
-//     }
-//
-//     pub fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut Section>
-//     where
-//         Q: ?Sized + Hash + Equivalent<Spanned<String>>,
-//     {
-//         self.0.get_mut(key)
-//     }
-// }
-
-// impl std::ops::IndexMut<&str> for Sections {
-//     fn index_mut(&mut self, index: &str) -> &mut Self::Output {
-//         self.get_mut(index).unwrap()
-//     }
-// }
-//
-// impl std::ops::Index<&str> for Sections {
-//     type Output = Section;
-//
-//     fn index(&self, index: &str) -> &Self::Output {
-//         self.get(index).unwrap()
-//     }
-// }
-
-// impl FromIterator<(Spanned<String>, Section)> for Sections {
-//     fn from_iter<T: IntoIterator<Item = (Spanned<String>, Section)>>(iter: T) -> Self {
-//         Sections(iter.into_iter().collect())
-//     }
-// }
-//
-// impl IntoIterator for Sections {
-//     type Item = (Spanned<String>, Section);
-//     type IntoIter = indexmap::map::IntoIter<Spanned<String>, Section>;
-//
-//     fn into_iter(self) -> Self::IntoIter {
-//         self.0.into_iter()
-//     }
-// }
-
-// impl<'a> IntoIterator for &'a Sections {
-//     type Item = (&'a Spanned<String>, &'a Section);
-//     type IntoIter = indexmap::map::Iter<'a, Spanned<String>, Section>;
-//
-//     fn into_iter(self) -> Self::IntoIter {
-//         self.0.iter()
-//     }
-// }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Section {
@@ -406,21 +316,10 @@ impl ClearSpans for Value {
     }
 }
 
-// impl std::ops::IndexMut<&str> for Value {
-//     fn index_mut(&mut self, index: &str) -> &mut Self::Output {
-//         &mut self.sections[index]
-//     }
-// }
-
 #[derive(Clone, Copy, PartialEq)]
 pub struct SectionProxy<'a> {
     pub section: &'a Section,
-    // pub name: &'a Spanned<String>,
-    // section: &'a RawSection,
-    // section: &'a str,
-    // sections: &'a Sections,
     defaults: Option<&'a Section>,
-    // defaults: Option<&'a RawSection>,
 }
 
 impl<'a> AsRef<Section> for SectionProxy<'a> {
@@ -457,8 +356,6 @@ impl<'a> std::ops::Index<&str> for SectionProxy<'a> {
 
 pub struct SectionProxyMut<'a> {
     section: &'a mut Section,
-    // pub name: &'a Spanned<String>,
-    // section: &'a mut RawSection,
     defaults: Option<&'a Section>,
 }
 
@@ -502,11 +399,6 @@ impl<'a> SectionProxyMut<'a> {
     pub fn replace_with(&mut self, section: Section) {
         *self.section = section;
     }
-    // pub fn replace_with(&mut self, section: SectionProxy<'a>) {
-    //     self.name = section.name;
-    //     *self.section = section.section.clone();
-    //     self.defaults = section.defaults;
-    // }
 
     pub fn drain<R>(
         &mut self,
@@ -525,7 +417,6 @@ impl<'a> SectionProxyMut<'a> {
     ) -> Option<Spanned<String>> {
         key.inner = key.inner.to_lowercase();
         self.section_mut().insert(key, value)
-        // self.section.insert(key, value)
     }
 
     pub fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut Spanned<String>>
@@ -534,7 +425,6 @@ impl<'a> SectionProxyMut<'a> {
     {
         let key: String = key.lowercase();
         self.section_mut().get_mut(&key)
-        // self.section.get_mut(key)
     }
 
     pub fn get_mut_owned<Q>(mut self, key: &'a Q) -> Option<&mut Spanned<String>>
@@ -543,7 +433,6 @@ impl<'a> SectionProxyMut<'a> {
     {
         let key: String = key.lowercase();
         self.section.get_mut(&key)
-        // self.section.get_mut(key)
     }
 
     pub fn remove_option<Q>(&mut self, key: &Q) -> Option<Spanned<String>>
@@ -552,7 +441,6 @@ impl<'a> SectionProxyMut<'a> {
     {
         let key: String = key.lowercase();
         self.section_mut().shift_remove(&key)
-        // self.section.shift_remove(key)
     }
 }
 
@@ -612,10 +500,8 @@ macro_rules! impl_section_proxy {
 
             pub fn section(&self) -> &RawSection {
                 &self.section.inner
-                // &self.sections[self.section]
             }
 
-            // pub fn options(&self) -> impl Iterator<Item = &Spanned<String>> + use<'_> {
             #[deprecated]
             pub fn options_old(&self) -> Keys<'_> {
                 self.keys_old()
@@ -627,7 +513,6 @@ macro_rules! impl_section_proxy {
 
             pub fn iter(
                 self,
-                // ) -> indexmap::map::Iter<'a, Spanned<std::string::String>, Spanned<std::string::String>>
             ) -> std::iter::Chain<
                 indexmap::map::Iter<'a, Spanned<std::string::String>, Spanned<std::string::String>>,
                 indexmap::map::Iter<'a, Spanned<std::string::String>, Spanned<std::string::String>>,
@@ -636,48 +521,8 @@ macro_rules! impl_section_proxy {
                 self.defaults.unwrap().iter().chain(self.section.iter())
             }
 
-            // pub fn options(&self) -> Keys<'_> {
-            //     self.keys()
-            // }
-
-            // // pub fn options(self) -> indexmap::map::Keys<'a, Spanned<String>, Spanned<String>> {
-            // pub fn options(&self) -> impl Iterator<Item = &Spanned<String>> + use<'_> {
-            //     // static EMPTY_SECTION: Section = Section {
-            //     //     name: Spanned::dummy(String::new()),
-            //     //     inner: IndexMap<Spanned<String>, Spanned<String>>,
-            //     // };
-            //     let empty_section: &Section = &*EMPTY_SECTION;
-            //     let default_section: Option<&Section> = self.defaults.as_deref();
-            //     // let default_section: &Section = self
-            //     //     .as_ref()
-            //     //     // .map(|defaults| &*defaults)
-            //     //     .unwrap_or(empty_section);
-            //     // .map(|defaults| defaults.keys())
-            //     // .unwrap_or_default();
-            //     self.section
-            //         .keys()
-            //         .chain(default_section.unwrap_or(empty_section).keys())
-            //     // self.section.keys()
-            //     // &self.sections[self.section]
-            // }
-
-            // pub fn keys(self) -> indexmap::map::Keys<'a, Spanned<String>, Spanned<String>> {
-            // pub fn keys(&self) -> impl Iterator<Item = &Spanned<String>> + use<'_> {
-            // pub fn keys(&self) -> Keys<'_> {
             pub fn keys(self) -> OwnedKeys<'a> {
-                // std::iter::Chain<
-                //         indexmap::map::Keys<'_, Spanned<String>, Spanned<String>>,
-                //         indexmap::map::Keys<'_, Spanned<String>, Spanned<String>>,
-                //     > {
-                // pub fn keys(&self) -> impl Iterator<Item = &Spanned<String>> + use<'_> {
-                // let default_keys = &self
-                //     .defaults
-                //     .as_ref()
-                //     .map(|defaults| defaults.keys())
-                //     .unwrap_or_default();
                 let empty_section: &Section = &*EMPTY_SECTION;
-                // let default_section: &'a Section =
-                //     &*self.defaults.as_deref().unwrap_or(empty_section);
                 let section_keys: indexmap::map::Keys<'a, Spanned<String>, Spanned<String>> =
                     self.section.keys();
                 let default_section_keys: indexmap::map::Keys<
@@ -685,65 +530,24 @@ macro_rules! impl_section_proxy {
                     Spanned<String>,
                     Spanned<String>,
                 > = self.defaults.unwrap().inner.keys();
-                // > = self.defaults.as_deref().unwrap_or(empty_section).keys();
-
-                // let default_section: Option<&'a Section> = &*self.defaults.unwrap_or(empty_section);
-                // let default_section: Option<&'a Section> = self.defaults;
-                // let default_section: &Section = self.defaults.as_ref().unwrap_or(empty_section);
 
                 section_keys.chain(default_section_keys)
-                // self.section.keys().chain(default_section.keys())
-                // .chain(default_section.unwrap_or(empty_section).keys())
-                // &self.sections[self.section]
             }
 
             #[deprecated]
             pub fn keys_old(&self) -> Keys<'_> {
-                // std::iter::Chain<
-                //         indexmap::map::Keys<'_, Spanned<String>, Spanned<String>>,
-                //         indexmap::map::Keys<'_, Spanned<String>, Spanned<String>>,
-                //     > {
-                // pub fn keys(&self) -> impl Iterator<Item = &Spanned<String>> + use<'_> {
-                // let default_keys = &self
-                //     .defaults
-                //     .as_ref()
-                //     .map(|defaults| defaults.keys())
-                //     .unwrap_or_default();
                 let empty_section: &Section = &*EMPTY_SECTION;
                 let default_section: Option<&Section> = self.defaults.as_deref();
-                // let default_section: &Section = self.defaults.as_ref().unwrap_or(empty_section);
 
                 self.section
                     .keys()
                     .chain(default_section.unwrap_or(empty_section).inner.keys())
-                // &self.sections[self.section]
             }
-
-            // pub fn get_test2<'b: 'a, Q>(&'b self, key: &'a Q) -> Option<&'a Spanned<String>>
-            // where
-            //     Q: ?Sized + Hash + Equivalent<Spanned<String>>,
-            // {
-            //     self.section.get(key)
-            // }
-
-            // pub fn get<'b>(&'b self, key: Spanned<String>) -> Option<&'a Spanned<String>> {
-            //     self.section.get(&key)
-            // }
-
-            // pub fn get<'b, Q>(self, key: &'b Q) -> Option<&Spanned<String>>
-            // where
-            //     'a: 'b,
-            //     Q: ?Sized + Hash + Equivalent<Spanned<String>>,
-            // {
-            //     self.section().inner.get(key)
-            // }
 
             pub fn get<Q>(self, key: &Q) -> Option<&'a Spanned<String>>
             where
                 Q: ?Sized + Hash + Equivalent<Spanned<String>> + Lowercase,
             {
-                // let key = key.lowercase();
-                // self.inner.get(&key)
                 let key: String = key.lowercase();
                 self.section.get(&key)
             }
@@ -767,27 +571,6 @@ macro_rules! impl_section_proxy {
                 'a: 'b,
                 Q: ?Sized + Hash + Equivalent<Spanned<String>> + Lowercase,
             {
-                // try:
-                //     d = self._unify_values(section, vars)
-                // except NoSectionError:
-                //     if fallback is _UNSET:
-                //         raise
-                //     else:
-                //         return fallback
-                // option = self.optionxform(option)
-                // try:
-                //     value = d[option]
-                // except KeyError:
-                //     if fallback is _UNSET:
-                //         raise NoOptionError(option, section)
-                //     else:
-                //         return fallback
-                //
-                // if raw or value is None:
-                //     return value
-                // else:
-                //     return self._interpolation.before_get(self, section, option, value, d)
-
                 let key: String = key.lowercase();
                 self.section().get(&key)
             }
@@ -820,8 +603,6 @@ macro_rules! impl_section_proxy {
             where
                 Q: ?Sized + Hash + Equivalent<Spanned<String>> + Lowercase,
             {
-                // self.section().contains_key(key)
-                // self.section(section)
                 let key: String = key.lowercase();
                 self.section
                     .get(key.as_str())
@@ -831,34 +612,6 @@ macro_rules! impl_section_proxy {
                         .and_then(|defaults| defaults.get(key.as_str())))
                     .is_some()
             }
-
-            // pub fn has_option_generic<Q>(&self, key: &Q) -> bool
-            // where
-            //     Q: ?Sized + Hash + Equivalent<Spanned<String>>,
-            // {
-            //     // self.section().contains_key(key)
-            //     // self.section(section)
-            //     let key = key.to_string().to_lowercase();
-            //     self.section
-            //         .get(key)
-            //         .or(self
-            //             .defaults
-            //             .as_ref()
-            //             .and_then(|defaults| defaults.get(key)))
-            //         .is_some()
-            //     // python configparser also checks the default section
-            //     // .and_then(|section| {
-            //     // section.get_owned(option)
-            //     // let SectionProxy {
-            //     //     section, defaults, ..
-            //     // } = section;
-            //     // section.get_owned(option).or(self.defaults.get(option))
-            //     // .and_then(|defaults| defaults.inner.get(option)))
-            //     // })
-            //     // .is_some()
-            //
-            //     // self.section.contains_key(key)
-            // }
 
             pub fn get_int(
                 self,
@@ -903,102 +656,17 @@ macro_rules! impl_section_proxy {
 impl_section_proxy!(SectionProxy);
 impl_section_proxy!(SectionProxyMut);
 
-// impl<'a> AsRef<SectionProxy<'a>> for SectionProxyMut<'a> {
-//     fn as_ref(&self) -> &SectionProxy<'a> {
-//
-//     }
-// }
-// impl<'a> std::ops::Deref for SectionProxyMut<'a> {
-//     type Target = SectionProxy<'a>;
-//     fn deref(&self) -> &Self::Target {
-//         SectionProxy {
-//             name: &*self.name,
-//             section: &*self.section,
-//             defaults: &*self.defaults,
-//         }
-//     }
-// }
-
-// impl<'a> SectionProxy<'a> {
-//     pub fn span(&self) -> &Span {
-//         &self.name.span
-//     }
-//
-//     pub fn get<Q>(&self, key: &Q) -> Option<&Spanned<String>>
-//     where
-//         Q: ?Sized + Hash + Equivalent<Spanned<String>>,
-//     {
-//         self.section.get(key)
-//     }
-//
-//     pub fn has_option<Q>(&self, key: &Q) -> bool
-//     where
-//         Q: ?Sized + Hash + Equivalent<Spanned<String>>,
-//     {
-//         self.section.contains_key(key)
-//     }
-//
-//     pub fn get_int(&self, key: &str) -> Result<Option<Spanned<i32>>, std::num::ParseIntError> {
-//         self.get(key)
-//             .map(|value| {
-//                 value
-//                     .as_ref()
-//                     .parse()
-//                     .map(|int| Spanned::new(value.span.clone(), int))
-//             })
-//             .transpose()
-//     }
-//
-//     pub fn get_float(&self, key: &str) -> Result<Option<Spanned<f64>>, std::num::ParseFloatError> {
-//         self.get(key)
-//             .map(|value| {
-//                 value
-//                     .as_ref()
-//                     .parse()
-//                     .map(|float| Spanned::new(value.span.clone(), float))
-//             })
-//             .transpose()
-//     }
-//
-//     pub fn get_bool(&self, key: &str) -> Result<Option<Spanned<bool>>, InvalidBooleanError> {
-//         self.get(key)
-//             .map(|value| {
-//                 convert_to_boolean(value.as_ref())
-//                     .map(|boolean| Spanned::new(value.span.clone(), boolean))
-//             })
-//             .transpose()
-//     }
-// }
-
 impl<'a> std::fmt::Display for SectionProxy<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Section({})", self.section.name.as_ref())
     }
 }
 
-// impl<'a> std::ops::Index<&str> for Value {
-//     type Output = SectionProxy<'a>;
-//
-//     fn index(&'a self, index: &str) -> &'a Self::Output {
-//         &SectionProxy {
-//             section: &self.sections[index],
-//             defaults: &self.defaults,
-//         }
-//     }
-// }
-
 #[derive(thiserror::Error, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[error("missing section: {0:?}")]
 pub struct NoSectionError(pub String);
 
 impl Value {
-    // pub fn new(mut sections: Sections, defaults: Section) -> Self {
-    //     for (name, section) in sections.iter_mut() {
-    //         section.name = name.clone();
-    //     }
-    //     Self { sections, defaults }
-    // }
-
     pub fn is_empty(&self) -> bool {
         self.sections.is_empty() && self.defaults.is_empty()
     }
@@ -1006,7 +674,6 @@ impl Value {
     pub fn replace_section(&mut self, mut key: Spanned<String>, section: Section) -> Section {
         let old_section = self.sections.entry(key).or_default();
         std::mem::replace(old_section, section)
-        // *section = section;
     }
 
     pub fn with_defaults(defaults: Section) -> Self {
@@ -1018,22 +685,14 @@ impl Value {
 
     pub fn add_section(
         &mut self,
-        // name: impl Into<Spanned<String>>,
         name: Spanned<String>,
         mut section: impl Into<Section>,
     ) -> Option<Section> {
-        // let name: Spanned<String> = name.into();
         let section: Section = section.into();
         let mut section = section.lowercase_keys();
         section.name = name.clone();
         self.sections.insert(name, section)
     }
-
-    // pub fn add_section(&mut self, name: Spanned<String>, mut section: Section) {
-    //     let mut section: Section = section.lowercase_keys();
-    //     section.name = name.clone();
-    //     self.sections.insert(name, section);
-    // }
 
     pub fn remove_section(&mut self, name: &str) -> Option<Section> {
         self.sections.shift_remove(name)
@@ -1051,24 +710,6 @@ impl Value {
     pub fn defaults_mut(&mut self) -> &mut Section {
         &mut self.defaults
     }
-
-    // pub fn defaults(&self) -> SectionProxy<'_> {
-    //     SectionProxy {
-    //         name: &self.defaults.name,
-    //         section_name: &self.defaults.inner,
-    //         sections: &self.defaults.inner,
-    //         // section: &self.defaults.inner,
-    //         defaults: None,
-    //     }
-    // }
-    //
-    // pub fn defaults_mut(&mut self) -> SectionProxyMut<'_> {
-    //     SectionProxyMut {
-    //         name: &self.defaults.name,
-    //         section: &mut self.defaults.inner,
-    //         defaults: None,
-    //     }
-    // }
 
     pub fn has_section(&self, section: &str) -> bool {
         self.section(section).is_some()
@@ -1090,59 +731,16 @@ impl Value {
         self.remove_section(&first_section_name)
     }
 
-    // pub fn sections(&self) -> impl Iterator<Item = SectionProxy<'_>> {
-    //     self.sections.iter().map(|(_, section)| SectionProxy {
-    //         name: &section.name,
-    //         // sections: &self.sections.inner,
-    //         // section: name,
-    //         section: &section.inner,
-    //         defaults: Some(&self.defaults),
-    //         // defaults: Some(&self.defaults.inner),
-    //     })
-    // }
-
-    // pub fn sections_mut<'a>(&mut self) -> impl Iterator<Item = SectionProxyMut<'_>> + use<'_> {
-    //     let test = &mut self.defaults;
-    //     let sections = &mut self.sections;
-    //     sections
-    //         .values_mut()
-    //         // .chain(std::iter::repeat())
-    //         .map(|section| SectionProxyMut {
-    //             name: &section.name,
-    //             // sections: &self.sections.inner,
-    //             // section: name,
-    //             section: &mut section.inner,
-    //             defaults: Some(test),
-    //             // defaults: Some(&self.defaults.inner),
-    //         })
-    // }
-
     pub fn section<'a>(&'a self, name: &str) -> Option<SectionProxy<'a>> {
-        // SectionProxy {
-        //     name: &section.name,
-        //     sections: &self.sections.inner,
-        //     section: name,
-        //     defaults: Some(&self.defaults),
-        //     // defaults: Some(&self.defaults.inner),
-        // }
-        self.sections
-            // .0
-            .get(name)
-            // .get_key_value(name)
-            .map(|section| SectionProxy {
-                section: &section,
-                // name: &section.name,
-                // section: &section.inner,
-                defaults: Some(&self.defaults),
-                // defaults: Some(&self.defaults.inner),
-            })
+        self.sections.get(name).map(|section| SectionProxy {
+            section: &section,
+            defaults: Some(&self.defaults),
+        })
     }
 
     pub fn section_mut(&mut self, name: &str) -> Option<SectionProxyMut<'_>> {
         self.sections.get_mut(name).map(|section| SectionProxyMut {
             section,
-            // name: &section.name,
-            // section: &mut section.inner,
             defaults: Some(&mut self.defaults),
         })
     }
@@ -1152,47 +750,14 @@ impl Value {
     // If the specified `section` is None or an empty string, DEFAULT is
     // assumed. If the specified `section` does not exist, returns False."""
     pub fn has_option(&self, section: &str, option: &str) -> bool {
-        // if not section or section == self.default_section:
-        //     option = self.optionxform(option)
-        //     return option in self._defaults
-        // elif section not in self._sections:
-        //     return False
-        // else:
-        //     option = self.optionxform(option)
-        //     return (option in self._sections[section]
-        //             or option in self._defaults)
         self.section(section)
             .map(|section| section.has_option(option))
             .unwrap_or(false)
-        // self.has_option(section, option)
-        // self.section(section)
-        //     // python configparser also checks the default section
-        //     .and_then(|section| {
-        //         // section.get_owned(option)
-        //         // let SectionProxy {
-        //         //     section, defaults, ..
-        //         // } = section;
-        //         section.get_owned(option).or(self.defaults.get(option))
-        //         // .and_then(|defaults| defaults.inner.get(option)))
-        //     })
-        //     .is_some()
     }
 
-    // pub fn options<'a>(&'a self, section: &str) -> Vec<&Spanned<String>> {
-    pub fn options<'a>(
-        &'a self,
-        section: &str,
-        // ) -> indexmap::map::Keys<Spanned<String>, Spanned<String>> {
-        // ) -> impl Iterator<Item = &'a Spanned<String>> + use<'_> {
-    ) -> Keys<'a> {
-        // let section: SectionProxy<'a> = self.section(section).unwrap();
-        // section.options()
-        // // section.ge(option)
+    pub fn options<'a>(&'a self, section: &str) -> Keys<'a> {
         self.section(section)
             .map(|section| section.options())
-            // .unwrap_or(EMPTY_SECTION.options())
-            // .unwrap_or(EMPTY_SECTION.options())
-            // .unwrap_or(std::iter::empty())
             .unwrap_or_default()
     }
 
@@ -1209,8 +774,6 @@ impl Value {
     }
 
     pub fn get<'a>(&'a self, section: &str, option: &'a str) -> Option<&'a Spanned<String>> {
-        // let section: SectionProxy<'a> = self.section(section)?;
-        // section.ge(option)
         self.section(section)
             .and_then(|section| section.get_owned(option))
     }
@@ -1270,8 +833,7 @@ fn finalize_continuation_value<'a>(
 ) {
     if let Some(mut current_value) = current_option.as_ref().and_then(|op| section.get_mut(op)) {
         // finalize previous
-        dbg!(&current_value.inner);
-        current_value.inner = current_value.inner.trim_end().to_string();
+        crate::parse::trim_trailing_whitespace(&mut current_value.inner, &mut current_value.span);
     }
 }
 
@@ -1317,10 +879,6 @@ pub fn from_reader<F: PartialEq + Copy>(
                     span,
                 } => {
                     let section = get_section(&current_section, &mut out);
-                    // let section = match current_section {
-                    //     Some(ref name) => &mut out.sections.entry(name.clone()).or_default(),
-                    //     None => &mut out.defaults,
-                    // };
                     if let Some(mut current_value) =
                         current_option.as_ref().and_then(|op| section.get_mut(op))
                     {
@@ -1333,24 +891,11 @@ pub fn from_reader<F: PartialEq + Copy>(
                     inner: Item::Value { mut key, value },
                     ..
                 } => {
-                    // dbg!(&key, &value);
                     let section = get_section(&current_section, &mut out);
-                    // let section = match current_section {
-                    //     Some(ref name) => &mut out.sections.entry(name.clone()).or_default(),
-                    //     None => &mut out.defaults,
-                    // };
                     finalize_continuation_value(&current_option, section);
-                    // if let Some(mut current_value) =
-                    //     current_option.as_ref().and_then(|op| section.get_mut(op))
-                    // {
-                    //     // finalize previous
-                    //     dbg!(&current_value.inner);
-                    //     current_value.inner = current_value.inner.trim_end().to_string();
-                    // }
 
                     key.inner = key.inner.to_lowercase();
                     current_option = Some(key.clone());
-                    // dbg!(&current_option);
                     let existing = section.get_key_value(&key);
                     if let Some((previous_key, _previous_value)) = existing {
                         let diagnostic = Diagnostic::warning_or_error(options.strict)

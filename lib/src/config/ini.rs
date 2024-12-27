@@ -415,8 +415,8 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use crate::config::{Config, FileConfig, PartConfig};
-    use crate::diagnostics::{Printer, ToDiagnostics};
-    use codespan_reporting::diagnostic;
+    use crate::diagnostics::{BufferedPrinter, ToDiagnostics};
+    use codespan_reporting::diagnostic::Diagnostic;
     use color_eyre::eyre;
     use indexmap::IndexMap;
     use serde_ini_spanned as ini;
@@ -426,18 +426,24 @@ mod tests {
     fn parse_ini(
         config: &str,
         options: ini::value::Options,
-        printer: &Printer,
-    ) -> (Result<Option<Config>, super::Error>, usize) {
+        printer: &BufferedPrinter,
+    ) -> (
+        Result<Option<Config>, super::Error>,
+        usize,
+        Vec<Diagnostic<usize>>,
+    ) {
         let mut diagnostics = vec![];
         let file_id = printer.add_source_file("bumpversion.cfg".to_string(), config.to_string());
         let strict = true;
         let config = Config::from_ini(config, options, file_id, strict, &mut diagnostics);
         if let Err(ref err) = config {
-            for diagnostic in err.to_diagnostics(file_id) {
-                printer.emit(&diagnostic);
-            }
+            diagnostics.extend(err.to_diagnostics(file_id));
         }
-        (config, file_id)
+        for diagnostic in diagnostics.iter() {
+            printer.emit(&diagnostic);
+        }
+        printer.print();
+        (config, file_id, diagnostics)
     }
 
     #[test]
@@ -458,7 +464,7 @@ mod tests {
         let config = parse_ini(
             bumpversion_cfg,
             ini::value::Options::default(),
-            &Printer::default(),
+            &BufferedPrinter::default(),
         )
         .0?;
 
@@ -539,7 +545,7 @@ mod tests {
         let config = parse_ini(
             setup_cfg_ini,
             ini::value::Options::default(),
-            &Printer::default(),
+            &BufferedPrinter::default(),
         )
         .0?;
 
@@ -595,8 +601,9 @@ mod tests {
         Ok(())
     }
 
+    /// Taken from https://github.com/callowayproject/bump-my-version/blob/master/tests/fixtures/basic_cfg.cfg
     #[test]
-    fn parse_cfg_ini_compat() -> eyre::Result<()> {
+    fn parse_compat_basic_cfg_cfg() -> eyre::Result<()> {
         crate::tests::init();
 
         let bumpversion_cfg = indoc::indoc! {r#"
@@ -638,7 +645,7 @@ mod tests {
         let config = parse_ini(
             bumpversion_cfg,
             ini::value::Options::default(),
-            &Printer::default(),
+            &BufferedPrinter::default(),
         )
         .0?;
         let expected = Config {
@@ -688,6 +695,88 @@ mod tests {
             )]
             .into_iter()
             .collect(),
+        };
+        similar_asserts::assert_eq!(config, Some(expected));
+        Ok(())
+    }
+
+    /// Taken from https://github.com/callowayproject/bump-my-version/blob/master/tests/fixtures/legacy_multiline_search.cfg
+    #[test]
+    fn parse_compat_legacy_multiline_search_cfg() -> eyre::Result<()> {
+        crate::tests::init();
+
+        let bumpversion_cfg = indoc::indoc! {r#"
+            [bumpversion]
+            current_version = 1.0.0
+
+            [bumpversion:file:MULTILINE_SEARCH.md]
+            search = **unreleased**
+                **v{current_version}**
+            replace = **unreleased**
+                **v{new_version}**
+        "#};
+
+        let config = parse_ini(
+            bumpversion_cfg,
+            ini::value::Options::default(),
+            &BufferedPrinter::default(),
+        )
+        .0?;
+        let expected = Config {
+            global: FileConfig {
+                current_version: Some("1.0.0".to_string()),
+                ..FileConfig::default()
+            },
+            files: vec![(
+                PathBuf::from("MULTILINE_SEARCH.md"),
+                FileConfig {
+                    search: Some("**unreleased**\n**v{current_version}**".to_string()),
+                    replace: Some("**unreleased**\n**v{new_version}**".to_string()),
+                    ..FileConfig::default()
+                },
+            )],
+            parts: [].into_iter().collect(),
+        };
+        similar_asserts::assert_eq!(config, Some(expected));
+        Ok(())
+    }
+
+    /// Taken from https://github.com/callowayproject/bump-my-version/blob/master/tests/fixtures/legacy_multiline_search_comma.cfg
+    #[test]
+    fn parse_compat_legacy_multiline_search_comma_cfg() -> eyre::Result<()> {
+        crate::tests::init();
+
+        let bumpversion_cfg = indoc::indoc! {r#"
+            [bumpversion]
+            current_version = 1.0.0
+
+            [bumpversion:file:MULTILINE_SEARCH.md]
+            search = **unreleased**,
+                **v{current_version}**,
+            replace = **unreleased**,
+                **v{new_version}**,
+        "#};
+
+        let config = parse_ini(
+            bumpversion_cfg,
+            ini::value::Options::default(),
+            &BufferedPrinter::default(),
+        )
+        .0?;
+        let expected = Config {
+            global: FileConfig {
+                current_version: Some("1.0.0".to_string()),
+                ..FileConfig::default()
+            },
+            files: vec![(
+                PathBuf::from("MULTILINE_SEARCH.md"),
+                FileConfig {
+                    search: Some("**unreleased**,\n**v{current_version}**,".to_string()),
+                    replace: Some("**unreleased**,\n**v{new_version}**,".to_string()),
+                    ..FileConfig::default()
+                },
+            )],
+            parts: [].into_iter().collect(),
         };
         similar_asserts::assert_eq!(config, Some(expected));
         Ok(())

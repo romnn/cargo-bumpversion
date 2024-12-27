@@ -231,7 +231,11 @@ pub(crate) fn parse_file_config<'de>(
     let dry_run = table.get("dry_run").map(as_bool).transpose()?;
     let commit = table.get("commit").map(as_bool).transpose()?;
     let tag = table.get("tag").map(as_bool).transpose()?;
-    let sign_tag = table.get("sign_tag").map(as_bool).transpose()?;
+    let sign_tag = table
+        .get("sign_tag")
+        .or(table.get("sign_tags"))
+        .map(as_bool)
+        .transpose()?;
     let tag_name = table.get("tag_name").map(as_string).transpose()?;
     let tag_message = table.get("tag_message").map(as_string).transpose()?;
     let commit_message = table
@@ -355,8 +359,9 @@ impl Config {
 pub mod tests {
     use crate::{
         config::{Config, FileConfig, PartConfig},
-        diagnostics::{Printer, ToDiagnostics},
+        diagnostics::{BufferedPrinter, ToDiagnostics},
     };
+    use codespan_reporting::diagnostic::Diagnostic;
     use color_eyre::eyre;
     use indexmap::IndexMap;
     use std::io::Read;
@@ -364,24 +369,24 @@ pub mod tests {
 
     pub fn parse_toml(
         config: &str,
-        printer: &Printer,
-    ) -> (Result<Option<Config>, super::Error>, usize) {
+        printer: &BufferedPrinter,
+    ) -> (
+        Result<Option<Config>, super::Error>,
+        usize,
+        Vec<Diagnostic<usize>>,
+    ) {
         let mut diagnostics = vec![];
         let file_id = printer.add_source_file("bumpversion.toml".to_string(), config.to_string());
         let strict = true;
-        let config = Config::from_pyproject_toml(config, file_id, strict, &mut diagnostics)
-            .map_err(|err| {
-                for diagnostic in err.to_diagnostics(file_id) {
-                    printer.emit(&diagnostic);
-                }
-                err
-            });
+        let config = Config::from_pyproject_toml(config, file_id, strict, &mut diagnostics);
         if let Err(ref err) = config {
-            for diagnostic in err.to_diagnostics(file_id) {
-                printer.emit(&diagnostic);
-            }
+            diagnostics.extend(err.to_diagnostics(file_id));
         }
-        (config, file_id)
+        for diagnostic in diagnostics.iter() {
+            printer.emit(&diagnostic);
+        }
+        printer.print();
+        (config, file_id, diagnostics)
     }
 
     #[test]
@@ -419,7 +424,7 @@ pub mod tests {
             version={new_version}"""
         "#};
 
-        let config = parse_toml(&pyproject_toml, &Printer::default()).0?;
+        let config = parse_toml(&pyproject_toml, &BufferedPrinter::default()).0?;
         println!("config: {:#?}", config);
 
         let expected = Config {
@@ -768,7 +773,7 @@ pub mod tests {
             check-class-attributes = false
         "#};
 
-        let config = parse_toml(&pyproject_toml, &Printer::default()).0?;
+        let config = parse_toml(&pyproject_toml, &BufferedPrinter::default()).0?;
         println!("config: {:#?}", config);
 
         let expected = Config {
@@ -874,7 +879,7 @@ pub mod tests {
             ..Config::default()
         };
 
-        let config = parse_toml(&pyproject_toml, &Printer::default()).0?;
+        let config = parse_toml(&pyproject_toml, &BufferedPrinter::default()).0?;
         similar_asserts::assert_eq!(config, Some(expected));
 
         let pyproject_toml = indoc::indoc! {r#"
@@ -981,7 +986,7 @@ pub mod tests {
             ..Config::default()
         };
 
-        let config = parse_toml(&pyproject_toml, &Printer::default()).0?;
+        let config = parse_toml(&pyproject_toml, &BufferedPrinter::default()).0?;
         similar_asserts::assert_eq!(config, Some(expected));
 
         Ok(())
@@ -1040,7 +1045,7 @@ pub mod tests {
             bump-my-version = "bumpversion.cli:cli"
         "#};
 
-        let config = parse_toml(&pyproject_toml, &Printer::default()).0?;
+        let config = parse_toml(&pyproject_toml, &BufferedPrinter::default()).0?;
         similar_asserts::assert_eq!(config, None);
         Ok(())
     }
@@ -1100,8 +1105,35 @@ pub mod tests {
             bump-my-version = "bumpversion.cli:cli"
         "#};
 
-        let config = parse_toml(&pyproject_toml, &Printer::default()).0?;
+        let config = parse_toml(&pyproject_toml, &BufferedPrinter::default()).0?;
         similar_asserts::assert_eq!(config, None);
+        Ok(())
+    }
+
+    #[test]
+    fn test_valid_pyproject_toml() -> eyre::Result<()> {
+        crate::tests::init();
+
+        let bumpversion_toml = indoc::indoc! {r#"
+            [tool.bumpversion]
+            current_version = "1.0.0"
+        "#};
+        let config = parse_toml(bumpversion_toml, &BufferedPrinter::default()).0?;
+        dbg!(config);
+
+        let expected = Config {
+            global: FileConfig {
+                current_version: Some("1.0.0".to_string()),
+                // commit: Some(true),
+                // tag: Some(true),
+                // commit_message: Some("DO NOT BUMP VERSIONS WITH THIS FILE".to_string()),
+                ..FileConfig::default()
+            },
+            ..Config::default()
+        };
+        let config = parse_toml(bumpversion_toml, &BufferedPrinter::default()).0?;
+        similar_asserts::assert_eq!(config, Some(expected));
+
         Ok(())
     }
 
@@ -1135,7 +1167,7 @@ pub mod tests {
             ]
         "#};
 
-        let config = parse_toml(&pyproject_toml, &Printer::default()).0?;
+        let config = parse_toml(&pyproject_toml, &BufferedPrinter::default()).0?;
 
         let expected = Config {
             global: FileConfig {

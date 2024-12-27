@@ -3,8 +3,8 @@ use codespan_reporting::{
     files, term,
 };
 use indexmap::IndexMap;
-use parking_lot::RwLock;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, RwLock};
 
 pub type FileId = usize;
 pub type Span = std::ops::Range<usize>;
@@ -201,9 +201,11 @@ where
     }
 }
 
-#[derive(Debug)]
-pub struct Printer {
-    writer: term::termcolor::StandardStream,
+pub type BufferedPrinter = Printer<term::termcolor::Buffer>;
+pub type StderrPrinter = Printer<term::termcolor::StandardStream>;
+
+pub struct Printer<W> {
+    writer: Mutex<W>,
     diagnostic_config: term::Config,
     files: RwLock<files::SimpleFiles<String, String>>,
 }
@@ -224,26 +226,62 @@ impl<'a> ToSourceName for &'a PathBuf {
     }
 }
 
-impl Default for Printer {
+impl Default for Printer<term::termcolor::StandardStream> {
     fn default() -> Self {
-        Self::new(term::termcolor::ColorChoice::Auto)
+        Self::stderr(term::termcolor::ColorChoice::Auto)
     }
 }
 
-impl Printer {
-    pub fn new(color_choice: term::termcolor::ColorChoice) -> Self {
-        let writer = term::termcolor::StandardStream::stderr(color_choice);
+impl Default for Printer<term::termcolor::Buffer> {
+    fn default() -> Self {
+        Self::buffered(term::termcolor::ColorChoice::Auto)
+    }
+}
+
+impl Printer<term::termcolor::Buffer> {
+    pub fn buffered(color_choice: term::termcolor::ColorChoice) -> Self {
+        let writer = term::termcolor::Buffer::ansi();
         let diagnostic_config = term::Config {
             styles: term::Styles::with_blue(term::termcolor::Color::Blue),
             ..term::Config::default()
         };
         Self {
-            writer,
+            // writer: Mutex::new(Box::new(writer)),
+            writer: Mutex::new(writer),
             diagnostic_config,
             files: RwLock::new(files::SimpleFiles::new()),
         }
     }
 
+    /// Print written diagnostics to stderr.
+    ///
+    /// This is a workaround for https://github.com/BurntSushi/termcolor/issues/51.
+    pub fn print(&self) {
+        use std::io::Write;
+        let mut writer = self.writer.lock().unwrap();
+        writer.flush();
+        eprintln!("{}", String::from_utf8_lossy(writer.as_slice()));
+    }
+}
+
+impl Printer<term::termcolor::StandardStream> {
+    pub fn stderr(color_choice: term::termcolor::ColorChoice) -> Self {
+        let writer = term::termcolor::StandardStream::stderr(color_choice);
+        use term::termcolor::WriteColor;
+        let diagnostic_config = term::Config {
+            styles: term::Styles::with_blue(term::termcolor::Color::Blue),
+            ..term::Config::default()
+        };
+        Self {
+            // writer: Mutex::new(Box::new(writer)),
+            writer: Mutex::new(writer),
+            diagnostic_config,
+            files: RwLock::new(files::SimpleFiles::new()),
+        }
+    }
+}
+
+impl<W> Printer<W> {
     pub fn lines(
         &self,
         diagnostic: &Diagnostic<usize>,
@@ -255,21 +293,27 @@ impl Printer {
             .map(|label| {
                 self.files
                     .read()
+                    .unwrap()
                     .line_index(label.file_id, label.range.start)
             })
             .collect()
     }
 
     pub fn add_source_file(&self, name: impl ToSourceName, source: String) -> usize {
-        let mut files = self.files.write();
+        let mut files = self.files.write().unwrap();
         files.add(name.to_source_name(), source)
     }
+}
 
+impl<W> Printer<W>
+where
+    W: term::termcolor::WriteColor,
+{
     pub fn emit(&self, diagnostic: &Diagnostic<usize>) -> Result<(), files::Error> {
         term::emit(
-            &mut self.writer.lock(),
+            &mut *self.writer.lock().unwrap(),
             &self.diagnostic_config,
-            &*self.files.read(),
+            &*self.files.read().unwrap(),
             diagnostic,
         )
     }

@@ -9,7 +9,7 @@ pub trait ToLogLevel {
     fn to_log_level(self) -> tracing::metadata::Level;
 }
 
-impl ToLogLevel for clap_verbosity_flag::Level {
+impl ToLogLevel for clap_verbosity_flag::log::Level {
     fn to_log_level(self) -> tracing::metadata::Level {
         match self {
             Self::Trace => tracing::metadata::Level::TRACE,

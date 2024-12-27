@@ -5,10 +5,10 @@ use std::collections::{HashMap, HashSet};
 
 pub const DEFAULT_ASSIGNMENT_DELIMITERS: [&str; 2] = ["=", ":"];
 pub const DEFAULT_COMMENT_PREFIXES: [&str; 2] = [";", "#"];
+pub const DEFAULT_INLINE_COMMENT_PREFIXES: [&str; 0] = [];
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum Item {
-    // Empty,
     Section {
         name: String,
     },
@@ -127,81 +127,34 @@ pub trait Parse {
     fn parse_next(&mut self, state: &mut ParseState) -> Result<Option<Vec<Spanned<Item>>>, Error>;
 }
 
-// impl<B> std::iter::Iterator for Parser<B>
-// where
-//     B: std::io::BufRead,
-// {
+pub fn trim_trailing_whitespace(value: &mut String, span: &mut Span) {
+    let count = value
+        .chars()
+        .rev()
+        .take_while(|c| c.is_whitespace())
+        .count();
+    span.end -= count;
+    *value = value.split_at(value.len() - count).0.to_string();
+}
 
-// fn compact_span(line: &str, span: Span) -> Span {
-//     let Span { start, end } = span;
-//     // start += line[start..end].char_indices().iter().take_while(|c| c.is_whitespace()).count();
-//     let start = line
-//         .char_indices()
-//         .skip(start)
-//         .find_map(|(offset, c)| {
-//             if !c.is_whitespace() {
-//                 Some(offset)
-//             } else {
-//                 None
-//             }
-//         })
-//         .unwrap_or(start);
-//     let end = line
-//         .char_indices()
-//         .skip(end)
-//         .find_map(|(offset, c)| {
-//             if !c.is_whitespace() {
-//                 Some(offset)
-//             } else {
-//                 None
-//             }
-//         })
-//         .unwrap_or(end);
-//     // start = line[start..end].chars().iter().take_while(|c| c.is_whitespace()).count();
-//     // while start < end {
-//     Span { start, end }
-// }
-
-fn compact_span(line: &str, span: Span) -> Span {
+pub fn compact_span(line: &str, span: Span) -> Span {
     let Span { mut start, mut end } = span;
-    // let start = line
-    //     .chars()
-    //     .enumerate()
-    //     .skip(start)
-    //     .find_map(|(pos, c)| if !c.is_whitespace() { Some(pos) } else { None })
-    //     .unwrap_or(start);
-    // dbg!((start, end));
-    // dbg!(start, end);
     assert!(start <= end);
+
     start += line[start..]
         .chars()
         .take_while(|c| c.is_whitespace())
         .count();
-    // dbg!(&start);
+
+    assert!(start <= end);
+
     end -= line[start..end]
         .chars()
         .rev()
         .take_while(|c| c.is_whitespace())
         .count();
-    // dbg!(&start, &end);
-    // .enumerate()
-    // .skip(start)
-    // .find_map(|(pos, c)| if !c.is_whitespace() { Some(pos) } else { None })
-    // .unwrap_or(start);
 
-    // let end = line
-    //     .chars()
-    //     .enumerate()
-    //     .skip(end)
-    //     .find_map(|(pos, c)| {
-    //         dbg!(&c);
-    //         if !c.is_whitespace() {
-    //             Some(pos)
-    //         } else {
-    //             None
-    //         }
-    //     })
-    //     .unwrap_or(end);
+    assert!(start <= end);
     Span { start, end }
 }
 
@@ -232,219 +185,11 @@ impl AddOffset for Span {
     }
 }
 
-// impl<B> lines::Lines<B>
-// where
-//     B: std::io::BufRead,
-// {
-//     pub fn parse_next(&mut self) -> Result<Option<Spanned<Item>>, Error> {
-//         let line = self.next().transpose()?;
-//         let Some((offset, line)) = line else {
-//             return Ok(None);
-//         };
-//         let mut span = compact_span(&line, 0..line.len());
-//         // let mut span: Span = 0..line.len();
-//
-//         // let line = <Self as lines::Lines<std::io::BufRead>>::next(self)?;
-//         // let line = line.trim();
-//         dbg!(&line[span.clone()]);
-//         // TODO: trim in place?
-//         if line[span.clone()].starts_with('[') {
-//             if line[span.clone()].ends_with(']') {
-//                 span.start += 1;
-//                 span.end -= 1;
-//                 // let line = &line[1..line.len() - 1];
-//                 // let line = &line[span];
-//                 let byte_span = to_byte_span(&line, span.clone()).add_offset(offset);
-//                 if line[span.clone()].contains(']') {
-//                     Err(Error::Syntax(SyntaxError::InvalidSectionName {
-//                         span: byte_span,
-//                     }))
-//                 } else {
-//                     Ok(Some(Spanned::new(
-//                         byte_span,
-//                         Item::Section {
-//                             name: line[span].into(),
-//                         },
-//                     )))
-//                 }
-//             } else {
-//                 let byte_span = to_byte_span(&line, span.clone()).add_offset(offset);
-//                 Err(Error::Syntax(SyntaxError::SectionNotClosed {
-//                     span: byte_span,
-//                 }))
-//             }
-//         } else if line[span.clone()].starts_with(';') || line[span.clone()].starts_with('#') {
-//             span.start += 1;
-//             let byte_span = to_byte_span(&line, span).add_offset(offset);
-//             Ok(Some(Spanned::new(
-//                 byte_span,
-//                 Item::Comment { text: line.into() },
-//             )))
-//         } else if line[span.clone()].is_empty() {
-//             let byte_span = to_byte_span(&line, span).add_offset(offset);
-//             Ok(Some(Spanned::new(byte_span, Item::Empty)))
-//         } else {
-//             // find position of assignment delimiter
-//             let equal_pos = line[span.clone()].chars().enumerate().find_map(|(idx, c)| {
-//                 // if c == '=' {
-//                 if '=' {
-//                     Some(idx)
-//                 } else {
-//                     None
-//                 }
-//             });
-//             let equal_pos = equal_pos.ok_or_else(|| {
-//                 Error::Syntax(SyntaxError::MissingAssignmentDelimiter {
-//                     span: to_byte_span(&line, span.clone()).add_offset(offset),
-//                     assignment_delimiters: vec![],
-//                 })
-//             })?;
-//             // if let Some(equal_pos) = equal_pos {
-//
-//             // dbg!(&line, &span, &equal_pos);
-//
-//             let key_span = Span {
-//                 start: span.start,
-//                 end: span.start + equal_pos,
-//             };
-//             let key_span = compact_span(&line, key_span);
-//             // dbg!(&key_span);
-//             let key = &line[key_span.clone()];
-//             // dbg!(&key);
-//
-//             let value_span = Span {
-//                 start: span.start + equal_pos + 1,
-//                 end: span.end,
-//             };
-//             // dbg!(&value_span);
-//             let value_span = compact_span(&line, value_span);
-//             let value = &line[value_span.clone()];
-//             // dbg!(&value);
-//             Ok(Some(Spanned::new(
-//                 to_byte_span(&line, span).add_offset(offset),
-//                 Item::Value {
-//                     key: Spanned::new(to_byte_span(&line, key_span).add_offset(offset), key.into()),
-//                     value: Spanned::new(
-//                         to_byte_span(&line, value_span).add_offset(offset),
-//                         value.into(),
-//                     ),
-//                 },
-//             )))
-//             // let mut line = line.splitn(2, '=');
-//             // if let Some(key) = line.next() {
-//             //     let key = key.trim();
-//             //     if let Some(value) = line.next() {
-//             //         Ok(Some(Item::Value {
-//             //             key: key.into(),
-//             //             value: value.trim().into(),
-//             //         }))
-//             //     } else if key.is_empty() {
-//             //         Ok(Some(Item::Empty))
-//             //     } else {
-//             //         Err(Error::Syntax(SyntaxError::MissingEquals))
-//             //     }
-//             // } else {
-//             //     unreachable!()
-//             // }
-//             // } else {
-//             //     let byte_span = to_byte_span(&line, span).add_offset(offset);
-//             //     Ok(Some(Spanned::new(byte_span, Item::Empty)))
-//             // }
-//         }
-//     }
-// }
-
-// impl<T> Parser<T> {
-//     // fn parse_next<E>(line: Option<impl AsRef<str>>) -> Result<Option<Item>, Error<E>>
-//     fn parse_next(line: Option<impl AsRef<str>>) -> Result<Option<Item>, Error>
-// // where
-//     //     E: std::fmt::Display,
-//     {
-//         let line = match line {
-//             Some(line) => line,
-//             None => return Ok(None),
-//         };
-//         let line = line.as_ref();
-//
-//         if line.starts_with('[') {
-//             if line.ends_with(']') {
-//                 let line = &line[1..line.len() - 1];
-//                 if line.contains(']') {
-//                     Err(Error::Syntax(SyntaxError::InvalidSectionName))
-//                 } else {
-//                     Ok(Some(Item::Section { name: line.into() }))
-//                 }
-//             } else {
-//                 Err(Error::Syntax(SyntaxError::SectionNotClosed))
-//             }
-//         } else if line.starts_with(';') || line.starts_with('#') {
-//             Ok(Some(Item::Comment { text: line.into() }))
-//         } else {
-//             // println!("line: {line}");
-//             let mut line = line.splitn(2, '=');
-//             // println!("line: {:?}", line.clone().into_iter().collect::<Vec<_>>());
-//             if let Some(key) = line.next() {
-//                 let key = key.trim();
-//                 if let Some(value) = line.next() {
-//                     Ok(Some(Item::Value {
-//                         key: key.into(),
-//                         value: value.trim().into(),
-//                     }))
-//                 } else if key.is_empty() {
-//                     Ok(Some(Item::Empty))
-//                 } else {
-//                     Err(Error::Syntax(SyntaxError::MissingEquals))
-//                 }
-//             } else {
-//                 unreachable!()
-//             }
-//         }
-//     }
-// }
-
-// impl<E, S, T> Iterator for Parser<T>
-// impl<S, T> Iterator for Parser<T>
-// where
-//     // E: std::fmt::Display,
-//     S: AsRef<str>,
-//     T: Iterator<Item = Result<S, Error>>,
-// {
-//     // type Item = Result<Item, Error<E>>;
-//     type Item = Result<Item, Error>;
-//
-//     fn next(&mut self) -> Option<Self::Item> {
-//         let value = self.input.next().transpose(); // .map_err(Error::Inner);
-//         value.and_then(|l| Self::parse_next(l)).transpose()
-//     }
-// }
-//
-// pub struct OkIter<I>(pub I);
-//
-// impl<T, I: Iterator<Item = T>> Iterator for OkIter<I> {
-//     type Item = Result<T, std::convert::Infallible>;
-//
-//     fn next(&mut self) -> Option<Self::Item> {
-//         (self.0).next().map(Ok)
-//     }
-// }
-
 #[derive(Debug)]
 pub struct ParseState {
-    // elements: HashSet<String>,
     current_section: HashMap<String, Vec<String>>,
     option_name: Option<String>,
     indent_level: usize,
-    // current_indent_level: usize,
-    // cursect : dict[str, str] | None = None
-    // sectname : str | None = None
-    // optname : str | None = None
-    // lineno : int = 0
-    // indent_level : int = 0
-    // errors : list[ParsingError]
-
-    // def __init__(self):
-    //     self.elements_added = set()
-    //     self.errors = list()
 }
 
 impl Default for ParseState {
@@ -461,7 +206,7 @@ impl Default for ParseState {
 pub struct Config {
     assignment_delimiters: Vec<&'static str>,
     comment_prefixes: Vec<&'static str>,
-    // inline_comment_prefixes: Vec<&'static str>,
+    inline_comment_prefixes: Vec<&'static str>,
     empty_lines_in_values: bool,
     allow_brackets_in_section_name: bool,
 }
@@ -471,7 +216,7 @@ impl Default for Config {
         Self {
             assignment_delimiters: DEFAULT_ASSIGNMENT_DELIMITERS.to_vec(),
             comment_prefixes: DEFAULT_COMMENT_PREFIXES.to_vec(),
-            // inline_comment_prefixes: DEFAULT_COMMENT_PREFIXES.to_vec(),
+            inline_comment_prefixes: DEFAULT_INLINE_COMMENT_PREFIXES.to_vec(),
             empty_lines_in_values: true,
             allow_brackets_in_section_name: true,
         }
@@ -483,6 +228,7 @@ pub struct Parser<B> {
     config: Config,
     assignment_delimiters: AhoCorasick,
     comment_prefixes: AhoCorasick,
+    inline_comment_prefixes: AhoCorasick,
     lines: crate::lines::Lines<B>,
 }
 
@@ -490,9 +236,11 @@ impl<B> Parser<B> {
     pub fn new(buf: B, config: Config) -> Result<Self, ConfigError> {
         let assignment_delimiters = AhoCorasick::new(&config.assignment_delimiters)?;
         let comment_prefixes = AhoCorasick::new(&config.comment_prefixes)?;
+        let inline_comment_prefixes = AhoCorasick::new(&config.inline_comment_prefixes)?;
         Ok(Self {
             assignment_delimiters,
             comment_prefixes,
+            inline_comment_prefixes,
             lines: crate::lines::Lines::new(buf),
             config,
         })
@@ -511,32 +259,19 @@ where
         let mut span = compact_span(&line, 0..line.len());
         let current_indent_level = span.start;
 
-        // st.cur_indent_level = first_nonspace.start() if first_nonspace else 0
-
-        // check for prefix of line
-        // prefixes = types.SimpleNamespace(
-        //     full=tuple(comment_prefixes or ()), # ('#', ';')
-        //     inline=tuple(inline_comment_prefixes or ()), # ()
-        // )
-
-        // dbg!(&state.option_name);
-        // dbg!(&line[span.clone()]);
-
         dbg!(&line);
-        // dbg!(&span);
-        // if line.contains("Augustin") {
-        //     dbg!(&line);
-        //     dbg!(&line[span.clone()]);
-        // }
 
         let mut items: Vec<Spanned<Item>> = vec![];
+
+        let comment_pos = self
+            .comment_prefixes
+            .find(&line[span.clone()])
+            .map(|pos| pos.start());
 
         if line[span.clone()].starts_with('[') {
             if line[span.clone()].ends_with(']') {
                 span.start += 1;
                 span.end -= 1;
-                // let line = &line[1..line.len() - 1];
-                // let line = &line[span];
                 let byte_span = to_byte_span(&line, span.clone()).add_offset(offset);
                 if !self.config.allow_brackets_in_section_name && line[span.clone()].contains(']') {
                     return Err(Error::Syntax(SyntaxError::InvalidSectionName {
@@ -553,12 +288,6 @@ where
                             name: line[span].into(),
                         },
                     ));
-                    // Ok(Some(vec![Spanned::new(
-                    //     byte_span,
-                    //     Item::Section {
-                    //         name: line[span].into(),
-                    //     },
-                    // )]))
                 }
             } else {
                 let byte_span = to_byte_span(&line, span.clone()).add_offset(offset);
@@ -566,10 +295,8 @@ where
                     span: byte_span,
                 }));
             }
-        } else if line[span.clone()].starts_with(';') || line[span.clone()].starts_with('#') {
+        } else if let Some(0) = comment_pos {
             // comment
-            // # empty line marks end of value
-            // st.indent_level = sys.maxsize
             span.start += 1;
             let byte_span = to_byte_span(&line, span.clone()).add_offset(offset);
             println!("\t=> comment: {line}");
@@ -579,55 +306,20 @@ where
                     text: line[span].into(),
                 },
             ));
-            // Ok(Some(vec![Spanned::new(
-            //     byte_span,
-            //     Item::Comment {
-            //         text: line[span].into(),
-            //     },
-            // )]))
-            // } else if line[span.clone()].is_empty() {
-            // println!("\t=> empty");
-            // state.option_name = None;
-            // let byte_span = to_byte_span(&line, span).add_offset(offset);
-            // Ok(Some(vec![]))
-            // Ok(Some(vec![Spanned::new(byte_span, Item::Empty)))
         } else {
             // find position of assignment delimiter (e.g. '=')
-
-            // let assignment_delimiter_pos =
-            //     line[span.clone()].chars().enumerate().find_map(|(idx, c)| {
-            //         if self.config.assignment_delimiters.iter().any(|d| *d == c) {
-            //             Some(idx)
-            //         } else {
-            //             None
-            //         }
-            //     });
-
-            // // find position of comment (e.g. '#')
-            // let comment_pos = line[span.clone()].chars().enumerate().find_map(|(idx, c)| {
-            //     // if self.config.comment_prefixes.iter().any(|d| *d == c) {
-            //     if self.config.comment_prefixes..iter().any(|d| *d == c) {
-            //         Some(idx)
-            //     } else {
-            //         None
-            //     }
-            // });
-
             let assignment_delimiter_pos = self
                 .assignment_delimiters
                 .find(&line[span.clone()])
                 .map(|pos| pos.start());
 
-            let comment_pos = self
-                .comment_prefixes
+            // find position of inline comment
+            let inline_comment_pos = self
+                .inline_comment_prefixes
                 .find(&line[span.clone()])
                 .map(|pos| pos.start());
 
-            // dbg!(&assignment_delimiter_pos);
-            // dbg!(&comment_pos);
-            // dbg!(&state.option_name);
-
-            if let Some(comment_pos) = comment_pos {
+            if let Some(comment_pos) = inline_comment_pos {
                 let comment_span = Span {
                     start: span.start + comment_pos + 1,
                     end: span.end,
@@ -635,81 +327,35 @@ where
                 let comment_span = compact_span(&line, comment_span);
 
                 let value = &line[comment_span.clone()];
-                // println!("\t=> comment: {value} ({comment_span:?})");
                 println!("\t=> comment: {value}");
                 let byte_span = to_byte_span(&line, comment_span).add_offset(offset);
 
                 span.end = span.start + comment_pos;
-                // println!("\t=> before comment: {} ({span:?})", &line[span.clone()]);
                 items.push(Spanned::new(
                     byte_span,
                     Item::Comment { text: value.into() },
                 ));
-                // Some(Spanned::new(
-                //     byte_span,
-                //     Item::Comment {
-                //         text: line[comment_span].into(),
-                //     },
-                // ))
             }
-            // else {
-            //     None
-            // };
 
             let is_empty = line.chars().all(|c| c.is_whitespace());
-            let is_separator = line.chars().all(|c| c == '-');
 
             // check if continue
             let mut is_continue = false;
             if let Some(ref option_name) = state.option_name {
-                // continuation line?
-                if true {
-                    dbg!(
-                        // state.current_section.as_ref().map(|section| section.name),
-                        // state.current_section.as_ref().map(|section| section.name),
-                        !state.current_section.is_empty(),
-                        // assignment_delimiter_pos.is_none(),
-                        assignment_delimiter_pos,
-                        current_indent_level,
-                        state.indent_level
-                    );
-                }
-                is_continue = !state.current_section.is_empty()
-                    // && assignment_delimiter_pos.is_none()
-                    && current_indent_level > state.indent_level;
+                // if true {
+                //     dbg!(
+                //         !state.current_section.is_empty(),
+                //         assignment_delimiter_pos,
+                //         current_indent_level,
+                //         state.indent_level
+                //     );
+                // }
+                is_continue =
+                    !state.current_section.is_empty() && current_indent_level > state.indent_level;
+
                 println!("\t=> continuation?: {is_continue}");
 
-                // println!(
-                //     "section={} option={} continuation={}",
-                //     "", // state.current_section.len(),
-                //     option_name,
-                //     is_continue
-                // );
-
                 if is_continue {
-                    // let Some(mut previous_value) = state.current_section.get_mut(option_name) else {
-                    //     // raise MultilineContinuationError(fpname, st.lineno, line)
-                    //     panic!("multi line continuation error");
-                    // };
-                    // value.push(line[span.clone()].to_string());
-
-                    // let value_span = compact_span(&line, value_span);
-                    // let value = &line[span.clone()];
-                    // dbg!(&value);
-                    // Ok(Some(Spanned::new(
-                    //     to_byte_span(&line, span).add_offset(offset),
-                    //     Item::Value {
-                    //         key: Spanned::new(
-                    //             to_byte_span(&line, key_span).add_offset(offset),
-                    //             key.into(),
-                    //         ),
-                    //         value: Spanned::new(
-                    //             to_byte_span(&line, value_span).add_offset(offset),
-                    //             value.into(),
-                    //         ),
-                    //     },
-                    // )))
-
                     let continuation_span = compact_span(&line, span.clone());
                     let value = &line[continuation_span.clone()];
                     println!("\t=> continuation: {value}");
@@ -720,24 +366,10 @@ where
                             value: value.into(),
                         },
                     ));
-                    // return Ok(Some(vec![Spanned::new(
-                    //     to_byte_span(&line, span).add_offset(offset),
-                    //     Item::ContinuationValue {
-                    //         // key: Spanned::new(to_byte_span(&line, key_span).add_offset(offset), key.into()),
-                    //         value: value.into(),
-                    //         // value: Spanned::new(
-                    //         //     to_byte_span(&line, span).add_offset(offset),
-                    //         //     value.into(),
-                    //         // ),
-                    //     },
-                    // )]));
-                    // let byte_span = to_byte_span(&line, span).add_offset(offset);
-                    // return Ok(Some(Spanned::new(byte_span, Item::Empty)));
                 }
             }
 
             if is_empty {
-                // if is_continue {
                 if self.config.empty_lines_in_values {
                     println!("\t=> empty (continuation)");
                     items.push(Spanned::new(
@@ -748,17 +380,6 @@ where
                     // reset current option
                     state.option_name = None;
                 }
-                // } else {
-                //     println!("\t=> empty");
-                // }
-            } else if is_separator {
-                // line is only '-' character
-                println!("\t=> separator (empty)");
-                // return Ok(Some(vec![]));
-                // return Ok(Some(Spanned::new(
-                //     to_byte_span(&line, span).add_offset(offset),
-                //     Item::Empty,
-                // )));
             } else if !is_continue {
                 let assignment_delimiter_pos = assignment_delimiter_pos.ok_or_else(|| {
                     Error::Syntax(SyntaxError::MissingAssignmentDelimiter {
@@ -771,30 +392,21 @@ where
                             .collect(),
                     })
                 })?;
-                // dbg!(assignment_delimiter_pos);
-                // dbg!(&assignment_delimiter_pos);
-                // if let Some(equal_pos) = equal_pos {
-
-                // dbg!(&line, &span, &equal_pos);
 
                 let key_span = Span {
                     start: span.start,
                     end: span.start + assignment_delimiter_pos,
                 };
                 let key_span = compact_span(&line, key_span);
-                // dbg!(&key_span);
                 let key = &line[key_span.clone()];
 
                 let value_span = Span {
                     start: span.start + assignment_delimiter_pos + 1,
-                    // end: span.end.min(comment_pos.unwrap_or(usize::MAX)),
                     end: span.end,
                 };
-                // dbg!(&value_span);
                 let value_span = compact_span(&line, value_span);
                 let value = &line[value_span.clone()];
 
-                // dbg!((&key, &value));
                 if key.is_empty() {
                     return Err(Error::Syntax(SyntaxError::EmptyOptionName {
                         span: to_byte_span(&line, key_span.clone()).add_offset(offset),
@@ -822,19 +434,6 @@ where
                         ),
                     },
                 ));
-                // Ok(Some(vec![Spanned::new(
-                //     to_byte_span(&line, span).add_offset(offset),
-                //     Item::Value {
-                //         key: Spanned::new(
-                //             to_byte_span(&line, key_span).add_offset(offset),
-                //             key.into(),
-                //         ),
-                //         value: Spanned::new(
-                //             to_byte_span(&line, value_span).add_offset(offset),
-                //             value.into(),
-                //         ),
-                //     },
-                // )]))
             }
         }
         Ok(Some(items))
@@ -843,30 +442,15 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::string::ParseError;
-
     use crate::parse::{DEFAULT_ASSIGNMENT_DELIMITERS, DEFAULT_COMMENT_PREFIXES};
     use crate::spanned::{DerefInner, Spanned};
     use crate::tests::{parse, Printer, SectionProxyExt};
     use crate::value::{ClearSpans, NoSectionError, Options, RawSection, Section, Value};
-    // use codespan_reporting::{diagnostic::Diagnostic, files, term};
     use color_eyre::eyre;
     use indexmap::map::Keys;
     use serde::de::Error;
+    use std::string::ParseError;
     use unindent::unindent;
-    // use std::sync::RwLock;
-
-    // macro_rules! get_key {
-    //     ($map:expr, $key:expr $(,)?) => {
-    //         $map.get_key_value($key).unwrap().0
-    //     };
-    // }
-    //
-    // macro_rules! get_value {
-    //     ($map:expr, $key:expr $(,)?) => {
-    //         $map.get_key_value($key).unwrap().1
-    //     };
-    // }
 
     #[test]
     fn compact_span() {
@@ -922,26 +506,20 @@ mod tests {
         let mut expected = Value::with_defaults([].into_iter().collect());
 
         expected.add_section(
-            Spanned::from("DEFAULT"),
+            "DEFAULT".into(),
             [
-                (Spanned::from("key1"), Spanned::from("value1")),
-                (Spanned::from("pizzatime"), Spanned::from("yes")),
-                (Spanned::from("cost"), Spanned::from("9")),
+                ("key1".into(), "value1".into()),
+                ("pizzatime".into(), "yes".into()),
+                ("cost".into(), "9".into()),
             ],
         );
 
         expected.add_section(
-            Spanned::from("topsecrets"),
-            [(
-                Spanned::from("nuclear launch codes"),
-                Spanned::from("topsecret"),
-            )],
+            "topsecrets".into(),
+            [("nuclear launch codes".into(), "topsecret".into())],
         );
 
-        expected.add_section(
-            Spanned::from("github.com"),
-            [(Spanned::from("user"), Spanned::from("QEDK"))],
-        );
+        expected.add_section("github.com".into(), [("user".into(), "QEDK".into())]);
 
         sim_assert_eq!(have.clone().cleared_spans(), expected, "values match");
 
@@ -1796,14 +1374,14 @@ mod tests {
         config.add_section(Spanned::from("Foo"), []);
 
         // unlike configparser, we do not raise `DuplicateSectionError`,
-        // however, the user can manuelly detect when a key is present more than once
+        // however, the user can manually detect when a key is present more than once
         sim_assert_eq!(
             config.add_section(Spanned::from("Foo"), []),
             Some(Section::from_iter([]).with_name(Spanned::from("Foo"))),
         );
 
         // our implementation is very relaxed in that we collect all the options from all the
-        // occurences of the same of section
+        // occurrences of the same of section
         let config = unindent(&format!(
             "
             [Foo]
@@ -2346,39 +1924,34 @@ mod tests {
         crate::tests::init();
         let config = include_str!("../test-data/cfgparser.2.ini");
         // let config = include_str!("../test-data/cfgparser.0.ini");
-        let mut config = parse(
-            &config,
-            Options {
-                parser_config: crate::parse::Config {
-                    comment_prefixes: vec![";", "#", "----", "//"],
-                    // inline_comment_prefixes: vec!["//"],
-                    empty_lines_in_values: false,
-                    ..crate::parse::Config::default()
-                },
-                ..Options::default()
+        let options = Options {
+            parser_config: crate::parse::Config {
+                comment_prefixes: vec![";", "#", "----", "//"],
+                inline_comment_prefixes: vec!["//"],
+                empty_lines_in_values: false,
+                ..crate::parse::Config::default()
             },
-            &Printer::default(),
-        )
-        .0?;
+            ..Options::default()
+        };
+        let mut config = parse(&config, options, &Printer::default()).0?;
         println!("{}", &config);
 
-        // sim_assert_eq!(
-        //     config.section_names().collect::<Vec<_>>(),
-        //     vec![
-        //         "global",
-        //         "homes",
-        //         "printers",
-        //         "print$",
-        //         "pdf-generator",
-        //         "tmp",
-        //         "Agustin",
-        //     ]
-        // );
+        sim_assert_eq!(
+            config.section_names().collect::<Vec<_>>(),
+            vec![
+                "global",
+                "homes",
+                "printers",
+                "print$",
+                "pdf-generator",
+                "tmp",
+                "Agustin",
+            ]
+        );
         sim_assert_eq!(
             config.get("global", "workgroup").deref_inner(),
             Some("MDKGROUP")
         );
-        dbg!(&config.get("global", "max log size").as_ref());
         sim_assert_eq!(
             config
                 .get_int("global", "max log size")?
@@ -2389,7 +1962,7 @@ mod tests {
         );
         sim_assert_eq!(
             config.get("global", "hosts allow").deref_inner(),
-            Some("127.") // TODO(roman): do not include the comment
+            Some("127.")
         );
         sim_assert_eq!(
             config.get("tmp", "echo command").deref_inner(),
@@ -2402,9 +1975,19 @@ mod tests {
     fn configparser_compat_parse_cfgparser_3() -> eyre::Result<()> {
         use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
+
         let config = include_str!("../test-data/cfgparser.3.ini");
         // let config = include_str!("../test-data/cfgparser.0.ini");
-        let mut config = parse(&config, Options::default(), &Printer::default()).0?;
+        let options = Options {
+            parser_config: crate::parse::Config {
+                comment_prefixes: vec![";", "#"],
+                inline_comment_prefixes: vec!["#"],
+                empty_lines_in_values: true,
+                ..crate::parse::Config::default()
+            },
+            ..Options::default()
+        };
+        let mut config = parse(&config, options, &Printer::default()).0?;
         println!("{}", &config);
 
         sim_assert_eq!(
@@ -2554,7 +2137,14 @@ mod tests {
             c1 = DEFAULT_COMMENT_PREFIXES[1],
         ));
 
-        let mut have = parse(&config, Options::default(), &Printer::default()).0?;
+        let options = Options {
+            parser_config: crate::parse::Config {
+                inline_comment_prefixes: vec!["#", ";"],
+                ..crate::parse::Config::default()
+            },
+            ..Options::default()
+        };
+        let mut have = parse(&config, options, &Printer::default()).0?;
         check_configparser_compat_basic(&mut have)?;
         // let have = super::value::from_str(&config).map_?;
         // let expected = Value {

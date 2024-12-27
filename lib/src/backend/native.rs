@@ -160,7 +160,7 @@ mod tests {
     use crate::{
         backend::{native, temp, GitBackend},
         command::run_command,
-        tests::assert_eq_sorted,
+        tests::sim_assert_eq_sorted,
         utils,
     };
     use color_eyre::eyre;
@@ -234,11 +234,11 @@ mod tests {
 
         // track first file
         repo.add(&dirty_files[0..1]);
-        assert_eq_sorted!(repo.dirty_files()?, dirty_files[0..1]);
+        sim_assert_eq_sorted!(repo.dirty_files()?, dirty_files[0..1]);
 
         // track all files
         repo.add(&dirty_files);
-        assert_eq_sorted!(repo.dirty_files()?, dirty_files);
+        sim_assert_eq_sorted!(repo.dirty_files()?, dirty_files);
         Ok(())
     }
 }
