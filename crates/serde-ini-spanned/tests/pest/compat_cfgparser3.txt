@@ -1,3 +1,7 @@
+Compat with python configparser.
+
+=======================
+
   # INI with as many tricky parts as possible
   # Most of them could not be used before 3.2
      
@@ -34,7 +38,7 @@ go = %(interpolate)s
         nor the indentation
 
   another value = # empty string
-  # yet another # None!
+  yet another # None!
 
   [yeah, sections can be indented as well]
   and that does not mean = anything
@@ -67,3 +71,13 @@ interpolate = anything will do
     [more interpolation]
       interpolate = go shopping
       lets = %(go)s
+
+=======================
+
+(document
+  (section
+    (section_name
+      (text))
+    (setting
+      (setting_name)
+      (setting_value))))

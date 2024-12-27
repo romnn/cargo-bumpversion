@@ -3,6 +3,7 @@
 pub mod diagnostics;
 pub mod lines;
 pub mod parse;
+// pub mod parse2;
 pub mod spanned;
 pub mod value;
 
@@ -15,7 +16,7 @@ pub mod tests {
     use crate::{
         diagnostics,
         value::{Options, Value},
-        Spanned,
+        SectionProxy, Spanned,
     };
     use codespan_reporting::{diagnostic::Diagnostic, files, term};
     use std::sync::{Mutex, RwLock};
@@ -35,6 +36,25 @@ pub mod tests {
     impl From<&str> for Spanned<String> {
         fn from(value: &str) -> Self {
             Spanned::dummy(value.to_string())
+        }
+    }
+
+    pub trait SectionProxyExt<'a> {
+        fn items_vec(self) -> Vec<(&'a str, &'a str)>;
+        fn keys_vec(self) -> Vec<&'a str>;
+    }
+
+    impl<'a> SectionProxyExt<'a> for SectionProxy<'a> {
+        fn items_vec(self) -> Vec<(&'a str, &'a str)> {
+            self.iter()
+                .map(|(k, v)| (k.as_ref().as_str(), v.as_ref().as_str()))
+                .collect::<Vec<_>>()
+        }
+
+        fn keys_vec(self) -> Vec<&'a str> {
+            self.keys()
+                .map(|k| k.as_ref().as_str())
+                .collect::<Vec<&'a str>>()
         }
     }
 
@@ -100,12 +120,12 @@ pub mod tests {
 
     pub fn parse(
         config: &str,
-        options: &Options,
+        options: Options,
         printer: &Printer,
     ) -> (Result<Value, super::Error>, usize, Vec<Diagnostic<usize>>) {
         let file_id = printer.add_source_file("config.ini".to_string(), config.to_string());
         let mut diagnostics = vec![];
-        let config = crate::from_str(config, &options, file_id, &mut diagnostics);
+        let config = crate::from_str(config, options, file_id, &mut diagnostics);
         if let Err(ref err) = config {
             diagnostics.extend(err.to_diagnostics(file_id));
         }

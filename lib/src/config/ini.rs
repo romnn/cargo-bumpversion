@@ -367,7 +367,7 @@ impl Config {
 
     pub fn from_ini(
         config: &str,
-        options: &ini::value::Options,
+        options: ini::value::Options,
         file_id: FileId,
         strict: bool,
         diagnostics: &mut Vec<Diagnostic<FileId>>,
@@ -380,7 +380,7 @@ impl Config {
 
     pub fn from_setup_cfg_ini(
         config: &str,
-        options: &ini::value::Options,
+        options: ini::value::Options,
         file_id: FileId,
         strict: bool,
         diagnostics: &mut Vec<Diagnostic<FileId>>,
@@ -425,7 +425,7 @@ mod tests {
 
     fn parse_ini(
         config: &str,
-        options: &ini::value::Options,
+        options: ini::value::Options,
         printer: &Printer,
     ) -> (Result<Option<Config>, super::Error>, usize) {
         let mut diagnostics = vec![];
@@ -457,7 +457,7 @@ mod tests {
 
         let config = parse_ini(
             bumpversion_cfg,
-            &ini::value::Options::default(),
+            ini::value::Options::default(),
             &Printer::default(),
         )
         .0?;
@@ -538,7 +538,7 @@ mod tests {
 
         let config = parse_ini(
             setup_cfg_ini,
-            &ini::value::Options::default(),
+            ini::value::Options::default(),
             &Printer::default(),
         )
         .0?;
@@ -637,7 +637,7 @@ mod tests {
 
         let config = parse_ini(
             bumpversion_cfg,
-            &ini::value::Options::default(),
+            ini::value::Options::default(),
             &Printer::default(),
         )
         .0?;

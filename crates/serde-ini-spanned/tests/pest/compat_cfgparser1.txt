@@ -1,0 +1,17 @@
+Compat with python configparser.
+
+=======================
+
+# Also used by idlelib.test_idle.test_config.
+[Foo Bar]
+foo=newbar
+
+=======================
+
+(document
+  (section
+    (section_name
+      (text))
+    (setting
+      (setting_name)
+      (setting_value))))

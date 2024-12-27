@@ -162,7 +162,7 @@ impl Config {
                     strict,
                     ..serde_ini_spanned::value::Options::default()
                 };
-                Self::from_ini(&config, &options, file_id, strict, diagnostics).map_err(Into::into)
+                Self::from_ini(&config, options, file_id, strict, diagnostics).map_err(Into::into)
             }
             None | Some("toml") => {
                 Self::from_pyproject_toml(&config, file_id, strict, diagnostics).map_err(Into::into)

@@ -160,11 +160,43 @@ impl ClearSpans for Section {
     }
 }
 
+struct DisplayRepr<T>(T);
+
+impl<T> std::fmt::Debug for DisplayRepr<T>
+where
+    T: std::fmt::Display,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl<T> std::fmt::Display for DisplayRepr<T>
+where
+    T: std::fmt::Display,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl std::fmt::Display for Section {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map()
+            .entries(self.inner.iter().map(|(k, v)| (k.as_ref(), v.as_ref())))
+            .finish()
+    }
+}
+
 impl Section {
     #[must_use]
     pub fn with_name(mut self, name: Spanned<String>) -> Self {
         self.name = name;
         self
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
     }
 
     pub fn lowercase_keys(self) -> Self {
@@ -346,11 +378,22 @@ pub struct Value {
     defaults: Section,
 }
 
-// impl Value {
-//     pub fn duplicate_options(&self) -> Vec<()> {
-//         self.sections.iter().map(|section| section.op)
-//     }
-// }
+impl std::fmt::Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map()
+            .entries(
+                self.sections
+                    .iter()
+                    .map(|(k, v)| (k.as_ref(), DisplayRepr(v))),
+            )
+            .entries(
+                self.defaults
+                    .iter()
+                    .map(|(k, v)| (k.as_ref(), DisplayRepr(v))),
+            )
+            .finish()
+    }
+}
 
 impl ClearSpans for Value {
     fn clear_spans(&mut self) {
@@ -956,6 +999,10 @@ impl Value {
     //     Self { sections, defaults }
     // }
 
+    pub fn is_empty(&self) -> bool {
+        self.sections.is_empty() && self.defaults.is_empty()
+    }
+
     pub fn replace_section(&mut self, mut key: Spanned<String>, section: Section) -> Section {
         let old_section = self.sections.entry(key).or_default();
         std::mem::replace(old_section, section)
@@ -1207,94 +1254,138 @@ impl Value {
     }
 }
 
+fn get_section<'a>(
+    current_section: &Option<Spanned<String>>,
+    out: &'a mut Value,
+) -> &'a mut Section {
+    match current_section {
+        Some(ref name) => out.sections.entry(name.clone()).or_default(),
+        None => &mut out.defaults,
+    }
+}
+
+fn finalize_continuation_value<'a>(
+    current_option: &Option<Spanned<String>>,
+    section: &'a mut Section,
+) {
+    if let Some(mut current_value) = current_option.as_ref().and_then(|op| section.get_mut(op)) {
+        // finalize previous
+        dbg!(&current_value.inner);
+        current_value.inner = current_value.inner.trim_end().to_string();
+    }
+}
+
 pub fn from_reader<F: PartialEq + Copy>(
     reader: impl std::io::BufRead,
-    options: &Options,
+    options: Options,
     file_id: F,
     diagnostics: &mut Vec<Diagnostic<F>>,
 ) -> Result<Value, Error> {
-    let mut parser = Parser::new(reader, Config::default());
+    let mut parser = Parser::new(reader, options.parser_config)?;
     let mut out = Value::default();
     let mut current_section: Option<Spanned<String>> = None;
     let mut current_option: Option<Spanned<String>> = None;
     let mut state = ParseState::default();
 
-    while let Some(item) = parser.parse_next(&mut state).transpose() {
-        let item = item?;
-        match item {
-            Spanned {
-                inner: Item::Empty | Item::Comment { .. },
-                ..
-            } => {
-                current_option = None;
-            }
-            Spanned {
-                inner: Item::Section { name },
-                span,
-            } => {
-                let section_name = Spanned::new(span, name);
-                let section = out.sections.entry(section_name.clone()).or_default();
-                section.name = section_name.clone();
-                current_section = Some(section_name);
-                current_option = None;
-            }
-            Spanned {
-                inner: Item::ContinuationValue { value },
-                span,
-            } => {
-                let section = match current_section {
-                    Some(ref name) => &mut out.sections.entry(name.clone()).or_default(),
-                    None => &mut out.defaults,
-                };
-                if let Some(mut current_value) =
-                    current_option.as_ref().and_then(|op| section.get_mut(op))
-                {
-                    current_value.inner += "\n";
-                    current_value.inner += &value;
-                    current_value.span.end = span.end;
+    while let Some(items) = parser.parse_next(&mut state).transpose() {
+        let items = items?;
+        for item in items {
+            match item {
+                Spanned {
+                    inner: Item::Comment { .. },
+                    ..
+                } => {
+                    // ignore
                 }
-            }
-            Spanned {
-                inner: Item::Value { mut key, value },
-                ..
-            } => {
-                dbg!(&key, &value);
-                let section = match current_section {
-                    Some(ref name) => &mut out.sections.entry(name.clone()).or_default(),
-                    None => &mut out.defaults,
-                };
-                key.inner = key.inner.to_lowercase();
-                current_option = Some(key.clone());
-                let existing = section.get_key_value(&key);
-                if let Some((previous_key, _previous_value)) = existing {
-                    let diagnostic = Diagnostic::warning_or_error(options.strict)
-                        .with_message(format!("duplicate option `{key}`"))
-                        .with_labels(vec![
-                            Label::primary(file_id, key.span.clone())
-                                .with_message(format!("second use of option `{key}`")),
-                            Label::secondary(file_id, previous_key.span.clone())
-                                .with_message(format!("first use of option `{previous_key}`")),
-                        ]);
-                    diagnostics.push(diagnostic);
-                }
+                Spanned {
+                    inner: Item::Section { name },
+                    span,
+                } => {
+                    // finalize previous
+                    let section = get_section(&current_section, &mut out);
+                    finalize_continuation_value(&current_option, section);
 
-                if !(options.strict && existing.is_some()) {
-                    section.set(key, value);
+                    // start new section
+                    let section_name = Spanned::new(span, name);
+                    let section = out.sections.entry(section_name.clone()).or_default();
+                    section.name = section_name.clone();
+                    current_section = Some(section_name);
+                    current_option = None;
+                }
+                Spanned {
+                    inner: Item::ContinuationValue { value },
+                    span,
+                } => {
+                    let section = get_section(&current_section, &mut out);
+                    // let section = match current_section {
+                    //     Some(ref name) => &mut out.sections.entry(name.clone()).or_default(),
+                    //     None => &mut out.defaults,
+                    // };
+                    if let Some(mut current_value) =
+                        current_option.as_ref().and_then(|op| section.get_mut(op))
+                    {
+                        current_value.inner += "\n";
+                        current_value.inner += &value;
+                        current_value.span.end = span.end;
+                    }
+                }
+                Spanned {
+                    inner: Item::Value { mut key, value },
+                    ..
+                } => {
+                    // dbg!(&key, &value);
+                    let section = get_section(&current_section, &mut out);
+                    // let section = match current_section {
+                    //     Some(ref name) => &mut out.sections.entry(name.clone()).or_default(),
+                    //     None => &mut out.defaults,
+                    // };
+                    finalize_continuation_value(&current_option, section);
+                    // if let Some(mut current_value) =
+                    //     current_option.as_ref().and_then(|op| section.get_mut(op))
+                    // {
+                    //     // finalize previous
+                    //     dbg!(&current_value.inner);
+                    //     current_value.inner = current_value.inner.trim_end().to_string();
+                    // }
+
+                    key.inner = key.inner.to_lowercase();
+                    current_option = Some(key.clone());
+                    // dbg!(&current_option);
+                    let existing = section.get_key_value(&key);
+                    if let Some((previous_key, _previous_value)) = existing {
+                        let diagnostic = Diagnostic::warning_or_error(options.strict)
+                            .with_message(format!("duplicate option `{key}`"))
+                            .with_labels(vec![
+                                Label::primary(file_id, key.span.clone())
+                                    .with_message(format!("second use of option `{key}`")),
+                                Label::secondary(file_id, previous_key.span.clone())
+                                    .with_message(format!("first use of option `{previous_key}`")),
+                            ]);
+                        diagnostics.push(diagnostic);
+                    }
+
+                    if !(options.strict && existing.is_some()) {
+                        section.set(key, value);
+                    }
                 }
             }
         }
     }
+
+    let section = get_section(&current_section, &mut out);
+    finalize_continuation_value(&current_option, section);
     Ok(out)
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Options {
     pub strict: bool,
+    pub parser_config: Config,
 }
 
 pub fn from_str<F: PartialEq + Copy>(
     value: &str,
-    options: &Options,
+    options: Options,
     file_id: F,
     diagnostics: &mut Vec<Diagnostic<F>>,
 ) -> Result<Value, Error> {

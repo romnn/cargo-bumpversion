@@ -26,9 +26,7 @@ where
     type Target = <T as std::ops::Deref>::Target;
 
     fn deref(&self) -> &Self::Target {
-        // use std:ops::Deref;
         self.as_ref().deref()
-        // &self.inner.deref()
     }
 }
 

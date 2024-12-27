@@ -41,16 +41,43 @@ pub struct Spanned<T> {
     pub span: Span,
 }
 
-impl<T> std::ops::Deref for Spanned<T> {
-    type Target = T;
+// impl<'a> std::ops::Deref for &'a Spanned<&String> {
+//     type Target = str;
+//     fn deref(&self) -> &Self::Target {
+//         &self.inner
+//     }
+// }
+
+impl std::ops::Deref for Spanned<&String> {
+    type Target = str;
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
 
+impl std::ops::Deref for Spanned<String> {
+    type Target = str;
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+// impl<T> std::ops::Deref for Spanned<T> {
+//     type Target = T;
+//     fn deref(&self) -> &Self::Target {
+//         &self.inner
+//     }
+// }
+
 impl<T> AsRef<T> for Spanned<T> {
     fn as_ref(&self) -> &T {
         &self.inner
+    }
+}
+
+impl<T> AsMut<T> for Spanned<T> {
+    fn as_mut(&mut self) -> &mut T {
+        &mut self.inner
     }
 }
 
@@ -80,6 +107,32 @@ where
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(&self.inner, f)
+    }
+}
+
+impl PartialEq<Spanned<&str>> for Spanned<&String> {
+    fn eq(&self, other: &Spanned<&str>) -> bool {
+        self.inner == other.inner
+    }
+}
+
+impl PartialEq<Spanned<&str>> for Spanned<String> {
+    fn eq(&self, other: &Spanned<&str>) -> bool {
+        self.inner == other.inner
+    }
+}
+
+// impl std::ops::Deref for Spanned<String> {
+//     type Target = &str;
+//
+//     fn deref(&self) -> &Self::Target {
+//         self.as_str()
+//     }
+// }
+
+impl Spanned<String> {
+    fn as_str(&self) -> &str {
+        self.as_ref().as_str()
     }
 }
 

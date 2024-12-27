@@ -1,13 +1,14 @@
 use crate::spanned::{Span, Spanned};
+use aho_corasick::{AhoCorasick, PatternID};
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use std::collections::{HashMap, HashSet};
 
-pub const DEFAULT_DELIMITERS: [char; 2] = ['=', ':'];
-pub const DEFAULT_COMMENT_PREFIXES: [char; 2] = [';', '#'];
+pub const DEFAULT_ASSIGNMENT_DELIMITERS: [&str; 2] = ["=", ":"];
+pub const DEFAULT_COMMENT_PREFIXES: [&str; 2] = [";", "#"];
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum Item {
-    Empty,
+    // Empty,
     Section {
         name: String,
     },
@@ -36,7 +37,7 @@ pub enum SyntaxError {
     },
     MissingAssignmentDelimiter {
         span: Span,
-        assignment_delimiters: Vec<char>,
+        assignment_delimiters: Vec<String>,
     },
 }
 
@@ -98,59 +99,32 @@ impl SyntaxError {
 }
 
 #[derive(thiserror::Error, Debug)]
+pub enum ConfigError {
+    #[error(transparent)]
+    Pattern(#[from] aho_corasick::BuildError),
+}
+
+#[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error("syntax error: {0}")]
     Syntax(#[from] SyntaxError),
+    #[error("config error: {0}")]
+    Config(#[from] ConfigError),
 }
 
 impl Error {
     pub fn to_diagnostics<F: Copy + PartialEq>(&self, file_id: F) -> Vec<Diagnostic<F>> {
         match self {
-            Self::Io(_) => vec![],
+            Self::Io(_) | Self::Config(_) => vec![],
             Self::Syntax(err) => vec![err.to_diagnostics(file_id)],
         }
     }
 }
 
-// pub jtruct Parser<T> {
-//     input: T,
-// }
-//
-// impl<T> Parser<T> {
-//     pub fn new(input: T) -> Self {
-//         Parser { input }
-//     }
-//
-//     pub fn into_inner(self) -> T {
-//         self.input
-//     }
-// }
-
-// impl<'a> Parser<OkIter<std::str::Lines<'a>>> {
-//     pub fn from_str(s: &'a str) -> Self {
-//         Self::new(OkIter(s.lines()))
-//     }
-// }
-
-// impl<R: std::io::BufRead> Parser<std::io::Lines<R>> {
-//     pub fn from_bufread(r: R) -> Self {
-//         Self::new(r.lines())
-//     }
-// }
-//
-// impl<R: std::io::Read> Parser<std::io::Lines<std::io::BufReader<R>>> {
-//     pub fn from_read(r: R) -> Self {
-//         Self::from_bufread(std::io::BufReader::new(r))
-//     }
-// }
-
-// #[derive(Debug)]
-// pub struct Parser<B>(lines::Lines<B>);
-
 pub trait Parse {
-    fn parse_next(&mut self, state: &mut ParseState) -> Result<Option<Spanned<Item>>, Error>;
+    fn parse_next(&mut self, state: &mut ParseState) -> Result<Option<Vec<Spanned<Item>>>, Error>;
 }
 
 // impl<B> std::iter::Iterator for Parser<B>
@@ -196,10 +170,14 @@ fn compact_span(line: &str, span: Span) -> Span {
     //     .skip(start)
     //     .find_map(|(pos, c)| if !c.is_whitespace() { Some(pos) } else { None })
     //     .unwrap_or(start);
+    // dbg!((start, end));
+    // dbg!(start, end);
+    assert!(start <= end);
     start += line[start..]
         .chars()
         .take_while(|c| c.is_whitespace())
         .count();
+    // dbg!(&start);
     end -= line[start..end]
         .chars()
         .rev()
@@ -479,22 +457,22 @@ impl Default for ParseState {
     }
 }
 
-// pub fn read(state: &mut ReadState) -> eyre::Result<()> {
-//     Ok(())
-// }
-
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Config {
-    assignment_delimiters: Vec<char>,
-    comment_prefixes: Vec<char>,
+    assignment_delimiters: Vec<&'static str>,
+    comment_prefixes: Vec<&'static str>,
+    // inline_comment_prefixes: Vec<&'static str>,
+    empty_lines_in_values: bool,
     allow_brackets_in_section_name: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            assignment_delimiters: vec!['=', ':'],
-            comment_prefixes: vec!['#', ';'],
+            assignment_delimiters: DEFAULT_ASSIGNMENT_DELIMITERS.to_vec(),
+            comment_prefixes: DEFAULT_COMMENT_PREFIXES.to_vec(),
+            // inline_comment_prefixes: DEFAULT_COMMENT_PREFIXES.to_vec(),
+            empty_lines_in_values: true,
             allow_brackets_in_section_name: true,
         }
     }
@@ -503,15 +481,21 @@ impl Default for Config {
 #[derive(Debug)]
 pub struct Parser<B> {
     config: Config,
+    assignment_delimiters: AhoCorasick,
+    comment_prefixes: AhoCorasick,
     lines: crate::lines::Lines<B>,
 }
 
 impl<B> Parser<B> {
-    pub fn new(buf: B, config: Config) -> Self {
-        Self {
+    pub fn new(buf: B, config: Config) -> Result<Self, ConfigError> {
+        let assignment_delimiters = AhoCorasick::new(&config.assignment_delimiters)?;
+        let comment_prefixes = AhoCorasick::new(&config.comment_prefixes)?;
+        Ok(Self {
+            assignment_delimiters,
+            comment_prefixes,
             lines: crate::lines::Lines::new(buf),
             config,
-        }
+        })
     }
 }
 
@@ -519,7 +503,7 @@ impl<B> Parse for Parser<B>
 where
     B: std::io::BufRead,
 {
-    fn parse_next(&mut self, state: &mut ParseState) -> Result<Option<Spanned<Item>>, Error> {
+    fn parse_next(&mut self, state: &mut ParseState) -> Result<Option<Vec<Spanned<Item>>>, Error> {
         let line = self.lines.next().transpose()?;
         let Some((offset, line)) = line else {
             return Ok(None);
@@ -538,6 +522,15 @@ where
         // dbg!(&state.option_name);
         // dbg!(&line[span.clone()]);
 
+        dbg!(&line);
+        // dbg!(&span);
+        // if line.contains("Augustin") {
+        //     dbg!(&line);
+        //     dbg!(&line[span.clone()]);
+        // }
+
+        let mut items: Vec<Spanned<Item>> = vec![];
+
         if line[span.clone()].starts_with('[') {
             if line[span.clone()].ends_with(']') {
                 span.start += 1;
@@ -546,72 +539,152 @@ where
                 // let line = &line[span];
                 let byte_span = to_byte_span(&line, span.clone()).add_offset(offset);
                 if !self.config.allow_brackets_in_section_name && line[span.clone()].contains(']') {
-                    Err(Error::Syntax(SyntaxError::InvalidSectionName {
+                    return Err(Error::Syntax(SyntaxError::InvalidSectionName {
                         span: byte_span,
-                    }))
+                    }));
                 } else {
                     state.current_section.clear();
                     state.option_name = None;
-                    Ok(Some(Spanned::new(
+                    println!("\t=> section: {}", &line[span.clone()]);
+
+                    items.push(Spanned::new(
                         byte_span,
                         Item::Section {
                             name: line[span].into(),
                         },
-                    )))
+                    ));
+                    // Ok(Some(vec![Spanned::new(
+                    //     byte_span,
+                    //     Item::Section {
+                    //         name: line[span].into(),
+                    //     },
+                    // )]))
                 }
             } else {
                 let byte_span = to_byte_span(&line, span.clone()).add_offset(offset);
-                Err(Error::Syntax(SyntaxError::SectionNotClosed {
+                return Err(Error::Syntax(SyntaxError::SectionNotClosed {
                     span: byte_span,
-                }))
+                }));
             }
         } else if line[span.clone()].starts_with(';') || line[span.clone()].starts_with('#') {
             // comment
             // # empty line marks end of value
             // st.indent_level = sys.maxsize
             span.start += 1;
-            let byte_span = to_byte_span(&line, span).add_offset(offset);
-            Ok(Some(Spanned::new(
+            let byte_span = to_byte_span(&line, span.clone()).add_offset(offset);
+            println!("\t=> comment: {line}");
+            items.push(Spanned::new(
                 byte_span,
-                Item::Comment { text: line.into() },
-            )))
-        } else if line[span.clone()].is_empty() {
-            state.option_name = None;
-            let byte_span = to_byte_span(&line, span).add_offset(offset);
-            Ok(Some(Spanned::new(byte_span, Item::Empty)))
+                Item::Comment {
+                    text: line[span].into(),
+                },
+            ));
+            // Ok(Some(vec![Spanned::new(
+            //     byte_span,
+            //     Item::Comment {
+            //         text: line[span].into(),
+            //     },
+            // )]))
+            // } else if line[span.clone()].is_empty() {
+            // println!("\t=> empty");
+            // state.option_name = None;
+            // let byte_span = to_byte_span(&line, span).add_offset(offset);
+            // Ok(Some(vec![]))
+            // Ok(Some(vec![Spanned::new(byte_span, Item::Empty)))
         } else {
             // find position of assignment delimiter (e.g. '=')
-            let assignment_delimiter_pos =
-                line[span.clone()].chars().enumerate().find_map(|(idx, c)| {
-                    if self.config.assignment_delimiters.iter().any(|d| *d == c) {
-                        Some(idx)
-                    } else {
-                        None
-                    }
-                });
 
-            // find position of comment (e.g. '#')
-            let comment_pos = line[span.clone()].chars().enumerate().find_map(|(idx, c)| {
-                if self.config.comment_prefixes.iter().any(|d| *d == c) {
-                    Some(idx)
-                } else {
-                    None
-                }
-            });
+            // let assignment_delimiter_pos =
+            //     line[span.clone()].chars().enumerate().find_map(|(idx, c)| {
+            //         if self.config.assignment_delimiters.iter().any(|d| *d == c) {
+            //             Some(idx)
+            //         } else {
+            //             None
+            //         }
+            //     });
+
+            // // find position of comment (e.g. '#')
+            // let comment_pos = line[span.clone()].chars().enumerate().find_map(|(idx, c)| {
+            //     // if self.config.comment_prefixes.iter().any(|d| *d == c) {
+            //     if self.config.comment_prefixes..iter().any(|d| *d == c) {
+            //         Some(idx)
+            //     } else {
+            //         None
+            //     }
+            // });
+
+            let assignment_delimiter_pos = self
+                .assignment_delimiters
+                .find(&line[span.clone()])
+                .map(|pos| pos.start());
+
+            let comment_pos = self
+                .comment_prefixes
+                .find(&line[span.clone()])
+                .map(|pos| pos.start());
+
+            // dbg!(&assignment_delimiter_pos);
+            // dbg!(&comment_pos);
+            // dbg!(&state.option_name);
+
+            if let Some(comment_pos) = comment_pos {
+                let comment_span = Span {
+                    start: span.start + comment_pos + 1,
+                    end: span.end,
+                };
+                let comment_span = compact_span(&line, comment_span);
+
+                let value = &line[comment_span.clone()];
+                // println!("\t=> comment: {value} ({comment_span:?})");
+                println!("\t=> comment: {value}");
+                let byte_span = to_byte_span(&line, comment_span).add_offset(offset);
+
+                span.end = span.start + comment_pos;
+                // println!("\t=> before comment: {} ({span:?})", &line[span.clone()]);
+                items.push(Spanned::new(
+                    byte_span,
+                    Item::Comment { text: value.into() },
+                ));
+                // Some(Spanned::new(
+                //     byte_span,
+                //     Item::Comment {
+                //         text: line[comment_span].into(),
+                //     },
+                // ))
+            }
+            // else {
+            //     None
+            // };
+
+            let is_empty = line.chars().all(|c| c.is_whitespace());
+            let is_separator = line.chars().all(|c| c == '-');
 
             // check if continue
+            let mut is_continue = false;
             if let Some(ref option_name) = state.option_name {
                 // continuation line?
-                let is_continue = !state.current_section.is_empty()
-                    && assignment_delimiter_pos.is_none()
+                if true {
+                    dbg!(
+                        // state.current_section.as_ref().map(|section| section.name),
+                        // state.current_section.as_ref().map(|section| section.name),
+                        !state.current_section.is_empty(),
+                        // assignment_delimiter_pos.is_none(),
+                        assignment_delimiter_pos,
+                        current_indent_level,
+                        state.indent_level
+                    );
+                }
+                is_continue = !state.current_section.is_empty()
+                    // && assignment_delimiter_pos.is_none()
                     && current_indent_level > state.indent_level;
+                println!("\t=> continuation?: {is_continue}");
 
-                println!(
-                    "section={} option={} continuation={}",
-                    "", // state.current_section.len(),
-                    option_name,
-                    is_continue
-                );
+                // println!(
+                //     "section={} option={} continuation={}",
+                //     "", // state.current_section.len(),
+                //     option_name,
+                //     is_continue
+                // );
 
                 if is_continue {
                     // let Some(mut previous_value) = state.current_section.get_mut(option_name) else {
@@ -637,93 +710,134 @@ where
                     //     },
                     // )))
 
-                    let value = &line[span.clone()];
+                    let continuation_span = compact_span(&line, span.clone());
+                    let value = &line[continuation_span.clone()];
+                    println!("\t=> continuation: {value}");
 
-                    return Ok(Some(Spanned::new(
-                        to_byte_span(&line, span).add_offset(offset),
+                    items.push(Spanned::new(
+                        to_byte_span(&line, continuation_span.clone()).add_offset(offset),
                         Item::ContinuationValue {
-                            // key: Spanned::new(to_byte_span(&line, key_span).add_offset(offset), key.into()),
                             value: value.into(),
-                            // value: Spanned::new(
-                            //     to_byte_span(&line, span).add_offset(offset),
-                            //     value.into(),
-                            // ),
                         },
-                    )));
+                    ));
+                    // return Ok(Some(vec![Spanned::new(
+                    //     to_byte_span(&line, span).add_offset(offset),
+                    //     Item::ContinuationValue {
+                    //         // key: Spanned::new(to_byte_span(&line, key_span).add_offset(offset), key.into()),
+                    //         value: value.into(),
+                    //         // value: Spanned::new(
+                    //         //     to_byte_span(&line, span).add_offset(offset),
+                    //         //     value.into(),
+                    //         // ),
+                    //     },
+                    // )]));
                     // let byte_span = to_byte_span(&line, span).add_offset(offset);
                     // return Ok(Some(Spanned::new(byte_span, Item::Empty)));
                 }
             }
 
-            let assignment_delimiter_pos = assignment_delimiter_pos.ok_or_else(|| {
-                Error::Syntax(SyntaxError::MissingAssignmentDelimiter {
-                    span: to_byte_span(&line, span.clone()).add_offset(offset),
-                    assignment_delimiters: self.config.assignment_delimiters.clone(),
-                })
-            })?;
-            // if let Some(equal_pos) = equal_pos {
+            if is_empty {
+                // if is_continue {
+                if self.config.empty_lines_in_values {
+                    println!("\t=> empty (continuation)");
+                    items.push(Spanned::new(
+                        to_byte_span(&line, span.clone()).add_offset(offset),
+                        Item::ContinuationValue { value: line.into() },
+                    ));
+                } else {
+                    // reset current option
+                    state.option_name = None;
+                }
+                // } else {
+                //     println!("\t=> empty");
+                // }
+            } else if is_separator {
+                // line is only '-' character
+                println!("\t=> separator (empty)");
+                // return Ok(Some(vec![]));
+                // return Ok(Some(Spanned::new(
+                //     to_byte_span(&line, span).add_offset(offset),
+                //     Item::Empty,
+                // )));
+            } else if !is_continue {
+                let assignment_delimiter_pos = assignment_delimiter_pos.ok_or_else(|| {
+                    Error::Syntax(SyntaxError::MissingAssignmentDelimiter {
+                        span: to_byte_span(&line, span.clone()).add_offset(offset),
+                        assignment_delimiters: self
+                            .config
+                            .assignment_delimiters
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect(),
+                    })
+                })?;
+                // dbg!(assignment_delimiter_pos);
+                // dbg!(&assignment_delimiter_pos);
+                // if let Some(equal_pos) = equal_pos {
 
-            // dbg!(&line, &span, &equal_pos);
+                // dbg!(&line, &span, &equal_pos);
 
-            let key_span = Span {
-                start: span.start,
-                end: span.start + assignment_delimiter_pos,
-            };
-            let key_span = compact_span(&line, key_span);
-            // dbg!(&key_span);
-            let key = &line[key_span.clone()];
-            // dbg!(&key);
+                let key_span = Span {
+                    start: span.start,
+                    end: span.start + assignment_delimiter_pos,
+                };
+                let key_span = compact_span(&line, key_span);
+                // dbg!(&key_span);
+                let key = &line[key_span.clone()];
 
-            let value_span = Span {
-                start: span.start + assignment_delimiter_pos + 1,
-                end: span.end.min(comment_pos.unwrap_or(usize::MAX)),
-            };
-            // dbg!(&value_span);
-            let value_span = compact_span(&line, value_span);
-            let value = &line[value_span.clone()];
+                let value_span = Span {
+                    start: span.start + assignment_delimiter_pos + 1,
+                    // end: span.end.min(comment_pos.unwrap_or(usize::MAX)),
+                    end: span.end,
+                };
+                // dbg!(&value_span);
+                let value_span = compact_span(&line, value_span);
+                let value = &line[value_span.clone()];
 
-            if key.is_empty() {
-                return Err(Error::Syntax(SyntaxError::EmptyOptionName {
-                    span: to_byte_span(&line, key_span.clone()).add_offset(offset),
-                }));
+                // dbg!((&key, &value));
+                if key.is_empty() {
+                    return Err(Error::Syntax(SyntaxError::EmptyOptionName {
+                        span: to_byte_span(&line, key_span.clone()).add_offset(offset),
+                    }));
+                }
+
+                state.indent_level = key_span.start;
+
+                println!("\t=> key={} value={}", key, value);
+                state.option_name = Some(key.to_string());
+                state
+                    .current_section
+                    .insert(key.to_string(), vec![value.to_string()]);
+
+                items.push(Spanned::new(
+                    to_byte_span(&line, span).add_offset(offset),
+                    Item::Value {
+                        key: Spanned::new(
+                            to_byte_span(&line, key_span).add_offset(offset),
+                            key.into(),
+                        ),
+                        value: Spanned::new(
+                            to_byte_span(&line, value_span).add_offset(offset),
+                            value.into(),
+                        ),
+                    },
+                ));
+                // Ok(Some(vec![Spanned::new(
+                //     to_byte_span(&line, span).add_offset(offset),
+                //     Item::Value {
+                //         key: Spanned::new(
+                //             to_byte_span(&line, key_span).add_offset(offset),
+                //             key.into(),
+                //         ),
+                //         value: Spanned::new(
+                //             to_byte_span(&line, value_span).add_offset(offset),
+                //             value.into(),
+                //         ),
+                //     },
+                // )]))
             }
-
-            state.option_name = Some(key.to_string());
-            state
-                .current_section
-                .insert(key.to_string(), vec![value.to_string()]);
-
-            Ok(Some(Spanned::new(
-                to_byte_span(&line, span).add_offset(offset),
-                Item::Value {
-                    key: Spanned::new(to_byte_span(&line, key_span).add_offset(offset), key.into()),
-                    value: Spanned::new(
-                        to_byte_span(&line, value_span).add_offset(offset),
-                        value.into(),
-                    ),
-                },
-            )))
-            // let mut line = line.splitn(2, '=');
-            // if let Some(key) = line.next() {
-            //     let key = key.trim();
-            //     if let Some(value) = line.next() {
-            //         Ok(Some(Item::Value {
-            //             key: key.into(),
-            //             value: value.trim().into(),
-            //         }))
-            //     } else if key.is_empty() {
-            //         Ok(Some(Item::Empty))
-            //     } else {
-            //         Err(Error::Syntax(SyntaxError::MissingEquals))
-            //     }
-            // } else {
-            //     unreachable!()
-            // }
-            // } else {
-            //     let byte_span = to_byte_span(&line, span).add_offset(offset);
-            //     Ok(Some(Spanned::new(byte_span, Item::Empty)))
-            // }
         }
+        Ok(Some(items))
     }
 }
 
@@ -731,9 +845,9 @@ where
 mod tests {
     use std::string::ParseError;
 
-    use crate::parse::{DEFAULT_COMMENT_PREFIXES, DEFAULT_DELIMITERS};
+    use crate::parse::{DEFAULT_ASSIGNMENT_DELIMITERS, DEFAULT_COMMENT_PREFIXES};
     use crate::spanned::{DerefInner, Spanned};
-    use crate::tests::{parse, Printer};
+    use crate::tests::{parse, Printer, SectionProxyExt};
     use crate::value::{ClearSpans, NoSectionError, Options, RawSection, Section, Value};
     // use codespan_reporting::{diagnostic::Diagnostic, files, term};
     use color_eyre::eyre;
@@ -804,7 +918,7 @@ mod tests {
             User = QEDK
         "#};
 
-        let have = parse(config, &Options::default(), &Printer::default()).0?;
+        let have = parse(config, Options::default(), &Printer::default()).0?;
         let mut expected = Value::with_defaults([].into_iter().collect());
 
         expected.add_section(
@@ -1314,22 +1428,10 @@ mod tests {
         config.add_section(Spanned::from("a"), []);
         config.add_section(Spanned::from("B"), []);
 
-        sim_assert_eq!(
-            config
-                .section_names()
-                // .map(|name| name.as_ref().as_str())
-                .collect::<Vec<_>>(),
-            ["A", "a", "B"]
-        );
+        sim_assert_eq!(config.section_names().collect::<Vec<_>>(), ["A", "a", "B"]);
 
         config.set("a", Spanned::from("B"), Spanned::from("value"))?;
-        sim_assert_eq!(
-            config
-                .options("a")
-                // .map(|option| option.as_ref().as_str())
-                .collect::<Vec<_>>(),
-            ["b"]
-        );
+        sim_assert_eq!(config.options("a").collect::<Vec<_>>(), ["b"]);
         sim_assert_eq!(
             config.get("a", "b").deref_inner(),
             Some("value"),
@@ -1362,29 +1464,11 @@ mod tests {
             );
         }
 
-        sim_assert_eq!(
-            config
-                .options("A")
-                // .map(|option| option.as_ref().as_str())
-                .collect::<Vec<_>>(),
-            ["a-b"]
-        );
-        sim_assert_eq!(
-            config
-                .options("a")
-                // .map(|option| option.as_ref().as_str())
-                .collect::<Vec<_>>(),
-            ["b"]
-        );
+        sim_assert_eq!(config.options("A").collect::<Vec<_>>(), ["a-b"]);
+        sim_assert_eq!(config.options("a").collect::<Vec<_>>(), ["b"]);
 
         config.remove_option("a", "B");
-        sim_assert_eq!(
-            config
-                .options("a")
-                // .map(|option| option.as_ref().as_str())
-                .collect::<Vec<_>>(),
-            [] as [&str; 0]
-        );
+        sim_assert_eq!(config.options("a").collect::<Vec<_>>(), [] as [&str; 0]);
 
         // SF bug #432369:
         let config = unindent::unindent(&format!(
@@ -1393,17 +1477,11 @@ mod tests {
             Option{} first line   
             \tsecond line   
             ",
-            DEFAULT_DELIMITERS[0],
+            DEFAULT_ASSIGNMENT_DELIMITERS[0],
         ));
-        let mut config = parse(&config, &Options::default(), &Printer::default()).0?;
+        let mut config = parse(&config, Options::default(), &Printer::default()).0?;
 
-        sim_assert_eq!(
-            config
-                .options("MySection")
-                // .map(|option| option.as_ref().as_str())
-                .collect::<Vec<_>>(),
-            ["option"]
-        );
+        sim_assert_eq!(config.options("MySection").collect::<Vec<_>>(), ["option"]);
         sim_assert_eq!(
             config.get("MySection", "Option").deref_inner(),
             Some("first line\nsecond line")
@@ -1415,9 +1493,9 @@ mod tests {
             [section]
             nekey{}nevalue\n
             "#,
-            DEFAULT_DELIMITERS[0],
+            DEFAULT_ASSIGNMENT_DELIMITERS[0],
         ));
-        let mut config = parse(&config, &Options::default(), &Printer::default()).0?;
+        let mut config = parse(&config, Options::default(), &Printer::default()).0?;
 
         // cf = self.fromstring("[section]\n"
         //                      "nekey{}nevalue\n".format(self.delimiters[0]),
@@ -1441,26 +1519,15 @@ mod tests {
         );
         config.add_section(Spanned::from("B"), []);
 
-        sim_assert_eq!(
-            config
-                .section_names()
-                // .map(|name| name.as_ref().as_str())
-                .collect::<Vec<_>>(),
-            ["A", "a", "B"]
-        );
+        sim_assert_eq!(config.section_names().collect::<Vec<_>>(), ["A", "a", "B"]);
 
         sim_assert_eq!(
-            config
-                .section("a")
-                .unwrap()
-                .keys()
-                // .map(|name| name.as_ref().as_str())
-                .collect::<Vec<_>>(),
+            config.section("a").unwrap().keys().collect::<Vec<_>>(),
             ["b"]
         );
 
         sim_assert_eq!(
-            config.section("a").unwrap()["b"].as_ref().as_str(),
+            &config.section("a").unwrap()["b"],
             "value",
             "could not locate option, expecting case-insensitive option names"
         );
@@ -1507,9 +1574,9 @@ mod tests {
         // SF bug #432369:
         let config = format!(
             "[MySection]\nOption{} first line   \n\tsecond line   \n",
-            DEFAULT_DELIMITERS[0],
+            DEFAULT_ASSIGNMENT_DELIMITERS[0],
         );
-        let mut config = parse(&config, &Options::default(), &Printer::default()).0?;
+        let mut config = parse(&config, Options::default(), &Printer::default()).0?;
 
         sim_assert_eq!(
             config
@@ -1529,7 +1596,7 @@ mod tests {
         // SF bug #561822:
         // let config = format!(
         //     "[MySection]\nOption{} first line   \n\tsecond line   \n",
-        //     DEFAULT_DELIMITERS[0],
+        //     DEFAULT_ASSIGNMENT_DELIMITERS[0],
         // );
         // let mut config = parse(&config, &Printer::default()).0?;
 
@@ -1578,22 +1645,28 @@ mod tests {
         use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
 
-        let config = format!("[Foo]\n{}val-without-opt-name\n", DEFAULT_DELIMITERS[0]);
-        let config = parse(&config, &Options::default(), &Printer::default()).0;
+        let config = format!(
+            "[Foo]\n{}val-without-opt-name\n",
+            DEFAULT_ASSIGNMENT_DELIMITERS[0]
+        );
+        let config = parse(&config, Options::default(), &Printer::default()).0;
         sim_assert_eq!(
             config.err().map(|err| err.to_string()).as_deref(),
             Some("syntax error: empty option name")
         );
 
-        let config = format!("[Foo]\n{}val-without-opt-name\n", DEFAULT_DELIMITERS[1]);
-        let config = parse(&config, &Options::default(), &Printer::default()).0;
+        let config = format!(
+            "[Foo]\n{}val-without-opt-name\n",
+            DEFAULT_ASSIGNMENT_DELIMITERS[1]
+        );
+        let config = parse(&config, Options::default(), &Printer::default()).0;
         sim_assert_eq!(
             config.err().map(|err| err.to_string()).as_deref(),
             Some("syntax error: empty option name")
         );
 
         let config = "No Section!\n"; // python configparser raises `MissingSectionHeaderError`
-        let config = parse(config, &Options::default(), &Printer::default()).0;
+        let config = parse(config, Options::default(), &Printer::default()).0;
         sim_assert_eq!(
             config.err().map(|err| err.to_string()).as_deref(),
             Some("syntax error: variable assignment missing one of: `=`, `:`")
@@ -1601,7 +1674,7 @@ mod tests {
         // self.assertEqual(e.args, ('<???>', 1, "No Section!\n"))
 
         let config = "[Foo]\n  wrong-indent\n";
-        let config = parse(config, &Options::default(), &Printer::default()).0;
+        let config = parse(config, Options::default(), &Printer::default()).0;
         sim_assert_eq!(
             config.err().map(|err| err.to_string()).as_deref(),
             Some("syntax error: variable assignment missing one of: `=`, `:`")
@@ -1688,9 +1761,9 @@ mod tests {
             E3{equals}-1\n
             E4{equals}0.1\n
             E5{equals}FALSE AND MORE",
-            equals = DEFAULT_DELIMITERS[0],
+            equals = DEFAULT_ASSIGNMENT_DELIMITERS[0],
         ));
-        let config = parse(&config, &Options::default(), &Printer::default()).0?;
+        let config = parse(&config, Options::default(), &Printer::default()).0?;
 
         for x in 1..5 {
             sim_assert_eq!(
@@ -1740,9 +1813,9 @@ mod tests {
             [Foo]
             oops{equals}this won't
             ",
-            equals = DEFAULT_DELIMITERS[0],
+            equals = DEFAULT_ASSIGNMENT_DELIMITERS[0],
         ));
-        let config = parse(&config, &Options::default(), &Printer::default()).0?;
+        let config = parse(&config, Options::default(), &Printer::default()).0?;
         let mut expected = Value::default();
         expected.add_section(
             Spanned::from("Foo"),
@@ -1772,13 +1845,13 @@ mod tests {
             y{equals}2
             y{equals}3
             ",
-            equals = DEFAULT_DELIMITERS[0],
+            equals = DEFAULT_ASSIGNMENT_DELIMITERS[0],
         ));
         let options = Options {
             strict: true,
             ..Options::default()
         };
-        let config = parse(&config, &options, &Printer::default()).0?;
+        let config = parse(&config, options, &Printer::default()).0?;
         let mut expected = Value::default();
         sim_assert_eq!(config.get("Foo", "x").deref_inner(), Some("1"));
         sim_assert_eq!(config.get("Foo", "y").deref_inner(), Some("2"));
@@ -1795,9 +1868,9 @@ mod tests {
             [sect]
             option1{equals}foo
             ",
-            equals = DEFAULT_DELIMITERS[0],
+            equals = DEFAULT_ASSIGNMENT_DELIMITERS[0],
         ));
-        let mut config = parse(&config, &Options::default(), &Printer::default()).0?;
+        let mut config = parse(&config, Options::default(), &Printer::default()).0?;
 
         // check that we don't get an exception when setting values in
         // an existing section using strings:
@@ -1825,18 +1898,12 @@ mod tests {
             key{delim1} |%(name)s|
             getdefault{delim1} |%(default)s|
             "#,
-            delim0 = DEFAULT_DELIMITERS[0],
-            delim1 = DEFAULT_DELIMITERS[1],
+            delim0 = DEFAULT_ASSIGNMENT_DELIMITERS[0],
+            delim1 = DEFAULT_ASSIGNMENT_DELIMITERS[1],
         ));
-        let mut config = parse(&config, &Options::default(), &Printer::default()).0?;
-        let mut items = config
-            .section("section")
-            .unwrap()
-            .iter()
-            .map(|(k, v)| (k.as_ref().as_str(), v.as_ref().as_str()))
-            .collect::<Vec<_>>();
+        let mut config = parse(&config, Options::default(), &Printer::default()).0?;
         sim_assert_eq!(
-            items,
+            config.section("section").unwrap().items_vec(),
             vec![
                 ("default", "<default>"),
                 ("name", "%(value)s"),
@@ -1844,7 +1911,6 @@ mod tests {
                 ("getdefault", "|%(default)s|"),
             ]
         );
-        // self.assertEqual(L, expected);
         sim_assert_eq!(config.section("no such section"), None);
         Ok(())
     }
@@ -1863,32 +1929,20 @@ mod tests {
             [section3]
             name3 {delim0} value3
             "#,
-            delim0 = DEFAULT_DELIMITERS[0],
+            delim0 = DEFAULT_ASSIGNMENT_DELIMITERS[0],
         ));
-        let mut config = parse(&config, &Options::default(), &Printer::default()).0?;
+        let mut config = parse(&config, Options::default(), &Printer::default()).0?;
 
         sim_assert_eq!(
-            config
-                .pop()
-                .map(|section| section.name)
-                .as_ref()
-                .deref_inner(),
+            config.pop().map(|section| section.name).as_deref(),
             Some("section1")
         );
         sim_assert_eq!(
-            config
-                .pop()
-                .map(|section| section.name)
-                .as_ref()
-                .deref_inner(),
+            config.pop().map(|section| section.name).as_deref(),
             Some("section2")
         );
         sim_assert_eq!(
-            config
-                .pop()
-                .map(|section| section.name)
-                .as_ref()
-                .deref_inner(),
+            config.pop().map(|section| section.name).as_deref(),
             Some("section3")
         );
         sim_assert_eq!(config.pop(), None);
@@ -1918,10 +1972,7 @@ mod tests {
 
         sim_assert_eq!(config.section_names().collect::<Vec<_>>(), vec!["zing"]);
         sim_assert_eq!(
-            config.section("zing").map(|section| section
-                .keys()
-                .map(|k| k.as_ref().as_str())
-                .collect::<Vec<&str>>()),
+            config.section("zing").map(|section| section.keys_vec()),
             Some(vec!["option1", "option2", "foo"]),
         );
 
@@ -1956,9 +2007,9 @@ mod tests {
             [section3]
             name3 {equals} value3
             "#,
-            equals = DEFAULT_DELIMITERS[0],
+            equals = DEFAULT_ASSIGNMENT_DELIMITERS[0],
         ));
-        let mut config = parse(&config, &Options::default(), &Printer::default()).0?;
+        let mut config = parse(&config, Options::default(), &Printer::default()).0?;
 
         sim_assert_eq!(
             config.section("section1").map(|section| section
@@ -2115,9 +2166,9 @@ mod tests {
             test {equals} test
             invalid\
             ",
-            equals = DEFAULT_DELIMITERS[0],
+            equals = DEFAULT_ASSIGNMENT_DELIMITERS[0],
         ));
-        let res = parse(&config, &Options::default(), &Printer::default()).0;
+        let res = parse(&config, Options::default(), &Printer::default()).0;
         let err = res.err().map(|err| err.to_string());
         sim_assert_eq!(
             err.as_deref(),
@@ -2136,12 +2187,156 @@ mod tests {
     }
 
     #[test]
+    fn configparser_compat_defaults_keyword() -> eyre::Result<()> {
+        use similar_asserts::assert_eq as sim_assert_eq;
+        crate::tests::init();
+
+        // bpo-23835 fix for ConfigParser
+        let mut config = Value::default();
+        config.defaults_mut().set("1".into(), "2.4".into());
+
+        sim_assert_eq!(config.defaults().get("1").deref_inner(), Some("2.4"));
+        sim_assert_eq!(
+            config
+                .defaults()
+                .get_float("1")?
+                .as_ref()
+                .map(|value| value.as_ref())
+                .copied(),
+            Some(2.4)
+        );
+
+        let mut config = Value::default();
+        config.defaults_mut().set("A".into(), "5.2".into());
+        sim_assert_eq!(config.defaults().get("a").deref_inner(), Some("5.2"));
+        sim_assert_eq!(
+            config
+                .defaults()
+                .get_float("a")?
+                .as_ref()
+                .map(|value| value.as_ref())
+                .copied(),
+            Some(5.2)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn configparser_compat_no_interpolation_matches_ini() -> eyre::Result<()> {
+        use similar_asserts::assert_eq as sim_assert_eq;
+        crate::tests::init();
+
+        let config = unindent(
+            r#"
+            [numbers]
+            one = 1
+            two = %(one)s * 2
+            three = ${common:one} * 3
+
+            [hexen]
+            sixteen = ${numbers:two} * 8
+            "#,
+        );
+        let config = parse(&config, Options::default(), &Printer::default()).0?;
+
+        sim_assert_eq!(config.get("numbers", "one").deref_inner(), Some("1"));
+        sim_assert_eq!(
+            config.get("numbers", "two").deref_inner(),
+            Some("%(one)s * 2")
+        );
+        sim_assert_eq!(
+            config.get("numbers", "three").deref_inner(),
+            Some("${common:one} * 3")
+        );
+        sim_assert_eq!(
+            config.get("hexen", "sixteen").deref_inner(),
+            Some("${numbers:two} * 8")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn configparser_compat_empty_case() -> eyre::Result<()> {
+        use similar_asserts::assert_eq as sim_assert_eq;
+        crate::tests::init();
+
+        let config = parse("", Options::default(), &Printer::default()).0?;
+        sim_assert_eq!(config, Value::default());
+        assert!(config.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn configparser_compat_dominating_multiline_values() -> eyre::Result<()> {
+        use similar_asserts::assert_eq as sim_assert_eq;
+        crate::tests::init();
+
+        let wonderful_spam =
+            "I'm having spam spam spam spam spam spam spam beaked beans spam spam spam and spam!"
+                .replace(" ", "\n\t");
+
+        // we're reading from file because this is where the code changed
+        // during performance updates in Python 3.2
+        let mut config = Value::default();
+        for i in 0..100 {
+            config.add_section(
+                format!("section{i}").into(),
+                (0..10)
+                    .map(|j| {
+                        (
+                            format!("lovely_spam{j}").into(),
+                            wonderful_spam.clone().into(),
+                        )
+                    })
+                    .collect::<Section>(),
+            );
+        }
+        let have = config.get("section8", "lovely_spam4");
+        let want = &wonderful_spam;
+        sim_assert_eq!(have.deref_inner(), Some(want.as_str()));
+
+        let mut config = String::new();
+        for i in 0..2 {
+            config += &format!("[section{i}]\n");
+            for j in 0..5 {
+                config += &format!("lovely_spam{j} = {wonderful_spam}\n");
+            }
+        }
+        let config = parse(&config, Options::default(), &Printer::default()).0?;
+        let have = config.get("section1", "lovely_spam4");
+        let want = wonderful_spam.replace("\n\t", "\n");
+        sim_assert_eq!(have.deref_inner(), Some(want.as_str()));
+        Ok(())
+    }
+
+    #[ignore = "allow non-string values"]
+    #[test]
+    fn configparser_compat_set_nonstring_types() -> eyre::Result<()> {
+        use similar_asserts::assert_eq as sim_assert_eq;
+        crate::tests::init();
+
+        let mut config = Value::default();
+        config.add_section("non-string".into(), []);
+        config.set("non-string".into(), "int".into(), "1".into());
+        todo!("support for different value types similar to serde_json");
+        // config.set("non-string", "list", vec![0, 1, 1, 2, 3, 5, 8, 13]);
+        // // config.set("non-string", "dict", {'pi': 3.14159});
+        // sim_assert_eq!(config.get("non-string", "int"), Some(1));
+        // sim_assert_eq!(config.get("non-string", "list"), Some(vec![0, 1, 1, 2, 3, 5, 8, 13]));
+        // // sim_assert_eq!(config.get("non-string", "dict"), {'pi': 3.14159});
+        // config.add_section(123);
+        // config.set(123, "this is sick", True);
+        // sim_assert_eq!(config.get(123, "this is sick"), True);
+        Ok(())
+    }
+
+    #[test]
     fn configparser_compat_parse_cfgparser_1() -> eyre::Result<()> {
         use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
         let config = include_str!("../test-data/cfgparser.1.ini");
-        let mut config = parse(&config, &Options::default(), &Printer::default()).0?;
-        dbg!(&config);
+        let mut config = parse(&config, Options::default(), &Printer::default()).0?;
+        println!("{}", &config);
         Ok(())
     }
 
@@ -2150,8 +2345,56 @@ mod tests {
         use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
         let config = include_str!("../test-data/cfgparser.2.ini");
-        let mut config = parse(&config, &Options::default(), &Printer::default()).0?;
-        dbg!(&config);
+        // let config = include_str!("../test-data/cfgparser.0.ini");
+        let mut config = parse(
+            &config,
+            Options {
+                parser_config: crate::parse::Config {
+                    comment_prefixes: vec![";", "#", "----", "//"],
+                    // inline_comment_prefixes: vec!["//"],
+                    empty_lines_in_values: false,
+                    ..crate::parse::Config::default()
+                },
+                ..Options::default()
+            },
+            &Printer::default(),
+        )
+        .0?;
+        println!("{}", &config);
+
+        // sim_assert_eq!(
+        //     config.section_names().collect::<Vec<_>>(),
+        //     vec![
+        //         "global",
+        //         "homes",
+        //         "printers",
+        //         "print$",
+        //         "pdf-generator",
+        //         "tmp",
+        //         "Agustin",
+        //     ]
+        // );
+        sim_assert_eq!(
+            config.get("global", "workgroup").deref_inner(),
+            Some("MDKGROUP")
+        );
+        dbg!(&config.get("global", "max log size").as_ref());
+        sim_assert_eq!(
+            config
+                .get_int("global", "max log size")?
+                .as_ref()
+                .map(|value| value.as_ref())
+                .copied(),
+            Some(50)
+        );
+        sim_assert_eq!(
+            config.get("global", "hosts allow").deref_inner(),
+            Some("127.") // TODO(roman): do not include the comment
+        );
+        sim_assert_eq!(
+            config.get("tmp", "echo command").deref_inner(),
+            Some("cat %s; rm %s")
+        );
         Ok(())
     }
 
@@ -2160,8 +2403,109 @@ mod tests {
         use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
         let config = include_str!("../test-data/cfgparser.3.ini");
-        let mut config = parse(&config, &Options::default(), &Printer::default()).0?;
-        dbg!(&config);
+        // let config = include_str!("../test-data/cfgparser.0.ini");
+        let mut config = parse(&config, Options::default(), &Printer::default()).0?;
+        println!("{}", &config);
+
+        sim_assert_eq!(
+            config.section_names().collect::<Vec<_>>(),
+            vec![
+                "DEFAULT",
+                "strange",
+                "corruption",
+                "yeah, sections can be indented as well",
+                "another one!",
+                "no values here",
+                "tricky interpolation",
+                "more interpolation",
+            ]
+        );
+        sim_assert_eq!(
+            config.section("DEFAULT").unwrap().items_vec(),
+            vec![("go", "%(interpolate)s")]
+        );
+        sim_assert_eq!(
+            config.section("strange").unwrap().items_vec(),
+            vec![
+                ("values", "that are indented"),
+                (
+                    "other",
+                    indoc::indoc! {
+                        "that do continue
+                          in
+                          other
+                          lines",
+                    }
+                ),
+            ]
+        );
+        let multiline_expected = indoc::indoc! {"\
+            that is
+
+
+            actually still here
+
+
+            and holds all these weird newlines
+
+
+            nor the indentation"};
+
+        sim_assert_eq!(multiline_expected, "that is\n\n\nactually still here\n\n\nand holds all these weird newlines\n\n\nnor the indentation");
+        sim_assert_eq!(
+            config.section("corruption").unwrap().items_vec(),
+            vec![
+                ("value", multiline_expected),
+                ("another value", ""),
+                // ("yet another", "")
+            ]
+        );
+        sim_assert_eq!(
+            config
+                .section("yeah, sections can be indented as well")
+                .unwrap()
+                .items_vec(),
+            vec![
+                ("and that does not mean", "anything"),
+                ("are they subsections", "False"),
+                ("if you want subsections", "use XML"),
+                ("lets use some unicode", "片仮名"), // note: lowercased key
+            ]
+        );
+        sim_assert_eq!(
+            config.section("another one!").unwrap().items_vec(),
+            vec![
+                ("even if values are indented like this", "seriously"),
+                ("yes, this still applies to", r#"section "another one!""#),
+                (
+                    "this too",
+                    indoc::indoc! {
+                        r#"are there people with configurations broken as this?
+                        beware, this is going to be a continuation
+                        of the value for
+                        key "this too"
+                        even if it has a = character
+                        this is still the continuation
+                        your editor probably highlights it wrong
+                        but that's life"#,
+                    }
+                ),
+                ("interpolate", "anything will do"),
+            ]
+        );
+        sim_assert_eq!(
+            config.section("no values here").unwrap().items_vec(),
+            vec![],
+        );
+        sim_assert_eq!(
+            config.section("tricky interpolation").unwrap().items_vec(),
+            vec![("interpolate", "do this"), ("lets", "%(go)s"),],
+        );
+        sim_assert_eq!(
+            config.section("more interpolation").unwrap().items_vec(),
+            vec![("interpolate", "go shopping"), ("lets", "%(go)s"),],
+        );
+
         Ok(())
     }
 
@@ -2204,13 +2548,13 @@ mod tests {
             [This One Has A ] In It]
               forks {d0} spoons
             "#,
-            d0 = DEFAULT_DELIMITERS[0],
-            d1 = DEFAULT_DELIMITERS[1],
+            d0 = DEFAULT_ASSIGNMENT_DELIMITERS[0],
+            d1 = DEFAULT_ASSIGNMENT_DELIMITERS[1],
             c0 = DEFAULT_COMMENT_PREFIXES[0],
             c1 = DEFAULT_COMMENT_PREFIXES[1],
         ));
 
-        let mut have = parse(&config, &Options::default(), &Printer::default()).0?;
+        let mut have = parse(&config, Options::default(), &Printer::default()).0?;
         check_configparser_compat_basic(&mut have)?;
         // let have = super::value::from_str(&config).map_?;
         // let expected = Value {
@@ -2318,7 +2662,7 @@ mod tests {
                 gamma
         "#};
 
-        let have = parse(config, &Options::default(), &Printer::default()).0?;
+        let have = parse(config, Options::default(), &Printer::default()).0?;
         dbg!(&have);
         let mut expected = Value::with_defaults([].into_iter().collect());
         expected.add_section(
@@ -2346,171 +2690,4 @@ mod tests {
         similar_asserts::assert_eq!(have.clone().cleared_spans(), expected);
         Ok(())
     }
-
-    //     Line = functools.partial(_Line, prefixes=self._prefixes)
-    //     for st.lineno, line in enumerate(map(Line, fp), start=1):
-    //         if not line.clean:
-    //             if self._empty_lines_in_values:
-    //                 # add empty line to the value, but only if there was no
-    //                 # comment on the line
-    //                 if (not line.has_comments and
-    //                     st.cursect is not None and
-    //                     st.optname and
-    //                     st.cursect[st.optname] is not None):
-    //                     st.cursect[st.optname].append('') # newlines added at join
-    //             else:
-    //                 # empty line marks end of value
-    //                 st.indent_level = sys.maxsize
-    //             continue
-    //
-    //         first_nonspace = self.NONSPACECRE.search(line)
-    //         st.cur_indent_level = first_nonspace.start() if first_nonspace else 0
-    //
-    //         if self._handle_continuation_line(st, line, fpname):
-    //             continue
-    //
-    //         self._handle_rest(st, line, fpname)
-    //
-    //     return st.errors
-
-    // def _read(self, fp, fpname):
-    //     """Parse a sectioned configuration file.
-    //
-    //     Each section in a configuration file contains a header, indicated by
-    //     a name in square brackets (`[]`), plus key/value options, indicated by
-    //     `name` and `value` delimited with a specific substring (`=` or `:` by
-    //     default).
-    //
-    //     Values can span multiple lines, as long as they are indented deeper
-    //     than the first line of the value. Depending on the parser's mode, blank
-    //     lines may be treated as parts of multiline values or ignored.
-    //
-    //     Configuration files may include comments, prefixed by specific
-    //     characters (`#` and `;` by default). Comments may appear on their own
-    //     in an otherwise empty line or may be entered in lines holding values or
-    //     section names. Please note that comments get stripped off when reading configuration files.
-    //     """
-    //
-    //     try:
-    //         ParsingError._raise_all(self._read_inner(fp, fpname))
-    //     finally:
-    //         self._join_multiline_values()
-    //
-    // def _read_inner(self, fp, fpname):
-    //     st = _ReadState()
-    //
-    //     Line = functools.partial(_Line, prefixes=self._prefixes)
-    //     for st.lineno, line in enumerate(map(Line, fp), start=1):
-    //         if not line.clean:
-    //             if self._empty_lines_in_values:
-    //                 # add empty line to the value, but only if there was no
-    //                 # comment on the line
-    //                 if (not line.has_comments and
-    //                     st.cursect is not None and
-    //                     st.optname and
-    //                     st.cursect[st.optname] is not None):
-    //                     st.cursect[st.optname].append('') # newlines added at join
-    //             else:
-    //                 # empty line marks end of value
-    //                 st.indent_level = sys.maxsize
-    //             continue
-    //
-    //         first_nonspace = self.NONSPACECRE.search(line)
-    //         st.cur_indent_level = first_nonspace.start() if first_nonspace else 0
-    //
-    //         if self._handle_continuation_line(st, line, fpname):
-    //             continue
-    //
-    //         self._handle_rest(st, line, fpname)
-    //
-    //     return st.errors
-    //
-    // def _handle_continuation_line(self, st, line, fpname):
-    //     # continuation line?
-    //     is_continue = (st.cursect is not None and st.optname and
-    //         st.cur_indent_level > st.indent_level)
-    //     if is_continue:
-    //         if st.cursect[st.optname] is None:
-    //             raise MultilineContinuationError(fpname, st.lineno, line)
-    //         st.cursect[st.optname].append(line.clean)
-    //     return is_continue
-    //
-    // def _handle_rest(self, st, line, fpname):
-    //     # a section header or option header?
-    //     if self._allow_unnamed_section and st.cursect is None:
-    //         st.sectname = UNNAMED_SECTION
-    //         st.cursect = self._dict()
-    //         self._sections[st.sectname] = st.cursect
-    //         self._proxies[st.sectname] = SectionProxy(self, st.sectname)
-    //         st.elements_added.add(st.sectname)
-    //
-    //     st.indent_level = st.cur_indent_level
-    //     # is it a section header?
-    //     mo = self.SECTCRE.match(line.clean)
-    //
-    //     if not mo and st.cursect is None:
-    //         raise MissingSectionHeaderError(fpname, st.lineno, line)
-    //
-    //     self._handle_header(st, mo, fpname) if mo else self._handle_option(st, line, fpname)
-    //
-    // def _handle_header(self, st, mo, fpname):
-    //     st.sectname = mo.group('header')
-    //     if st.sectname in self._sections:
-    //         if self._strict and st.sectname in st.elements_added:
-    //             raise DuplicateSectionError(st.sectname, fpname,
-    //                                         st.lineno)
-    //         st.cursect = self._sections[st.sectname]
-    //         st.elements_added.add(st.sectname)
-    //     elif st.sectname == self.default_section:
-    //         st.cursect = self._defaults
-    //     else:
-    //         st.cursect = self._dict()
-    //         self._sections[st.sectname] = st.cursect
-    //         self._proxies[st.sectname] = SectionProxy(self, st.sectname)
-    //         st.elements_added.add(st.sectname)
-    //     # So sections can't start with a continuation line
-    //     st.optname = None
-    //
-    // def _handle_option(self, st, line, fpname):
-    //     # an option line?
-    //     st.indent_level = st.cur_indent_level
-    //
-    //     mo = self._optcre.match(line.clean)
-    //     if not mo:
-    //         # a non-fatal parsing error occurred. set up the
-    //         # exception but keep going. the exception will be
-    //         # raised at the end of the file and will contain a
-    //         # list of all bogus lines
-    //         st.errors.append(ParsingError(fpname, st.lineno, line))
-    //         return
-    //
-    //     st.optname, vi, optval = mo.group('option', 'vi', 'value')
-    //     if not st.optname:
-    //         st.errors.append(ParsingError(fpname, st.lineno, line))
-    //     st.optname = self.optionxform(st.optname.rstrip())
-    //     if (self._strict and
-    //         (st.sectname, st.optname) in st.elements_added):
-    //         raise DuplicateOptionError(st.sectname, st.optname,
-    //                                 fpname, st.lineno)
-    //     st.elements_added.add((st.sectname, st.optname))
-    //     # This check is fine because the OPTCRE cannot
-    //     # match if it would set optval to None
-    //     if optval is not None:
-    //         optval = optval.strip()
-    //         st.cursect[st.optname] = [optval]
-    //     else:
-    //         # valueless option handling
-    //         st.cursect[st.optname] = None
-    //
-    // def _join_multiline_values(self):
-    //     defaults = self.default_section, self._defaults
-    //     all_sections = itertools.chain((defaults,),
-    //                                    self._sections.items())
-    //     for section, options in all_sections:
-    //         for name, val in options.items():
-    //             if isinstance(val, list):
-    //                 val = '\n'.join(val).rstrip()
-    //             options[name] = self._interpolation.before_read(self,
-    //                                                             section,
-    //                                                             name, val)
 }
