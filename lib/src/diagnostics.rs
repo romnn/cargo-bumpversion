@@ -220,7 +220,19 @@ impl ToSourceName for String {
     }
 }
 
+impl<'a> ToSourceName for &'a Path {
+    fn to_source_name(self) -> String {
+        self.to_string_lossy().to_string()
+    }
+}
+
 impl<'a> ToSourceName for &'a PathBuf {
+    fn to_source_name(self) -> String {
+        self.to_string_lossy().to_string()
+    }
+}
+
+impl ToSourceName for PathBuf {
     fn to_source_name(self) -> String {
         self.to_string_lossy().to_string()
     }

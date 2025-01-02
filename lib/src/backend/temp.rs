@@ -1,4 +1,4 @@
-use crate::{backend::GitBackend, command::run_command, utils};
+use crate::{backend::VersionControlSystem, command::run_command, utils};
 use color_eyre::eyre;
 use regex::Regex;
 use std::io::Write;
@@ -15,14 +15,14 @@ fn random_string_of_length(length: usize) -> String {
         .collect()
 }
 
-pub struct GitRepository<R> {
-    inner: R,
+pub struct GitRepository<VCS> {
+    inner: VCS,
     dir: TempDir,
 }
 
-impl<R> GitRepository<R>
+impl<VCS> GitRepository<VCS>
 where
-    R: GitBackend,
+    VCS: VersionControlSystem,
 {
     pub fn new() -> eyre::Result<Self> {
         Self::with_name(&random_string_of_length(10))
@@ -31,21 +31,17 @@ where
     pub fn with_name(name: &str) -> eyre::Result<Self> {
         let dir = TempDir::new(name)?;
         Self::init(dir.path())?;
-        let inner = R::open(dir.path())?;
+        let inner = VCS::open(dir.path())?;
         Ok(Self { inner, dir })
     }
 
-    fn init<P: AsRef<Path>>(path: P) -> eyre::Result<()> {
-        let path = path.as_ref();
-        std::fs::create_dir_all(&path)?;
+    fn init(path: &Path) -> eyre::Result<()> {
+        std::fs::create_dir_all(path)?;
         let _ = run_command(Command::new("git").args(["init"]).current_dir(&path))?;
         Ok(())
     }
 
-    fn add<P>(&self, files: &[P]) -> eyre::Result<()>
-    where
-        P: AsRef<Path>,
-    {
+    fn add(&self, files: &[impl AsRef<Path>]) -> eyre::Result<()> {
         let files = files
             .iter()
             .map(|f| f.as_ref().to_string_lossy().to_string());

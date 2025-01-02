@@ -1,4 +1,4 @@
-// use super::{Config, FileConfig, PartConfig};
+// use super::{Config, FileConfig};
 // use crate::config::pyproject_toml::{Error, ValueKind};
 // use crate::diagnostics::{DiagnosticExt, FileId, Span, Spanned};
 // use codespan_reporting::diagnostic::{Diagnostic, Label};
@@ -167,7 +167,9 @@
 #[cfg(test)]
 mod tests {
     use crate::{
-        config::{pyproject_toml::tests::parse_toml, Config, FileConfig, PartConfig},
+        config::{
+            pyproject_toml::tests::parse_toml, Config, FileConfig, InputFile, VersionComponentSpec,
+        },
         diagnostics::{Printer, ToDiagnostics},
     };
     use codespan_reporting::diagnostic;
@@ -226,7 +228,7 @@ mod tests {
                 commit: Some(true),
                 tag: Some(true),
                 commit_message: Some("DO NOT BUMP VERSIONS WITH THIS FILE".to_string()),
-                ..FileConfig::default()
+                ..FileConfig::empty()
             },
             files: vec![],
             parts: [].into_iter().collect(),
@@ -302,24 +304,24 @@ mod tests {
                 commit: Some(true),
                 tag: Some(true),
                 current_version: Some("1.0.0".to_string()),
-                parse: Some(
+                parse_version_pattern: Some(
                     r#"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\-(?P<release>[a-z]+))?"#
                         .to_string(),
                 ),
-                serialize: vec![
+                serialize_version_patterns: Some(vec![
                     r#"{major}.{minor}.{patch}-{release}"#.to_string(),
                     r#"{major}.{minor}.{patch}"#.to_string(),
-                ],
-                ..FileConfig::default()
+                ]),
+                ..FileConfig::empty()
             },
             files: vec![
-                (PathBuf::from("setup.py"), FileConfig::default()),
+                (InputFile::Path("setup.py".into()), FileConfig::empty()),
                 (
-                    PathBuf::from("bumpversion/__init__.py"),
-                    FileConfig::default(),
+                    InputFile::Path("bumpversion/__init__.py".into()),
+                    FileConfig::empty(),
                 ),
                 (
-                    PathBuf::from("CHANGELOG.md"),
+                    InputFile::Path("CHANGELOG.md".into()),
                     FileConfig {
                         search: Some("**unreleased**".to_string()),
                         replace: Some(
@@ -331,15 +333,16 @@ mod tests {
                             .to_string(),
                         ),
 
-                        ..FileConfig::default()
+                        ..FileConfig::empty()
                     },
                 ),
             ],
             parts: [(
                 "release".to_string(),
-                PartConfig {
+                VersionComponentSpec {
                     optional_value: Some("gamma".to_string()),
                     values: vec!["dev".to_string(), "gamma".to_string()],
+                    ..VersionComponentSpec::default()
                 },
             )]
             .into_iter()
@@ -395,53 +398,53 @@ mod tests {
                 ignore_missing_version: Some(true),
                 regex: Some(true),
                 current_version: Some("0.0.1".to_string()),
-                ..FileConfig::default()
+                ..FileConfig::empty()
             },
             files: vec![
                 (
-                    PathBuf::from("should_contain_defaults.txt"),
-                    FileConfig::default(),
+                    InputFile::Path("should_contain_defaults.txt".into()),
+                    FileConfig::empty(),
                 ),
                 (
-                    PathBuf::from("should_override_search.txt"),
+                    InputFile::Path("should_override_search.txt".into()),
                     FileConfig {
                         search: Some("**unreleased**".to_string()),
-                        ..FileConfig::default()
+                        ..FileConfig::empty()
                     },
                 ),
                 (
-                    PathBuf::from("should_override_replace.txt"),
+                    InputFile::Path("should_override_replace.txt".into()),
                     FileConfig {
                         replace: Some("**unreleased**".to_string()),
-                        ..FileConfig::default()
+                        ..FileConfig::empty()
                     },
                 ),
                 (
-                    PathBuf::from("should_override_parse.txt"),
+                    InputFile::Path("should_override_parse.txt".into()),
                     FileConfig {
-                        parse: Some("version(?P<major>\\d+)".to_string()),
-                        ..FileConfig::default()
+                        parse_version_pattern: Some("version(?P<major>\\d+)".to_string()),
+                        ..FileConfig::empty()
                     },
                 ),
                 (
-                    PathBuf::from("should_override_serialize.txt"),
+                    InputFile::Path("should_override_serialize.txt".into()),
                     FileConfig {
-                        serialize: vec!["{major}".to_string()],
-                        ..FileConfig::default()
+                        serialize_version_patterns: Some(vec!["{major}".to_string()]),
+                        ..FileConfig::empty()
                     },
                 ),
                 (
-                    PathBuf::from("should_override_ignore_missing.txt"),
+                    InputFile::Path("should_override_ignore_missing.txt".into()),
                     FileConfig {
                         ignore_missing_version: Some(false),
-                        ..FileConfig::default()
+                        ..FileConfig::empty()
                     },
                 ),
                 (
-                    PathBuf::from("should_override_regex.txt"),
+                    InputFile::Path("should_override_regex.txt".into()),
                     FileConfig {
                         regex: Some(false),
-                        ..FileConfig::default()
+                        ..FileConfig::empty()
                     },
                 ),
             ],
@@ -498,7 +501,7 @@ mod tests {
                 commit: Some(false),
                 tag: Some(false),
                 current_version: Some("0.0.2".to_string()),
-                ..FileConfig::default()
+                ..FileConfig::empty()
             },
             files: vec![].into_iter().collect(),
             parts: [].into_iter().collect(),
@@ -597,11 +600,11 @@ mod tests {
                 commit_message: Some("Bump version: {current_version} → {new_version}".to_string()),
                 commit_args: Some("".to_string()),
                 tag: Some(false),
-                sign_tag: Some(false),
+                sign_tags: Some(false),
                 tag_name: Some("v{new_version}".to_string()),
                 tag_message: Some("Bump version: {current_version} → {new_version}".to_string()),
                 current_version: Some("1.0.0".to_string()),
-                parse: Some(
+                parse_version_pattern: Some(
                     indoc::indoc! {r#"(?x)
                     (?:
                         (?P<major>[0-9]+)
@@ -637,45 +640,45 @@ mod tests {
                     }
                     .to_string(),
                 ),
-                serialize: vec![
+                serialize_version_patterns: Some(vec![
                     "{major}.{minor}.{patch}.{dev_label}{distance_to_latest_tag}+{short_branch_name}".to_string(),
                     "{major}.{minor}.{patch}".to_string(),
-                ],
+                ]),
                 search: Some("{current_version}".to_string()),
                 replace: Some("{new_version}".to_string()),
-                ..FileConfig::default()
+                ..FileConfig::empty()
             },
             files: vec![].into_iter().collect(),
             parts: [
-                ("pre_label".to_string(), PartConfig{
+                ("pre_label".to_string(), VersionComponentSpec{
             values: vec!["final".to_string(), "a".to_string(), "b".to_string(), "rc".to_string()],
-                    ..PartConfig::default()
+                    ..VersionComponentSpec::default()
                 }),
-                ("pre_n".to_string(), PartConfig{
+                ("pre_n".to_string(), VersionComponentSpec{
                     // first_value: Some(1),
-                    ..PartConfig::default()
+                    ..VersionComponentSpec::default()
                 }),
-                ("post_label".to_string(), PartConfig{
+                ("post_label".to_string(), VersionComponentSpec{
                      values: vec!["final".to_string(), "post".to_string()],
-                    ..PartConfig::default()
+                    ..VersionComponentSpec::default()
                 }),
-                ("post_n".to_string(), PartConfig{
+                ("post_n".to_string(), VersionComponentSpec{
                      // first_value: Some(1),
-                    ..PartConfig::default()
+                    ..VersionComponentSpec::default()
                 }),
-                ("dev_label".to_string(), PartConfig{
+                ("dev_label".to_string(), VersionComponentSpec{
                      // first_value: Some(1),
                      values: vec!["final".to_string(), "dev".to_string()],
-                        // independent: Some(true),
-                    ..PartConfig::default()
+                     independent: Some(true),
+                    ..VersionComponentSpec::default()
                 }),
-                ("dev_n".to_string(), PartConfig{
+                ("dev_n".to_string(), VersionComponentSpec{
                      // first_value: Some(1),
-                    ..PartConfig::default()
+                    ..VersionComponentSpec::default()
                 }),
-                ("local".to_string(), PartConfig{
-                     // independent: Some(true),
-                    ..PartConfig::default()
+                ("local".to_string(), VersionComponentSpec{
+                    independent: Some(true),
+                    ..VersionComponentSpec::default()
                 }),
             ].into_iter().collect(),
         };
@@ -705,14 +708,14 @@ mod tests {
             global: FileConfig {
                 regex: Some(true),
                 current_version: Some("4.7.1".to_string()),
-                ..FileConfig::default()
+                ..FileConfig::empty()
             },
             files: vec![(
-                PathBuf::from("./citation.cff"),
+                InputFile::Path("./citation.cff".into()),
                 FileConfig {
                     search: Some(r#"date-released: \d{{4}}-\d{{2}}-\d{{2}}"#.to_string()),
                     replace: Some("date-released: {utcnow:%Y-%m-%d}".to_string()),
-                    ..FileConfig::default()
+                    ..FileConfig::empty()
                 },
             )],
             parts: [].into_iter().collect(),
@@ -743,14 +746,14 @@ mod tests {
             global: FileConfig {
                 regex: Some(true),
                 current_version: Some("1.0.0".to_string()),
-                ..FileConfig::default()
+                ..FileConfig::empty()
             },
             files: vec![(
-                PathBuf::from("thingy.yaml"),
+                InputFile::Path("thingy.yaml".into()),
                 FileConfig {
                     search: Some(r#"^version: {current_version}"#.to_string()),
                     replace: Some("version: {new_version}".to_string()),
-                    ..FileConfig::default()
+                    ..FileConfig::empty()
                 },
             )],
             parts: [].into_iter().collect(),
@@ -783,19 +786,19 @@ mod tests {
         let expected = Config {
             global: FileConfig {
                 current_version: Some("1.2.3".to_string()),
-                ..FileConfig::default()
+                ..FileConfig::empty()
             },
             files: vec![
                 (
-                    PathBuf::from("VERSION"),
+                    InputFile::Path("VERSION".into()),
                     FileConfig {
                         search: Some(r#"__date__ = '\d{{4}}-\d{{2}}-\d{{2}}'"#.to_string()),
                         replace: Some("__date__ = '{now:%Y-%m-%d}'".to_string()),
                         regex: Some(true),
-                        ..FileConfig::default()
+                        ..FileConfig::empty()
                     },
                 ),
-                (PathBuf::from("VERSION"), FileConfig::default()),
+                (InputFile::Path("VERSION".into()), FileConfig::empty()),
             ],
             parts: [].into_iter().collect(),
         };

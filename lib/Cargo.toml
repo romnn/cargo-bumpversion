@@ -34,21 +34,45 @@ default = []
 color-eyre.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+once_cell.workspace = true
 
 # todo: remove tempdir (tests only??
 tempdir = "0"
 
+# resolve glob patterns
+glob = "0"
+
+# show diffs of file changes
+similar-asserts = "1"
+
+# parse format strings for version serialization
+# parse-format = "0"
+
+# time
+chrono.workspace = true
+
+# commands
+shlex = "1"
+# add async-command
+
+# python parser for parsing f-strings
+# rustpython-parser = "0"
+python-fstring = { path = "../crates/python-fstring" }
+
 # regex
 regex = "1"
-lazy-regex = "3"
+aho-corasick = "1"
+# fancy-regex = "0"
+# lazy-regex = "3"
 # parking_lot = "0"
 
 # parse config files
 serde = { version = "1", features = ["derive"] }
-configparser = "3"
+# configparser = "3"
 # serde_ini = { path = "../crates/serde-ini" }
 serde-ini-spanned = { path = "../crates/serde-ini-spanned" }
 toml-span = { version = "0", features = ["reporting", "serde"] }
+toml_edit = "0"
 indexmap = { version = "2", features = ["serde"] }
 
 # diagnostics

@@ -31,13 +31,18 @@ Install it with
 
 ```bash
 cargo install bumpversion
+
+# TODO:
+brew install ...
 ```
 
-For usage instructions, please refer to [the Python version](https://github.com/c4urself/bump2version).
+For usage instructions, please refer to [the Python version](https://github.com/callowayproject/bump-my-version).
 
-#### Library usage
+#### Development
 
-TODO
+```bash
+cargo run -- --dir ../cargo-feature-combinations/ --log-level trace patch
+```
 
 #### TODO
 

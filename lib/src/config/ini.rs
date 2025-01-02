@@ -1,10 +1,13 @@
-use super::{Config, FileConfig, PartConfig};
+use super::{Config, FileConfig, InputFile, VersionComponentSpec};
 use crate::config::pyproject_toml::ValueKind;
 use crate::diagnostics::{DiagnosticExt, FileId, Span, Spanned};
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use color_eyre::eyre;
 use indexmap::IndexMap;
 use serde_ini_spanned as ini;
+use std::path::{Path, PathBuf};
+
+pub use ini::value::Options;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -102,13 +105,18 @@ pub fn as_string_array(
     value: ini::Spanned<String>,
     allow_single_value: bool,
 ) -> Result<Vec<String>, Error> {
+    // ) -> Result<impl Iterator<Item = String>, Error> {
+    // ) -> Result<Box<dyn Iterator<Item = String>>, Error> {
     let ini::Spanned { inner, span } = value;
     if inner.contains("\n") {
         Ok(inner.trim().split("\n").map(ToString::to_string).collect())
+        // Ok(Box::new(inner.trim().split("\n").map(ToString::to_string)))
     } else if inner.contains(",") {
         Ok(inner.trim().split(",").map(ToString::to_string).collect())
+        // Ok(Box::new(inner.trim().split(",").map(ToString::to_string)))
     } else if allow_single_value {
         Ok(vec![inner])
+        // Ok(Box::new(std::iter::once(inner)))
     } else {
         Err(Error::UnexpectedType {
             message: "expected a list".to_string(),
@@ -116,28 +124,6 @@ pub fn as_string_array(
             span,
         })
     }
-
-    // # derive the type of the variable
-    // element_caster = str
-    // for caster in (boolify, int, float, noneify, element_caster):
-    //     with contextlib.suppress(ValueError):
-    //         caster(str_list[0])  # type: ignore[operator]
-    //         element_caster = caster  # type: ignore[assignment]
-    //         break
-    // # cast all elements
-    // try:
-    //     return [element_caster(x) for x in str_list]
-    // except ValueError as e:
-    //     raise TypeError("Autocasted list must be all same type") from e
-    // match value.as_ref().trim().to_ascii_lowercase().as_str() {
-    //     "true" => Ok(true),
-    //     "false" => Ok(false),
-    //     other => Err(Error::UnexpectedType {
-    //         message: "expected a boolean".to_string(),
-    //         expected: vec![ValueKind::String],
-    //         span: value.span.clone(),
-    //     }),
-    // }
 }
 
 #[inline]
@@ -151,7 +137,12 @@ pub fn as_optional(value: ini::Spanned<String>) -> Option<ini::Spanned<String>> 
 
 pub(crate) fn parse_part_config<'de>(
     mut value: ini::SectionProxyMut<'_>,
-) -> Result<PartConfig, Error> {
+) -> Result<VersionComponentSpec, Error> {
+    let independent = value
+        .remove_option("independent")
+        .map(as_bool)
+        .transpose()?;
+
     let optional_value = value
         .remove_option("optional_value")
         .and_then(as_optional)
@@ -162,9 +153,11 @@ pub(crate) fn parse_part_config<'de>(
         .transpose()?
         .unwrap_or_default();
 
-    Ok(PartConfig {
+    Ok(VersionComponentSpec {
         optional_value,
         values,
+        independent,
+        ..VersionComponentSpec::default()
     })
 }
 
@@ -180,13 +173,12 @@ pub(crate) fn parse_file_config(mut value: ini::SectionProxyMut<'_>) -> Result<F
         .and_then(as_optional)
         .map(as_bool)
         .transpose()?;
-    let parse = value.remove_option("parse").map(ini::Spanned::into_inner);
-    let serialize = value
+    let parse_version_pattern = value.remove_option("parse").map(ini::Spanned::into_inner);
+    let serialize_version_patterns = value
         .remove_option("serialize")
         .and_then(as_optional)
         .map(|value| as_string_array(value, true))
-        .transpose()?
-        .unwrap_or_default();
+        .transpose()?;
     let search = value
         .remove_option("search")
         .and_then(as_optional)
@@ -230,8 +222,9 @@ pub(crate) fn parse_file_config(mut value: ini::SectionProxyMut<'_>) -> Result<F
         .and_then(as_optional)
         .map(as_bool)
         .transpose()?;
-    let sign_tag = value
+    let sign_tags = value
         .remove_option("sign_tag")
+        .or(value.remove_option("sign_tags"))
         .and_then(as_optional)
         .map(as_bool)
         .transpose()?;
@@ -253,11 +246,40 @@ pub(crate) fn parse_file_config(mut value: ini::SectionProxyMut<'_>) -> Result<F
         .and_then(as_optional)
         .map(ini::Spanned::into_inner);
 
+    // extra stuff
+    let setup_hooks = value
+        .remove_option("setup_hooks")
+        .and_then(as_optional)
+        .map(|value| as_string_array(value, true))
+        .transpose()?;
+    let pre_commit_hooks = value
+        .remove_option("pre_commit_hooks")
+        .and_then(as_optional)
+        .map(|value| as_string_array(value, true))
+        .transpose()?;
+    let post_commit_hooks = value
+        .remove_option("post_commit_hooks")
+        .and_then(as_optional)
+        .map(|value| as_string_array(value, true))
+        .transpose()?;
+    let included_paths = value
+        .remove_option("included_paths")
+        .and_then(as_optional)
+        .map(|value| as_string_array(value, true))
+        .transpose()?
+        .map(|values| values.into_iter().map(PathBuf::from).collect());
+    let excluded_paths = value
+        .remove_option("excluded_paths")
+        .and_then(as_optional)
+        .map(|value| as_string_array(value, true))
+        .transpose()?
+        .map(|values| values.into_iter().map(PathBuf::from).collect());
+
     Ok(FileConfig {
         allow_dirty,
         current_version,
-        parse,
-        serialize,
+        parse_version_pattern,
+        serialize_version_patterns,
         search,
         replace,
         regex,
@@ -267,11 +289,17 @@ pub(crate) fn parse_file_config(mut value: ini::SectionProxyMut<'_>) -> Result<F
         dry_run,
         commit,
         tag,
-        sign_tag,
+        sign_tags,
         tag_name,
         tag_message,
         commit_message,
         commit_args,
+        // extra stuff
+        setup_hooks,
+        pre_commit_hooks,
+        post_commit_hooks,
+        included_paths,
+        excluded_paths,
     })
 }
 
@@ -322,16 +350,22 @@ impl Config {
                 ["bumpversion"] => {
                     out.global = parse_file_config(section)?;
                 }
-                ["bumpversion", prefix, file_name] => {
+                ["bumpversion", prefix, value] => {
                     if prefix.starts_with("file") {
                         let config = parse_file_config(section)?;
-                        out.files.push((file_name.into(), config));
+                        out.files.push((InputFile::Path(value.into()), config));
                     } else if prefix.starts_with("glob") {
                         let config = parse_file_config(section)?;
-                        out.files.push((file_name.into(), config));
+                        out.files.push((
+                            InputFile::GlobPattern {
+                                pattern: value.into(),
+                                exclude_patterns: None,
+                            },
+                            config,
+                        ));
                     } else if prefix.starts_with("part") {
                         let config = parse_part_config(section)?;
-                        out.parts.insert(file_name.into(), config);
+                        out.parts.insert(value.into(), config);
                     } else if !allow_unknown {
                         let diagnostic = Diagnostic::warning_or_error(strict)
                             .with_message(format!("unknown config prefix `{prefix}`"))
@@ -367,7 +401,7 @@ impl Config {
 
     pub fn from_ini(
         config: &str,
-        options: ini::value::Options,
+        options: Options,
         file_id: FileId,
         strict: bool,
         diagnostics: &mut Vec<Diagnostic<FileId>>,
@@ -380,7 +414,7 @@ impl Config {
 
     pub fn from_setup_cfg_ini(
         config: &str,
-        options: ini::value::Options,
+        options: Options,
         file_id: FileId,
         strict: bool,
         diagnostics: &mut Vec<Diagnostic<FileId>>,
@@ -390,6 +424,67 @@ impl Config {
         let allow_unknown = true;
         Self::from_ini_value(config, file_id, strict, allow_unknown, diagnostics)
     }
+}
+
+static CONFIG_CURRENT_VERSION_REGEX: once_cell::sync::Lazy<regex::Regex> =
+    once_cell::sync::Lazy::new(|| {
+        regex::RegexBuilder::new(r#"(?P<section_prefix>\\[bumpversion]\n[^[]*current_version\\s*=\\s*)(?P<version>{current_version})"#).multi_line(true).build().unwrap()
+    });
+
+/// Update the current_version key in the configuration file.
+///
+/// Instead of parsing and re-writing the config file with new information,
+/// it will use a regular expression to just replace the current_version value.
+/// The idea is it will avoid unintentional changes (like formatting) to the
+/// config file.
+pub fn replace_version(
+    path: &Path,
+    _config: &Config,
+    current_version: &str,
+    new_version: &str,
+    dry_run: bool,
+) -> eyre::Result<bool> {
+    let existing_config = std::fs::read_to_string(path)?;
+    // let extension = path.extension().and_then(|ext| ext.to_str());
+    let matches = CONFIG_CURRENT_VERSION_REGEX.find_iter(&existing_config);
+    // let new_config = if extension == Some("cfg") && matches.count() > 0 {
+    let new_config = if matches.count() > 0 {
+        let replacement = format!(r#"\g<section_prefix>{new_version}"#);
+        CONFIG_CURRENT_VERSION_REGEX.replace_all(&existing_config, replacement)
+    } else {
+        tracing::info!("could not find current version ({current_version}) in {path:?}");
+        return Ok(false);
+    };
+
+    if dry_run {
+        tracing::info!("Would write to config file {path:?}");
+    } else {
+        tracing::info!("Writing to config file {path:?}");
+    }
+
+    let label_existing = format!("{path:?} (before)");
+    let label_new = format!("{path:?} (after)");
+    let diff = similar_asserts::SimpleDiff::from_str(
+        &existing_config,
+        &new_config,
+        &label_existing,
+        &label_new,
+    );
+
+    if dry_run {
+        println!("{diff}");
+    } else {
+        use std::io::Write;
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(false)
+            .truncate(true)
+            .open(path)?;
+        let mut writer = std::io::BufWriter::new(file);
+        writer.write_all(new_config.as_bytes())?;
+        writer.flush()?;
+    }
+    Ok(true)
 }
 
 // def autocast_value(var: Any) -> Any:
@@ -414,18 +509,18 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::{Config, FileConfig, PartConfig};
+    use crate::config::{Config, FileConfig, InputFile, VersionComponentSpec};
     use crate::diagnostics::{BufferedPrinter, ToDiagnostics};
     use codespan_reporting::diagnostic::Diagnostic;
     use color_eyre::eyre;
     use indexmap::IndexMap;
-    use serde_ini_spanned as ini;
+    use serde_ini_spanned::{self as ini, value::Options};
     use std::io::Read;
     use std::path::PathBuf;
 
     fn parse_ini(
         config: &str,
-        options: ini::value::Options,
+        options: Options,
         printer: &BufferedPrinter,
     ) -> (
         Result<Option<Config>, super::Error>,
@@ -463,28 +558,31 @@ mod tests {
 
         let config = parse_ini(
             bumpversion_cfg,
-            ini::value::Options::default(),
+            Options::default(),
             &BufferedPrinter::default(),
         )
         .0?;
 
         let expected = Config {
-            global: FileConfig::default(),
+            global: FileConfig::empty(),
             files: vec![
-                (PathBuf::from("coolapp/__init__.py"), FileConfig::default()),
                 (
-                    PathBuf::from("CHANGELOG.md"),
+                    InputFile::Path("coolapp/__init__.py".into()),
+                    FileConfig::empty(),
+                ),
+                (
+                    InputFile::Path("CHANGELOG.md".into()),
                     FileConfig {
                         search: Some("Unreleased".to_string()),
-                        ..FileConfig::default()
+                        ..FileConfig::empty()
                     },
                 ),
                 (
-                    PathBuf::from("CHANGELOG.md"),
+                    InputFile::Path("CHANGELOG.md".into()),
                     FileConfig {
                         search: Some("{current_version}...HEAD".to_string()),
                         replace: Some("{current_version}...{new_version}".to_string()),
-                        ..FileConfig::default()
+                        ..FileConfig::empty()
                     },
                 ),
             ],
@@ -544,7 +642,7 @@ mod tests {
 
         let config = parse_ini(
             setup_cfg_ini,
-            ini::value::Options::default(),
+            Options::default(),
             &BufferedPrinter::default(),
         )
         .0?;
@@ -555,43 +653,47 @@ mod tests {
                 commit: Some(true),
                 tag: Some(true),
                 commit_message: Some("DO NOT BUMP VERSIONS WITH THIS FILE".to_string()),
-                ..FileConfig::default()
+                ..FileConfig::empty()
             },
             files: vec![
-                (PathBuf::from("*.txt"), FileConfig::default()),
-                (PathBuf::from("**/*.txt"), FileConfig::default()),
+                (InputFile::glob("*.txt"), FileConfig::empty()),
+                (InputFile::glob("**/*.txt"), FileConfig::empty()),
                 (
-                    PathBuf::from("setup.py"),
+                    InputFile::Path("setup.py".into()),
                     FileConfig {
                         search: Some(r#"version = "{current_version}""#.to_string()),
                         replace: Some(r#"version = "{new_version}""#.to_string()),
-                        ..FileConfig::default()
+                        ..FileConfig::empty()
                     },
                 ),
                 (
-                    PathBuf::from("favico/__init__.py"),
+                    InputFile::Path("favico/__init__.py".into()),
                     FileConfig {
                         search: Some(r#"__version__ = "{current_version}""#.to_string()),
                         replace: Some(r#"__version__ = "{new_version}""#.to_string()),
-                        ..FileConfig::default()
+                        ..FileConfig::empty()
                     },
                 ),
                 (
-                    PathBuf::from("file1"),
+                    InputFile::Path("file1".into()),
                     FileConfig {
                         search: Some("dots: {current_version}".to_string()),
                         replace: Some("dots: {new_version}".to_string()),
-                        ..FileConfig::default()
+                        ..FileConfig::empty()
                     },
                 ),
                 (
-                    PathBuf::from("file2"),
+                    InputFile::Path("file2".into()),
                     FileConfig {
                         search: Some("dashes: {current_version}".to_string()),
                         replace: Some("dashes: {new_version}".to_string()),
-                        parse: Some(r"(?P<major>\d+)-(?P<minor>\d+)-(?P<patch>\d+)".to_string()),
-                        serialize: vec!["{major}-{minor}-{patch}".to_string()],
-                        ..FileConfig::default()
+                        parse_version_pattern: Some(
+                            r"(?P<major>\d+)-(?P<minor>\d+)-(?P<patch>\d+)".to_string(),
+                        ),
+                        serialize_version_patterns: Some(vec![
+                            "{major}-{minor}-{patch}".to_string()
+                        ]),
+                        ..FileConfig::empty()
                     },
                 ),
             ],
@@ -644,7 +746,7 @@ mod tests {
 
         let config = parse_ini(
             bumpversion_cfg,
-            ini::value::Options::default(),
+            Options::default(),
             &BufferedPrinter::default(),
         )
         .0?;
@@ -653,24 +755,24 @@ mod tests {
                 commit: Some(true),
                 tag: Some(true),
                 current_version: Some("1.0.0".to_string()),
-                parse: Some(
+                parse_version_pattern: Some(
                     r#"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\-(?P<release>[a-z]+))?"#
                         .to_string(),
                 ),
-                serialize: vec![
+                serialize_version_patterns: Some(vec![
                     r#"{major}.{minor}.{patch}-{release}"#.to_string(),
                     r#"{major}.{minor}.{patch}"#.to_string(),
-                ],
-                ..FileConfig::default()
+                ]),
+                ..FileConfig::empty()
             },
             files: vec![
-                (PathBuf::from("setup.py"), FileConfig::default()),
+                (InputFile::Path("setup.py".into()), FileConfig::empty()),
                 (
-                    PathBuf::from("bumpversion/__init__.py"),
-                    FileConfig::default(),
+                    InputFile::Path("bumpversion/__init__.py".into()),
+                    FileConfig::empty(),
                 ),
                 (
-                    PathBuf::from("CHANGELOG.md"),
+                    InputFile::Path("CHANGELOG.md".into()),
                     FileConfig {
                         search: Some("**unreleased**".to_string()),
                         replace: Some(
@@ -682,15 +784,16 @@ mod tests {
                             .to_string(),
                         ),
 
-                        ..FileConfig::default()
+                        ..FileConfig::empty()
                     },
                 ),
             ],
             parts: [(
                 "release".to_string(),
-                PartConfig {
+                VersionComponentSpec {
                     optional_value: Some("gamma".to_string()),
                     values: vec!["dev".to_string(), "gamma".to_string()],
+                    ..VersionComponentSpec::default()
                 },
             )]
             .into_iter()
@@ -718,21 +821,21 @@ mod tests {
 
         let config = parse_ini(
             bumpversion_cfg,
-            ini::value::Options::default(),
+            Options::default(),
             &BufferedPrinter::default(),
         )
         .0?;
         let expected = Config {
             global: FileConfig {
                 current_version: Some("1.0.0".to_string()),
-                ..FileConfig::default()
+                ..FileConfig::empty()
             },
             files: vec![(
-                PathBuf::from("MULTILINE_SEARCH.md"),
+                InputFile::Path("MULTILINE_SEARCH.md".into()),
                 FileConfig {
                     search: Some("**unreleased**\n**v{current_version}**".to_string()),
                     replace: Some("**unreleased**\n**v{new_version}**".to_string()),
-                    ..FileConfig::default()
+                    ..FileConfig::empty()
                 },
             )],
             parts: [].into_iter().collect(),
@@ -759,21 +862,21 @@ mod tests {
 
         let config = parse_ini(
             bumpversion_cfg,
-            ini::value::Options::default(),
+            Options::default(),
             &BufferedPrinter::default(),
         )
         .0?;
         let expected = Config {
             global: FileConfig {
                 current_version: Some("1.0.0".to_string()),
-                ..FileConfig::default()
+                ..FileConfig::empty()
             },
             files: vec![(
-                PathBuf::from("MULTILINE_SEARCH.md"),
+                InputFile::Path("MULTILINE_SEARCH.md".into()),
                 FileConfig {
                     search: Some("**unreleased**,\n**v{current_version}**,".to_string()),
                     replace: Some("**unreleased**,\n**v{new_version}**,".to_string()),
-                    ..FileConfig::default()
+                    ..FileConfig::empty()
                 },
             )],
             parts: [].into_iter().collect(),

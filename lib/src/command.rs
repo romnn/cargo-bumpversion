@@ -20,8 +20,9 @@ pub enum Error {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
+    // TODO: into eyre here!
     #[error(
-        "{} failed with code {}:\n\n--- Stdout:\n {}\n--- Stderr:\n {}",
+        "`{}` failed with code {}:\n\n--- Stdout:\n {}\n--- Stderr:\n {}",
         command,
         output.status.code().unwrap_or(1),
         output.stdout,
@@ -32,20 +33,20 @@ pub enum Error {
 
 pub fn check_exit_status(
     cmd: &std::process::Command,
-    output: std::process::Output,
+    output: &std::process::Output,
 ) -> Result<(), Error> {
     if output.status.success() {
         Ok(())
     } else {
         Err(Error::Failed {
-            command: format!("{:?}", cmd),
-            output: output.into(),
+            command: format!("{cmd:?}"),
+            output: output.clone().into(),
         })
     }
 }
 
 pub fn run_command(cmd: &mut std::process::Command) -> Result<Output, Error> {
     let output = cmd.output()?;
-    check_exit_status(&cmd, output.clone())?;
+    check_exit_status(&cmd, &output)?;
     Ok(output.into())
 }

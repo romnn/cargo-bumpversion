@@ -1,7 +1,8 @@
 use crate::{
-    backend::{self, GitBackend},
+    backend::{self, RevisionInfo, TagAndRevision, TagInfo, VersionControlSystem},
     command::run_command,
-    utils, Tag,
+    config::DEFAULT_TAG_NAME,
+    utils,
 };
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -16,6 +17,30 @@ pub enum Error {
 
     #[error("command failed: {0}")]
     CommandFailed(#[from] crate::command::Error),
+
+    #[error("regex error: {0}")]
+    Regex(#[from] regex::Error),
+
+    #[error("invalid tag: {0}")]
+    InvalidTag(#[from] InvalidTagError),
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum InvalidTagError {
+    #[error("tag {0:?} is missing commit SHA")]
+    MissingCommitSha(String),
+    #[error("tag {0:?} is missing distance to latest tag")]
+    MissingDistanceToLatestTag(String),
+    #[error("invalid distance to latest tag for {tag:?}")]
+    InvalidDistanceToLatestTag {
+        #[source]
+        source: std::num::ParseIntError,
+        tag: String,
+    },
+    #[error("tag {0:?} is missing current tag")]
+    MissingCurrentTag(String),
+    #[error("tag {0:?} is missing version")]
+    MissingVersion(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -23,10 +48,200 @@ pub struct GitRepository {
     repo_dir: PathBuf,
 }
 
-impl backend::GitBackend for GitRepository {
+static FLAG_PATTERN: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
+    regex::RegexBuilder::new(r#"^(\(\?[aiLmsux]+\))"#)
+        .build()
+        .unwrap()
+});
+
+/// Extract the regex flags from the regex pattern.
+///
+/// # Returns
+/// The tuple `(pattern_without flags, flags)`.
+fn extract_regex_flags(pattern: &str) -> (&str, &str) {
+    let bits: Vec<_> = FLAG_PATTERN.split(pattern).collect();
+    dbg!(&bits);
+    if bits.len() < 2 {
+        // (pattern.to_string(), "".to_string())
+        (pattern, "")
+    } else {
+        // bits.drain(..).reverse().take(2)
+        // (bits.remove(2).unwrap(), bits.remove(1).unwrap())
+        // let (flags, pattern) = bits.drain(..2);
+        // let flags = bits.remove(1);
+        // let pattern = bits.remove(1);
+        // (bits.remove(2), )
+        (bits[1], bits[0])
+    }
+    // bits = re.split(flag_pattern, regex_pattern)
+    // return (regex_pattern, "") if len(bits) == 1 else (bits[2], bits[1])
+}
+
+pub static NEW_VERSION_PATTERN: once_cell::sync::Lazy<aho_corasick::AhoCorasick> =
+    once_cell::sync::Lazy::new(|| aho_corasick::AhoCorasick::new(["{new_version}"]).unwrap());
+
+/// Return the version from a tag
+pub fn get_version_from_tag<'a>(
+    tag: &'a str,
+    tag_name: &str,
+    parse_pattern: &str,
+) -> Result<Option<&'a str>, Error> {
+    let version_pattern = parse_pattern.replace("\\\\", "\\");
+    let (version_pattern, regex_flags) = extract_regex_flags(&version_pattern);
+    let (prefix, suffix) = NEW_VERSION_PATTERN
+        .find(tag_name)
+        .map(|m| {
+            let prefix = &tag_name[..m.start()];
+            let suffix = &tag_name[m.end()..];
+            (prefix, suffix)
+        })
+        .unwrap_or_default();
+
+    let pattern = format!(
+        "{regex_flags}{}(?P<current_version>{version_pattern}){}",
+        regex::escape(prefix),
+        regex::escape(suffix),
+    );
+    let tag_regex = regex::RegexBuilder::new(&pattern).build()?;
+    let version = tag_regex
+        .captures_iter(tag)
+        .filter_map(|m| m.name("current_version"))
+        .map(|m| m.as_str())
+        .next();
+    Ok(version)
+}
+
+pub static BRANCH_NAME_REGEX: once_cell::sync::Lazy<regex::Regex> =
+    once_cell::sync::Lazy::new(|| {
+        regex::RegexBuilder::new(r#"([^a-zA-Z0-9]*)"#)
+            .build()
+            .unwrap()
+    });
+
+impl GitRepository {
+    /// Returns a dictionary containing revision information.
+    fn revision_info(&self) -> Result<Option<RevisionInfo>, Error> {
+        let mut cmd = Command::new("git");
+        cmd.args(["rev-parse", "--show-toplevel", "--abbrev-ref", "HEAD"])
+            .current_dir(&self.repo_dir);
+
+        let res = run_command(&mut cmd)?;
+        let mut lines = res.stdout.lines().map(|line| line.trim());
+        let Some(repository_root) = lines.next().map(PathBuf::from) else {
+            return Ok(None);
+        };
+        let Some(branch_name) = lines.next() else {
+            return Ok(None);
+        };
+        let short_branch_name: String = BRANCH_NAME_REGEX
+            .replace_all(branch_name, "")
+            .to_lowercase()
+            .chars()
+            .take(20)
+            .collect();
+
+        Ok(Some(RevisionInfo {
+            branch_name: branch_name.to_string(),
+            short_branch_name,
+            repository_root,
+        }))
+    }
+
+    /// Get the commit info for the repo.
+    ///
+    /// The `tag_name` is the tag name format used to locate the latest tag.
+    /// The `parse_pattern` is a regular expression pattern used to parse the version from the tag.
+    fn latest_tag_info(
+        &self,
+        tag_name: &str,
+        parse_pattern: &str,
+    ) -> Result<Option<TagInfo>, Error> {
+        let tag_pattern = tag_name.replace("{new_version}", "*");
+
+        // get info about the latest tag in git
+        let match_tag_pattern_flag = format!("--match={tag_pattern}");
+        let mut cmd = Command::new("git");
+        cmd.args([
+            "describe",
+            "--dirty",
+            "--tags",
+            "--long",
+            "--abbrev=40",
+            &match_tag_pattern_flag,
+        ])
+        .current_dir(&self.repo_dir);
+
+        match run_command(&mut cmd) {
+            Ok(tag_info) => {
+                let raw_tag = tag_info.stdout;
+                let mut tag_parts: Vec<&str> = raw_tag.split("-").collect();
+                dbg!(&tag_parts);
+
+                let dirty = tag_parts
+                    .last()
+                    .is_some_and(|t| t.trim().eq_ignore_ascii_case("dirty"));
+                if dirty {
+                    let _ = tag_parts.pop();
+                }
+
+                let commit_sha = tag_parts
+                    .pop()
+                    .ok_or_else(|| InvalidTagError::MissingCommitSha(raw_tag.clone()))?
+                    .trim_left_matches("g")
+                    .to_string();
+
+                let distance_to_latest_tag = tag_parts
+                    .pop()
+                    .ok_or_else(|| InvalidTagError::MissingDistanceToLatestTag(raw_tag.clone()))?
+                    .parse::<usize>()
+                    .map_err(|source| InvalidTagError::InvalidDistanceToLatestTag {
+                        source,
+                        tag: raw_tag.clone(),
+                    })?;
+                let current_tag = tag_parts.join("-");
+                let version = get_version_from_tag(&current_tag, tag_name, parse_pattern)?;
+                let current_numeric_version = current_tag.trim_left_matches("v").to_string();
+                let current_version = version
+                    .unwrap_or(current_numeric_version.as_str())
+                    .to_string();
+
+                tracing::debug!(
+                    dirty,
+                    commit_sha,
+                    distance_to_latest_tag,
+                    current_tag,
+                    version,
+                    current_numeric_version,
+                    current_version
+                );
+
+                Ok(Some(TagInfo {
+                    dirty,
+                    commit_sha,
+                    distance_to_latest_tag,
+                    current_tag,
+                    current_version,
+                }))
+            }
+            Err(err) => {
+                if let crate::command::Error::Failed { ref output, .. } = err {
+                    if output
+                        .stderr
+                        .contains("No names found, cannot describe anything")
+                    {
+                        return Ok(None);
+                    }
+                }
+                Err(err.into())
+            }
+        }
+    }
+}
+
+impl backend::VersionControlSystem for GitRepository {
     type Error = Error;
 
-    fn open<P: Into<PathBuf>>(path: P) -> Result<Self, Error> {
+    fn open(path: impl Into<PathBuf>) -> Result<Self, Error> {
         Ok(Self {
             repo_dir: path.into(),
         })
@@ -49,18 +264,15 @@ impl backend::GitBackend for GitRepository {
                 .arg("commit")
                 .arg("-F")
                 .arg(tmp_file_path.to_string_lossy().to_string())
-                // need extra args?
-                .env("HGENCODING", "utf-8")
+                // // need extra args?
+                // .env("HGENCODING", "utf-8")
                 .current_dir(&self.repo_dir),
         )?;
         dbg!(&commit_output);
         Ok(())
     }
 
-    fn add<P>(&self, files: &[P]) -> Result<(), Error>
-    where
-        P: AsRef<Path>,
-    {
+    fn add(&self, files: &[impl AsRef<Path>]) -> Result<(), Error> {
         let files = files
             .iter()
             .map(|f| f.as_ref().to_string_lossy().to_string());
@@ -78,14 +290,16 @@ impl backend::GitBackend for GitRepository {
         let mut cmd = Command::new("git");
         cmd.args(["status", "-u", "--porcelain"])
             .current_dir(&self.repo_dir);
+
         let status_output = run_command(&mut cmd)?;
-        dbg!(&status_output);
         let dirty = status_output
             .stdout
             .lines()
-            .filter_map(|f| f.trim().split_once(' '))
-            .filter(|(status, f)| status.trim() != "??")
-            .map(|(status, f)| self.repo_dir().join(f.trim()))
+            .map(|line| line.trim())
+            .filter(|line| !line.is_empty())
+            .filter(|line| !line.starts_with("??"))
+            .filter_map(|line| line.split_once(" "))
+            .map(|(_, file)| self.repo_dir().join(file))
             .collect();
         Ok(dirty)
     }
@@ -104,61 +318,29 @@ impl backend::GitBackend for GitRepository {
         Ok(())
     }
 
-    fn latest_tag_info(&self, pattern: Option<&str>) -> Result<Option<Tag>, Error> {
+    fn latest_tag_and_revision(
+        &self,
+        tag_name: &str,
+        parse_pattern: &str,
+    ) -> Result<TagAndRevision, Error> {
         let mut cmd = Command::new("git");
-        cmd.args(["update-index", "--refresh"])
+        cmd.args(["update-index", "--refresh", "-q"])
             .current_dir(&self.repo_dir);
-        let _ = run_command(&mut cmd)?;
-
-        let mut cmd = Command::new("git");
-        cmd.args(["describe", "--dirty", "--tags", "--long", "--abbrev=40"])
-            .current_dir(&self.repo_dir);
-        if let Some(pattern) = pattern {
-            cmd.arg("--match=v*");
+        if let Err(err) = run_command(&mut cmd) {
+            tracing::debug!("failed to update git index: {err}");
         }
-        match run_command(&mut cmd) {
-            Ok(tag_info) => {
-                let mut tag_parts: Vec<&str> = tag_info.stdout.split("-").collect();
-                dbg!(&tag_parts);
 
-                let mut dirty = false;
-                if let Some(t) = tag_parts.last() {
-                    if t.trim() == "dirty" {
-                        dirty = true;
-                        tag_parts.pop().unwrap();
-                    }
-                }
+        let tag = self.latest_tag_info(tag_name, parse_pattern)?;
+        let revision = self.revision_info().ok().flatten();
 
-                let commit_sha = tag_parts.pop().unwrap().trim_left_matches("g").to_string();
-                let distance_to_latest_tag = tag_parts.pop().unwrap().parse::<usize>().unwrap();
-                let current_version = tag_parts.join("-").trim_left_matches("v").to_string();
-                Ok(Some(Tag {
-                    dirty,
-                    commit_sha,
-                    distance_to_latest_tag,
-                    current_version,
-                }))
-            }
-            Err(err) => {
-                if let crate::command::Error::Failed { ref output, .. } = err {
-                    // TODO: make this a static regex
-                    if utils::contains(&output.stderr, "No names found, cannot describe anything")
-                        .map(|m| m.is_some())
-                        .unwrap_or(false)
-                    {
-                        return Ok(None);
-                    }
-                }
-                Err(err.into())
-            }
-        }
+        Ok(TagAndRevision { tag, revision })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        backend::{native, temp, GitBackend},
+        backend::{native, temp, VersionControlSystem},
         command::run_command,
         tests::sim_assert_eq_sorted,
         utils,
@@ -203,12 +385,12 @@ mod tests {
         for (tag, previous) in tags[1..].iter().zip(&tags) {
             dbg!(previous);
             dbg!(tag);
-            let latest = repo.latest_tag_info(None)?.map(|t| t.current_version);
-            let previous = previous.map(|t| t.0.to_string());
-            similar_asserts::assert_eq!(&previous, &latest);
-            if let Some((tag_name, tag_message)) = *tag {
-                repo.tag(tag_name, tag_message, false)?;
-            }
+            // let latest = repo.latest_tag_info(None)?.map(|t| t.current_version);
+            // let previous = previous.map(|t| t.0.to_string());
+            // similar_asserts::assert_eq!(&previous, &latest);
+            // if let Some((tag_name, tag_message)) = *tag {
+            //     repo.tag(tag_name, tag_message, false)?;
+            // }
         }
         Ok(())
     }

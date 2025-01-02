@@ -4,6 +4,7 @@ members = [
   "lib",
   "bin/bumpversion",
   "crates/serde-ini-spanned",
+  "crates/python-fstring",
   # "crates/serde-ini",
   # "bin/cargo-bumpversion",
 ]
@@ -28,6 +29,7 @@ keywords = [
 exclude = []
 
 [profile.release]
+opt-level = 3
 lto = true
 codegen-units = 1
 
@@ -36,5 +38,5 @@ thiserror = "2"
 color-eyre = "0"
 tracing = "0"
 once_cell = "1"
-
+chrono = "0"
 bumpversion = { path = "./lib" }

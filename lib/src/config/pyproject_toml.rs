@@ -1,16 +1,28 @@
-use super::{Config, FileConfig, PartConfig};
-use crate::diagnostics::{DiagnosticExt, FileId, Span, Spanned};
+use crate::{
+    config::{self, Config, FileChange, FileConfig, InputFile, VersionComponentSpec},
+    diagnostics::{DiagnosticExt, FileId, Span, Spanned},
+    f_string::PythonFormatString,
+};
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use color_eyre::eyre;
 use indexmap::IndexMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::{borrow::BorrowMut, collections::HashMap};
 use toml_span as toml;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("{message}")]
+    InvalidConfiguration { message: String, span: Span },
+    #[error("{message}")]
     MissingKey {
         key: String,
+        message: String,
+        span: Span,
+    },
+    #[error("{message}")]
+    MissingOneOf {
+        keys: Vec<String>,
         message: String,
         span: Span,
     },
@@ -41,10 +53,31 @@ mod diagnostics {
     impl ToDiagnostics for super::Error {
         fn to_diagnostics<F: Copy + PartialEq>(&self, file_id: F) -> Vec<Diagnostic<F>> {
             match self {
+                Self::InvalidConfiguration { message, span, .. } => vec![Diagnostic::error()
+                    .with_message(format!("invalid configuration"))
+                    .with_labels(vec![
+                        Label::secondary(file_id, span.clone()).with_message(message)
+                    ])],
                 Self::MissingKey {
                     message, key, span, ..
                 } => vec![Diagnostic::error()
                     .with_message(format!("missing required key `{key}`"))
+                    .with_labels(vec![
+                        Label::secondary(file_id, span.clone()).with_message(message)
+                    ])],
+                Self::MissingOneOf {
+                    message,
+                    keys,
+                    span,
+                    ..
+                } => vec![Diagnostic::error()
+                    .with_message(format!(
+                        "missing one of {}",
+                        keys.iter()
+                            .map(|key| format!("`{key}`"))
+                            .collect::<Vec<_>>()
+                            .join(" or ")
+                    ))
                     .with_labels(vec![
                         Label::secondary(file_id, span.clone()).with_message(message)
                     ])],
@@ -165,35 +198,60 @@ pub fn as_bool<'de>(value: &'de toml::Value<'de>) -> Result<bool, Error> {
 
 pub(crate) fn parse_file<'de>(
     value: &'de toml::Value<'de>,
-) -> Result<(PathBuf, FileConfig), Error> {
+) -> Result<(InputFile, FileConfig), Error> {
     let table = value.as_table().ok_or_else(|| Error::UnexpectedType {
         message: "file config must be a table".to_string(),
         expected: vec![ValueKind::Table],
         found: value.into(),
         span: value.span.into(),
     })?;
-    let file_name = table
-        .get("filename")
-        .map(as_string)
-        .transpose()?
-        .ok_or_else(|| Error::MissingKey {
-            key: "filename".to_string(),
-            message: "file config is missing required key `filename`".to_string(),
+    let file_name = table.get("filename").map(as_string).transpose()?;
+    // .ok_or_else(|| Error::MissingKey {
+    //     key: "filename".to_string(),
+    //     message: "file config is missing required key `filename`".to_string(),
+    //     span: value.span.into(),
+    // })?;
+    let glob_pattern = table.get("glob").map(as_string).transpose()?;
+    // .ok_or_else(|| Error::MissingKey {
+    //     key: "filename".to_string(),
+    //     message: "file config is missing required key `filename`".to_string(),
+    //     span: value.span.into(),
+    // })?;
+
+    let input_file = match (file_name, glob_pattern) {
+        (Some(_), Some(_)) => Err(Error::InvalidConfiguration {
+            message: "file config must specify exactly one of `filename` and `glob`".to_string(),
             span: value.span.into(),
-        })?;
+        }),
+        (None, None) => Err(Error::MissingOneOf {
+            keys: vec!["filename".to_string(), "glob".to_string()],
+            message: "file config must specifiy either `filename` or `glob`".to_string(),
+            span: value.span.into(),
+        }),
+        (Some(file_name), None) => Ok(InputFile::Path(file_name.into())),
+        (None, Some(glob_pattern)) => {
+            let exclude_patterns = table.get("glob_exclude").map(as_string_array).transpose()?;
+            Ok(InputFile::GlobPattern {
+                pattern: glob_pattern.into(),
+                exclude_patterns,
+            })
+        }
+    }?;
+
     let file_config = parse_file_config(table)?;
-    Ok((file_name.into(), file_config))
+    Ok((input_file, file_config))
 }
 
 pub(crate) fn parse_part_config<'de>(
     value: &'de toml::value::Value<'de>,
-) -> Result<PartConfig, Error> {
+) -> Result<VersionComponentSpec, Error> {
     let table = value.as_table().ok_or_else(|| Error::UnexpectedType {
         message: "part config must be a table".to_string(),
         expected: vec![ValueKind::Table],
         found: value.into(),
         span: value.span.into(),
     })?;
+    let independent = table.get("independent").map(as_bool).transpose()?;
     let optional_value = table.get("optional_value").map(as_string).transpose()?;
     let values = table
         .get("values")
@@ -201,9 +259,11 @@ pub(crate) fn parse_part_config<'de>(
         .transpose()?
         .unwrap_or_default();
 
-    Ok(PartConfig {
+    Ok(VersionComponentSpec {
+        independent,
         optional_value,
         values,
+        ..VersionComponentSpec::default()
     })
 }
 
@@ -213,12 +273,8 @@ pub(crate) fn parse_file_config<'de>(
     let current_version = table.get("current_version").map(as_string).transpose()?;
 
     let allow_dirty = table.get("allow_dirty").map(as_bool).transpose()?;
-    let parse = table.get("parse").map(as_string).transpose()?;
-    let serialize = table
-        .get("serialize")
-        .map(as_string_array)
-        .transpose()?
-        .unwrap_or_default();
+    let parse_version_pattern = table.get("parse").map(as_string).transpose()?;
+    let serialize_version_patterns = table.get("serialize").map(as_string_array).transpose()?;
     let search = table.get("search").map(as_string).transpose()?;
     let replace = table.get("replace").map(as_string).transpose()?;
     let regex = table.get("regex").map(as_bool).transpose()?;
@@ -231,7 +287,7 @@ pub(crate) fn parse_file_config<'de>(
     let dry_run = table.get("dry_run").map(as_bool).transpose()?;
     let commit = table.get("commit").map(as_bool).transpose()?;
     let tag = table.get("tag").map(as_bool).transpose()?;
-    let sign_tag = table
+    let sign_tags = table
         .get("sign_tag")
         .or(table.get("sign_tags"))
         .map(as_bool)
@@ -245,11 +301,32 @@ pub(crate) fn parse_file_config<'de>(
         .transpose()?;
     let commit_args = table.get("commit_args").map(as_string).transpose()?;
 
+    // extra stuff
+    let setup_hooks = table.get("setup_hooks").map(as_string_array).transpose()?;
+    let pre_commit_hooks = table
+        .get("pre_commit_hooks")
+        .map(as_string_array)
+        .transpose()?;
+    let post_commit_hooks = table
+        .get("post_commit_hooks")
+        .map(as_string_array)
+        .transpose()?;
+    let included_paths = table
+        .get("included_paths")
+        .map(as_string_array)
+        .transpose()?
+        .map(|values| values.into_iter().map(PathBuf::from).collect());
+    let excluded_paths = table
+        .get("excluded_paths")
+        .map(as_string_array)
+        .transpose()?
+        .map(|values| values.into_iter().map(PathBuf::from).collect());
+
     Ok(FileConfig {
         allow_dirty,
         current_version,
-        parse,
-        serialize,
+        parse_version_pattern,
+        serialize_version_patterns,
         search,
         replace,
         regex,
@@ -259,11 +336,17 @@ pub(crate) fn parse_file_config<'de>(
         dry_run,
         commit,
         tag,
-        sign_tag,
+        sign_tags,
         tag_name,
         tag_message,
         commit_message,
         commit_args,
+        // extra stuff
+        setup_hooks,
+        pre_commit_hooks,
+        post_commit_hooks,
+        included_paths,
+        excluded_paths,
     })
 }
 
@@ -302,7 +385,7 @@ impl Config {
                 toml::value::ValueInner::Array(array) => array
                     .iter()
                     .map(|value| parse_file(value))
-                    .collect::<Result<Vec<(PathBuf, FileConfig)>, _>>()?,
+                    .collect::<Result<Vec<(InputFile, FileConfig)>, _>>()?,
                 other => {
                     return Err(Error::UnexpectedType {
                         message: "files must be an array must be a table".to_string(),
@@ -323,7 +406,7 @@ impl Config {
                         let part_config = parse_part_config(value)?;
                         Ok((key.name.to_string(), part_config))
                     })
-                    .collect::<Result<Vec<(String, PartConfig)>, _>>()?
+                    .collect::<Result<Vec<(String, VersionComponentSpec)>, _>>()?
                     .into_iter()
                     .collect(),
                 other => {
@@ -355,15 +438,347 @@ impl Config {
     }
 }
 
+// /// A class to handle updating files
+// pub struct DataFileUpdater<'a> {
+//     value: &'a str,
+//     file_change: &'a FileChange,
+// }
+//
+// impl<'a> DataFileUpdater<'a> {
+//     pub fn new(
+//         value: &'a str,
+//         replace: &'a crate::f_string::PythonFormatString,
+//         // file_change: &'a FileChange,
+//         // parts: &crate::config::Parts, // [str, VersionComponentSpec],
+//     ) -> Self {
+//         Self {
+//             value,
+//             file_change,
+//         }
+//         // self.version_config = VersionConfig(
+//         //     self.file_change.parse,
+//         //     self.file_change.serialize,
+//         //     self.file_change.search,
+//         //     self.file_change.replace,
+//         //     version_part_configs,
+//         // )
+//         // self.path = Path(self.file_change.filename)
+//         // self._newlines: Optional[str] = None
+//     }
+//
+//     /// Update the files
+//     pub fn update_file(
+//         &self,
+//         current_version: crate::version::compat::Version,
+//         new_version: crate::version::compat::Version,
+//         // context: MutableMapping,
+//         dry_run: bool,
+//     ) {
+//         // new_context = deepcopy(context)
+//         // new_context["current_version"] = self.version_config.serialize(current_version, context)
+//         // new_context["new_version"] = self.version_config.serialize(new_version, context)
+//         search_for, raw_search_pattern = self.file_change.get_search_pattern(new_context)
+//         replace_with = self.file_change.replace.format(**new_context)
+//         // if self.path.suffix == ".toml":
+//         //     try:
+//         //         self._update_toml_file(search_for, raw_search_pattern, replace_with, dry_run)
+//         //     except KeyError as e:
+//         //         if self.file_change.ignore_missing_file or self.file_change.ignore_missing_version:
+//         //             pass
+//         //         else:
+//         //             raise e
+//     }
+// }
+
+// def __init__(
+//     self,
+//     file_change: FileChange,
+//     version_part_configs: Dict[str, VersionComponentSpec],
+// ) -> None:
+//     self.file_change = file_change
+//     self.version_config = VersionConfig(
+//         self.file_change.parse,
+//         self.file_change.serialize,
+//         self.file_change.search,
+//         self.file_change.replace,
+//         version_part_configs,
+//     )
+//     self.path = Path(self.file_change.filename)
+//     self._newlines: Optional[str] = None
+
+/// Render the search pattern and return the compiled regex pattern and
+/// the raw pattern.
+///
+/// # Returns
+/// A tuple of the compiled regex pattern and the raw pattern as a string.
+fn get_search_pattern<'a>(
+    search: &'a PythonFormatString<'a>,
+    ctx: &HashMap<&str, &str>,
+    // context: MutableMapping
+) -> eyre::Result<(regex::Regex, String)> {
+    tracing::debug!("rendering search pattern with context");
+
+    // the default search pattern is escaped,
+    // so we can still use it in a regex
+    let strict = true;
+    let raw_pattern = search.format(ctx, strict)?;
+    let default = regex::RegexBuilder::new(&regex::escape(&raw_pattern))
+        .multi_line(true)
+        .build()?;
+    // , re.MULTILINE | re.DOTALL)
+    // if not self.regex:
+    //     logger.debug("No RegEx flag detected. Searching for the default pattern: '%s'", default.pattern)
+    //     return default, raw_pattern
+
+    let regex_context = ctx.iter().map(|(k, v)| (*k, regex::escape(v))).collect();
+    let regex_pattern = search.format(&regex_context, strict)?;
+
+    match regex::RegexBuilder::new(&regex_pattern)
+        .multi_line(true)
+        .build()
+    {
+        Ok(regex_pattern) => {
+            tracing::debug!("searching for regex {}", regex_pattern.as_str());
+            return Ok((regex_pattern, raw_pattern));
+        }
+        Err(err) => {
+            tracing::error!("invalid regex {:?}: {:?}", default, err);
+        }
+    }
+
+    tracing::debug!(pattern = ?raw_pattern, "invalid regex, searching for default pattern");
+
+    Ok((default, raw_pattern))
+}
+
+/// Does the search pattern match any part of the contents?
+// fn contains_pattern(search: regex::Regex, content: &str) -> bool {
+// if not search or not contents:
+//     return False
+
+// for m in re.finditer(search, contents):
+//     line_no = contents.count("\n", 0, m.start(0)) + 1
+//     logger.info(
+//         "Found '%s' at line %s: %s",
+//         search.pattern,
+//         line_no,
+//         m.string[m.start() : m.end(0)],
+//     )
+//     return True
+// return False
+// }
+
+/// Update version in TOML document
+fn replace_version_of_document(
+    document: &mut toml_edit::Document,
+    key_path: &[&str],
+    search: &regex::Regex,
+    replacement: &str,
+    // allow_missing:
+    // search_for: re.Pattern,
+    // raw_search_pattern: str,
+    // dry_run: bool = False
+) -> eyre::Result<bool> {
+    use toml_edit::{Formatted, Item, Value};
+    // document.path
+    // assert_eq!(doc.to_string(), expected);
+
+    let mut item: Option<&mut Item> = Some(document.as_item_mut());
+    for k in key_path {
+        item = item.and_then(|doc| doc.get_mut(k));
+    }
+    // let Some(item) = item else {
+    //     return Ok(false);
+    // };
+    // Formatted<String>
+    // let Some(Value::String(Formatted{value: before, ..})) = item.and_then(Item::as_value_mut) else {
+    let Some(Value::String(before)) = item.and_then(Item::as_value_mut) else {
+        return Ok(false);
+    };
+
+    // let before = before.ok_or_else("").map()
+    // let Some(item_str) = item.and_then(|before| before.as_str()) else {
+    //     // value not found
+    //     return Ok(false);
+    // };
+    // let item_str = item.as_value_mut();
+
+    // String(Formatted<String>),
+    // dbg!(&item_str);
+
+    // toml_data = tomlkit.parse(self.path.read_text(encoding="utf-8"))
+    // value_before = get_nested_value(toml_data, self.file_change.key_path)
+    //
+    let matches = search.find_iter(before.value());
+    let new_value = if matches.count() > 0 {
+        // let replacement = format!(r#"\g<section_prefix>{new_version}"#);
+        search.replace_all(before.value(), replacement)
+    } else {
+        tracing::warn!(
+            "key {:?} does not match {}",
+            key_path.iter().copied().collect::<Vec<_>>().join("."),
+            search.as_str(),
+        );
+        // tracing::info!("could not find current version ({current_version}) in {path:?}");
+        return Ok(false);
+    };
+
+    // if contains_pattern(search, value_before)
+    //
+    // if not contains_pattern(search_for, value_before) and not self.file_change.ignore_missing_version:
+    //     raise ValueError(
+    //         f"Key '{self.file_change.key_path}' in {self.path} does not contain the correct contents: "
+    //         f"{raw_search_pattern}"
+    //     )
+    //
+    // new_value = search_for.sub(replace_with, value_before)
+    // log_changes(f"{self.path}:{self.file_change.key_path}", value_before, new_value, dry_run)
+    //
+    *before = Formatted::new(new_value.to_string());
+    // set_nested_value(toml_data, new_value, self.file_change.key_path)
+    //
+    // self.path.write_text(tomlkit.dumps(toml_data), encoding="utf-8")
+    Ok(true)
+}
+
+pub fn replace_version_str<'a>(
+    search: &'a PythonFormatString,
+    replace: &'a PythonFormatString,
+    current_version_serialized: &'a str,
+    new_version_serialized: &'a str,
+    // new_version_serialized: &str,
+    env: impl Iterator<Item = (&'a str, &'a str)>,
+) -> eyre::Result<String> {
+    //     self, current_version: Version, new_version: Version, context: MutableMapping, dry_run: bool = False
+    // ) -> None:
+    //     """Update the files."""
+    //     new_context = deepcopy(context)
+    //     new_context["current_version"] = self.version_config.serialize(current_version, context)
+    //     new_context["new_version"] = self.version_config.serialize(new_version, context)
+    let ctx: HashMap<&str, &str> = env
+        .chain(
+            [
+                ("current_version", current_version_serialized),
+                ("next_version", new_version_serialized),
+            ]
+            .into_iter(),
+        )
+        .collect();
+
+    let (search_for_regex, raw_search_pattern) = get_search_pattern(search, &ctx)?;
+    let strict = true;
+    let replace_with = replace.format(&ctx, strict)?;
+    dbg!(replace_with);
+    // if self.path.suffix == ".toml":
+    //     try:
+    //         self._update_toml_file(search_for, raw_search_pattern, replace_with, dry_run)
+    //     except KeyError as e:
+    //         if self.file_change.ignore_missing_file or self.file_change.ignore_missing_version:
+    //             pass
+    //         else:
+    //             raise e
+    Ok("todo".to_string())
+}
+
+/// Update the current_version key in the configuration file
+pub fn replace_version(
+    path: &Path,
+    config: &Config,
+    current_version: &str,
+    next_version: &str,
+    dry_run: bool,
+) -> eyre::Result<bool> {
+    tracing::info!(config = ?path, "processing config file");
+
+    let existing_config = std::fs::read_to_string(path)?;
+    let extension = path.extension().and_then(|ext| ext.to_str());
+
+    if extension.is_some_and(|ext| !ext.eq_ignore_ascii_case("toml")) {
+        tracing::warn!(
+            "cannot update TOML config file with extension {:?}",
+            extension.unwrap_or_default()
+        );
+        return Ok(false);
+    }
+
+    // // TODO: Eventually this should be transformed into another default
+    // // "files_to_modify" entry
+    // let file_change = FileChange {
+    //     // filename=str(config_path),
+    //     key_path: Some("tool.bumpversion.current_version".to_string()),
+    //     search: config.global.search.clone(),
+    //     replace: config.global.replace.clone(),
+    //     regex: config.global.regex.clone(),
+    //     ignore_missing_version: Some(true),
+    //     ignore_missing_files: Some(true),
+    //     serialize_patterns: config.global.serialize_patterns.clone(),
+    //     parse_pattern: config.global.parse_pattern.clone(),
+    //     ..FileChange::default()
+    // };
+
+    if dry_run {
+        tracing::info!(?path, "would write to config file");
+    } else {
+        tracing::info!(?path, "writing to config file");
+    }
+
+    // updater = DataFileUpdater(datafile_config, config.version_config.part_configs)
+    // updater.update_file(current_version, new_version, context, dry_run)
+
+    // parse the document
+    let raw_config = std::fs::read_to_string(path)?;
+    let mut document = raw_config.parse::<toml_edit::Document>()?;
+    let search = &config::DEFAULT_PARSE_VERSION_REGEX; // TODO: change
+    let replacement = "<new-version>";
+
+    let updated = replace_version_of_document(
+        &mut document,
+        &["tool", "bumpversion", "current_version"],
+        &*search,
+        &replacement,
+    );
+    dbg!(updated);
+    let new_config = document.to_string();
+
+    let label_existing = format!("{path:?} (before)");
+    let label_new = format!("{path:?} (after)");
+    let diff = similar_asserts::SimpleDiff::from_str(
+        &existing_config,
+        &new_config,
+        &label_existing,
+        &label_new,
+    );
+
+    if dry_run {
+        println!("{diff}");
+    } else {
+        todo!("write");
+        use std::io::Write;
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(false)
+            .truncate(true)
+            .open(path)?;
+        let mut writer = std::io::BufWriter::new(file);
+        writer.write_all(new_config.as_bytes())?;
+        writer.flush()?;
+    }
+    Ok(true)
+}
+
 #[cfg(test)]
 pub mod tests {
     use crate::{
-        config::{Config, FileConfig, PartConfig},
+        config::{
+            self, pyproject_toml, Config, FileChange, FileConfig, InputFile, VersionComponentSpec,
+        },
         diagnostics::{BufferedPrinter, ToDiagnostics},
+        tests::sim_assert_eq_sorted,
     };
     use codespan_reporting::diagnostic::Diagnostic;
     use color_eyre::eyre;
     use indexmap::IndexMap;
+    use similar_asserts::assert_eq as sim_assert_eq;
     use std::io::Read;
     use std::path::PathBuf;
 
@@ -387,6 +802,58 @@ pub mod tests {
         }
         printer.print();
         (config, file_id, diagnostics)
+    }
+
+    #[test]
+    fn test_replace_version() -> eyre::Result<()> {
+        crate::tests::init();
+
+        let pyproject_toml = indoc::indoc! {r#"
+            [tool.bumpversion]
+            current_version = "1.2.3"
+
+            [[tool.bumpversion.files]]
+            filename = "config.ini"
+
+            search = """
+            [myproject]
+            version={current_version}"""
+
+            replace = """
+            [myproject]
+            version={new_version}"""
+        "#};
+
+        let mut document = pyproject_toml.parse::<toml_edit::Document>()?;
+        dbg!(&document);
+        let search = &config::DEFAULT_PARSE_VERSION_REGEX;
+        let replacement = "<new-version>";
+        super::replace_version_of_document(
+            &mut document,
+            &["tool", "bumpversion", "current_version"],
+            &*search,
+            replacement,
+        )?;
+
+        let have = document.to_string();
+        println!("{have}");
+        let want = indoc::indoc! {r#"
+            [tool.bumpversion]
+            current_version = "<new-version>"
+
+            [[tool.bumpversion.files]]
+            filename = "config.ini"
+
+            search = """
+            [myproject]
+            version={current_version}"""
+
+            replace = """
+            [myproject]
+            version={new_version}"""
+        "#};
+        sim_assert_eq!(have, want);
+        Ok(())
     }
 
     #[test]
@@ -430,10 +897,10 @@ pub mod tests {
         let expected = Config {
             global: FileConfig {
                 current_version: Some("1.2.3".to_string()),
-                ..FileConfig::default()
+                ..FileConfig::empty()
             },
             files: [(
-                PathBuf::from("config.ini"),
+                InputFile::Path("config.ini".into()),
                 FileConfig {
                     search: Some(
                         indoc::indoc! {r#"
@@ -447,14 +914,14 @@ pub mod tests {
                         version={new_version}"#}
                         .to_string(),
                     ),
-                    ..FileConfig::default()
+                    ..FileConfig::empty()
                 },
             )]
             .into_iter()
             .collect(),
             parts: [].into_iter().collect(),
         };
-        similar_asserts::assert_eq!(config, Some(expected));
+        sim_assert_eq!(config, Some(expected));
         Ok(())
     }
 
@@ -784,54 +1251,54 @@ pub mod tests {
                 tag: Some(true),
                 tag_name: Some("{new_version}".to_string()),
                 allow_dirty: Some(true),
-                parse: Some("(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)(\\.(?P<dev>post)\\d+\\.dev\\d+)?".to_string()),
-                serialize: vec![
+                parse_version_pattern: Some("(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)(\\.(?P<dev>post)\\d+\\.dev\\d+)?".to_string()),
+                serialize_version_patterns: Some(vec![
                     "{major}.{minor}.{patch}.{dev}{$PR_NUMBER}.dev{distance_to_latest_tag}".to_string(),
                     "{major}.{minor}.{patch}".to_string(),
-                ],
+                ]),
                 commit_message: Some("Version updated from {current_version} to {new_version}".to_string()),
-                ..FileConfig::default()
+                ..FileConfig::empty()
             },
             files: [
                 (
-                    PathBuf::from("bumpversion/__init__.py"),
-                    FileConfig::default()
+                    InputFile::Path("bumpversion/__init__.py".into()),
+                    FileConfig::empty()
                 ),
                 (
-                    PathBuf::from("CHANGELOG.md"),
+                    InputFile::Path("CHANGELOG.md".into()),
                     FileConfig {
                         search: Some("Unreleased".to_string()),
-                        ..FileConfig::default()
+                        ..FileConfig::empty()
                     },
                 ),
                 (
-                    PathBuf::from("CHANGELOG.md"),
+                    InputFile::Path("CHANGELOG.md".into()),
                     FileConfig {
                         search: Some("{current_version}...HEAD".to_string()),
                         replace: Some("{current_version}...{new_version}".to_string()),
-                        ..FileConfig::default()
+                        ..FileConfig::empty()
                     },
                 ),
                 (
-                    PathBuf::from("action.yml"),
+                    InputFile::Path("action.yml".into()),
                     FileConfig {
                         search: Some("bump-my-version=={current_version}".to_string()),
                         replace: Some("bump-my-version=={new_version}".to_string()),
-                        ..FileConfig::default()
+                        ..FileConfig::empty()
                     },
                 ),
                 (
-                    PathBuf::from("Dockerfile"),
+                    InputFile::Path("Dockerfile".into()),
                     FileConfig {
                         search: Some("created=\\d{{4}}-\\d{{2}}-\\d{{2}}T\\d{{2}}:\\d{{2}}:\\d{{2}}Z".to_string()),
                         replace: Some("created={utcnow:%Y-%m-%dT%H:%M:%SZ}".to_string()),
                         regex: Some(true),
-                        ..FileConfig::default()
+                        ..FileConfig::empty()
                     },
                 ),
                 (
-                    PathBuf::from("Dockerfile"),
-                    FileConfig::default(),
+                    InputFile::Path("Dockerfile".into()),
+                    FileConfig::empty(),
                 ),
             ]
             .into_iter()
@@ -839,14 +1306,14 @@ pub mod tests {
             parts: [
                 (
                     "dev".to_string(), 
-                    PartConfig{
+                    VersionComponentSpec{
                         values: vec!["release".to_string(), "post".to_string()],
-                        ..PartConfig::default()
+                        ..VersionComponentSpec::default()
                     }
                 )
             ].into_iter().collect(),
         };
-        similar_asserts::assert_eq!(config, Some(expected));
+        sim_assert_eq!(config, Some(expected));
         Ok(())
     }
 
@@ -866,21 +1333,21 @@ pub mod tests {
         let expected = Config {
             global: FileConfig {
                 current_version: Some("0.10.5".to_string()),
-                parse: Some(
+                parse_version_pattern: Some(
                     r#"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\-(?P<release>[a-z]+))?"#
                         .to_string(),
                 ),
-                serialize: vec![
+                serialize_version_patterns: Some(vec![
                     "{major}.{minor}.{patch}-{release}".to_string(),
                     "{major}.{minor}.{patch}".to_string(),
-                ],
-                ..FileConfig::default()
+                ]),
+                ..FileConfig::empty()
             },
             ..Config::default()
         };
 
         let config = parse_toml(&pyproject_toml, &BufferedPrinter::default()).0?;
-        similar_asserts::assert_eq!(config, Some(expected));
+        sim_assert_eq!(config, Some(expected));
 
         let pyproject_toml = indoc::indoc! {r#"
             [tool.pytest.ini_options]
@@ -941,33 +1408,34 @@ pub mod tests {
                 commit: Some(true),
                 tag: Some(true),
                 // parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)(\\-(?P<release>[a-z]+))?"
-                parse: Some(
+                parse_version_pattern: Some(
                     r#"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\-(?P<release>[a-z]+))?"#
                         .to_string(),
                 ),
-                serialize: vec![
+                serialize_version_patterns: Some(vec![
                     "{major}.{minor}.{patch}-{release}".to_string(),
                     "{major}.{minor}.{patch}".to_string(),
-                ],
-                ..FileConfig::default()
+                ]),
+                ..FileConfig::empty()
             },
             parts: [(
                 "release".to_string(),
-                PartConfig {
+                VersionComponentSpec {
                     optional_value: Some("gamma".to_string()),
                     values: vec!["dev".to_string(), "gamma".to_string()],
+                    ..VersionComponentSpec::default()
                 },
             )]
             .into_iter()
             .collect(),
             files: vec![
-                (PathBuf::from("setup.py"), FileConfig::default()),
+                (InputFile::Path("setup.py".into()), FileConfig::empty()),
                 (
-                    PathBuf::from("bumpversion/__init__.py"),
-                    FileConfig::default(),
+                    InputFile::Path("bumpversion/__init__.py".into()),
+                    FileConfig::empty(),
                 ),
                 (
-                    PathBuf::from("CHANGELOG.md"),
+                    InputFile::Path("CHANGELOG.md".into()),
                     FileConfig {
                         search: Some(r#"**unreleased**"#.to_string()),
                         replace: Some(
@@ -977,7 +1445,7 @@ pub mod tests {
                             **v{new_version}**"#}
                             .to_string(),
                         ),
-                        ..FileConfig::default()
+                        ..FileConfig::empty()
                     },
                 ),
             ]
@@ -987,7 +1455,7 @@ pub mod tests {
         };
 
         let config = parse_toml(&pyproject_toml, &BufferedPrinter::default()).0?;
-        similar_asserts::assert_eq!(config, Some(expected));
+        sim_assert_eq!(config, Some(expected));
 
         Ok(())
     }
@@ -1046,7 +1514,7 @@ pub mod tests {
         "#};
 
         let config = parse_toml(&pyproject_toml, &BufferedPrinter::default()).0?;
-        similar_asserts::assert_eq!(config, None);
+        sim_assert_eq!(config, None);
         Ok(())
     }
 
@@ -1106,7 +1574,7 @@ pub mod tests {
         "#};
 
         let config = parse_toml(&pyproject_toml, &BufferedPrinter::default()).0?;
-        similar_asserts::assert_eq!(config, None);
+        sim_assert_eq!(config, None);
         Ok(())
     }
 
@@ -1127,12 +1595,12 @@ pub mod tests {
                 // commit: Some(true),
                 // tag: Some(true),
                 // commit_message: Some("DO NOT BUMP VERSIONS WITH THIS FILE".to_string()),
-                ..FileConfig::default()
+                ..FileConfig::empty()
             },
             ..Config::default()
         };
         let config = parse_toml(bumpversion_toml, &BufferedPrinter::default()).0?;
-        similar_asserts::assert_eq!(config, Some(expected));
+        sim_assert_eq!(config, Some(expected));
 
         Ok(())
     }
@@ -1172,7 +1640,7 @@ pub mod tests {
         let expected = Config {
             global: FileConfig {
                 current_version: Some("1.0.0".to_string()),
-                parse: Some(
+                parse_version_pattern: Some(
                     indoc::indoc! {r#"
                         (?x)
                             (?P<major>[0-9]+)
@@ -1185,29 +1653,319 @@ pub mod tests {
                     "#}
                     .to_string(),
                 ),
-                serialize: vec![
+                serialize_version_patterns: Some(vec![
                     "{major}.{minor}.{patch}-{pre_label}-{pre_n}".to_string(),
                     "{major}.{minor}.{patch}".to_string(),
-                ],
-
-                ..FileConfig::default()
+                ]),
+                ..FileConfig::empty()
             },
             files: [].into_iter().collect(),
             parts: [(
                 "pre_label".to_string(),
-                PartConfig {
+                VersionComponentSpec {
                     optional_value: Some("stable".to_string()),
                     values: vec![
                         "alpha".to_string(),
                         "beta".to_string(),
                         "stable".to_string(),
                     ],
+                    ..VersionComponentSpec::default()
                 },
             )]
             .into_iter()
             .collect(),
         };
-        similar_asserts::assert_eq!(config, Some(expected));
+        sim_assert_eq!(config, Some(expected));
+        Ok(())
+    }
+
+    #[test]
+    fn parse_pyproject_toml_of_bump_my_version() -> eyre::Result<()> {
+        crate::tests::init();
+        let pyproject_toml = include_str!("../../test-data/bump-my-version.pyproject.toml");
+        let mut config = parse_toml(&pyproject_toml, &BufferedPrinter::default())
+            .0?
+            .unwrap();
+
+        let parse =
+            r#"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\.(?P<dev>post)\d+\.dev\d+)?"#
+                .to_string();
+        let serialize = vec![
+            "{major}.{minor}.{patch}.{dev}{$PR_NUMBER}.dev{distance_to_latest_tag}".to_string(),
+            "{major}.{minor}.{patch}".to_string(),
+        ];
+        let expected = Config {
+            global: FileConfig {
+                current_version: Some("0.29.0".to_string()),
+                commit: Some(true),
+                commit_args: Some("--no-verify".to_string()),
+                tag: Some(true),
+                tag_name: Some("{new_version}".to_string()),
+                allow_dirty: Some(true),
+                parse_version_pattern: Some(parse.clone()),
+                serialize_version_patterns: Some(serialize.clone()),
+                commit_message: Some(
+                    "Version updated from {current_version} to {new_version}".to_string(),
+                ),
+                pre_commit_hooks: Some(vec![
+                    "uv sync --upgrade".to_string(),
+                    "git add uv.lock".to_string(),
+                ]),
+                ..FileConfig::empty()
+            },
+            files: [
+                (
+                    InputFile::Path("bumpversion/__init__.py".into()),
+                    FileConfig::empty(),
+                ),
+                (
+                    InputFile::Path("CHANGELOG.md".into()),
+                    FileConfig {
+                        search: Some("Unreleased".to_string()),
+                        ..FileConfig::empty()
+                    },
+                ),
+                (
+                    InputFile::Path("CHANGELOG.md".into()),
+                    FileConfig {
+                        search: Some("{current_version}...HEAD".to_string()),
+                        replace: Some("{current_version}...{new_version}".to_string()),
+                        ..FileConfig::empty()
+                    },
+                ),
+                (
+                    InputFile::Path("action.yml".into()),
+                    FileConfig {
+                        search: Some("bump-my-version=={current_version}".to_string()),
+                        replace: Some("bump-my-version=={new_version}".to_string()),
+                        ..FileConfig::empty()
+                    },
+                ),
+                (
+                    InputFile::Path("Dockerfile".into()),
+                    FileConfig {
+                        search: Some(
+                            r#"created=\d{{4}}-\d{{2}}-\d{{2}}T\d{{2}}:\d{{2}}:\d{{2}}Z"#
+                                .to_string(),
+                        ),
+                        replace: Some(r#"created={utcnow:%Y-%m-%dT%H:%M:%SZ}"#.to_string()),
+                        regex: Some(true),
+                        ..FileConfig::empty()
+                    },
+                ),
+                (InputFile::Path("Dockerfile".into()), FileConfig::empty()),
+            ]
+            .into_iter()
+            .collect(),
+            parts: [(
+                "dev".to_string(),
+                VersionComponentSpec {
+                    values: vec!["release".to_string(), "post".to_string()],
+                    ..VersionComponentSpec::default()
+                },
+            )]
+            .into_iter()
+            .collect(),
+        };
+        sim_assert_eq!(&config, &expected);
+
+        // the order is important here
+        config.merge_global_config();
+        config.apply_defaults(&FileConfig::default());
+
+        sim_assert_eq!(
+            &config.global,
+            &FileConfig {
+                allow_dirty: Some(true),
+                tag: Some(true),
+                sign_tags: Some(false),
+                regex: Some(false),
+                search: Some("{current_version}".to_string()),
+                replace: Some("{new_version}".to_string()),
+                tag_name: Some("{new_version}".to_string()),
+                commit: Some(true),
+                commit_args: Some("--no-verify".to_string()),
+                current_version: Some("0.29.0".to_string()),
+                ignore_missing_files: Some(false),
+                ignore_missing_version: Some(false),
+                commit_message: Some(
+                    "Version updated from {current_version} to {new_version}".to_string()
+                ),
+                tag_message: Some("Bump version: {current_version} → {new_version}".to_string()),
+                parse_version_pattern: Some(parse.clone()),
+                serialize_version_patterns: Some(serialize.clone()),
+                pre_commit_hooks: Some(vec![
+                    "uv sync --upgrade".to_string(),
+                    "git add uv.lock".to_string()
+                ]),
+                ..FileConfig::empty()
+            },
+        );
+
+        let parts = crate::config::get_all_part_configs(&config)?;
+        sim_assert_eq!(
+            &parts,
+            &[
+                (
+                    "major".to_string(),
+                    VersionComponentSpec {
+                        values: vec![],
+                        optional_value: None,
+                        independent: Some(false),
+                        ..VersionComponentSpec::default() // first_value: None,
+                                                          // always_increment: False,
+                                                          // calver_format: None,
+                                                          // depends_on: None
+                    }
+                ),
+                (
+                    "minor".to_string(),
+                    VersionComponentSpec {
+                        values: vec![],
+                        optional_value: None,
+                        independent: Some(false),
+                        ..VersionComponentSpec::default() // first_value: None,
+                                                          // always_increment: False,
+                                                          // calver_format: None,
+                                                          // depends_on: None
+                    }
+                ),
+                (
+                    "patch".to_string(),
+                    VersionComponentSpec {
+                        values: vec![],
+                        optional_value: None,
+                        independent: Some(false),
+                        ..VersionComponentSpec::default() // first_value: None,
+                                                          // always_increment: False,
+                                                          // calver_format: None,
+                                                          // depends_on: None
+                    }
+                ),
+                (
+                    "dev".to_string(),
+                    VersionComponentSpec {
+                        values: vec!["release".to_string(), "post".to_string()],
+                        optional_value: None,
+                        independent: Some(false),
+                        ..VersionComponentSpec::default() // first_value: None,
+                                                          // always_increment: False,
+                                                          // calver_format: None,
+                                                          // depends_on: None
+                    }
+                ),
+            ]
+            .into_iter()
+            .collect::<IndexMap<_, _>>(),
+        );
+
+        let files = crate::config::get_all_file_configs(&config, &parts);
+        let include_bumps = vec![
+            "major".to_string(),
+            "minor".to_string(),
+            "patch".to_string(),
+            "dev".to_string(),
+        ];
+
+        sim_assert_eq!(
+            files,
+            vec![
+                (
+                    InputFile::Path("bumpversion/__init__.py".into()),
+                    FileChange {
+                        parse_pattern: Some(parse.clone()),
+                        serialize_patterns: Some(serialize.clone()),
+                        search: Some("{current_version}".to_string()),
+                        replace: Some("{new_version}".to_string()),
+                        regex: Some(false),
+                        ignore_missing_version: Some(false),
+                        ignore_missing_files: Some(false),
+                        // filename: Some(PathBuf::from("bumpversion/__init__.py")),
+                        include_bumps: Some(include_bumps.clone()),
+                        ..FileChange::default()
+                    }
+                ),
+                (
+                    InputFile::Path("CHANGELOG.md".into()),
+                    FileChange {
+                        parse_pattern: Some(parse.clone()),
+                        serialize_patterns: Some(serialize.clone()),
+                        search: Some("Unreleased".to_string()),
+                        replace: Some("{new_version}".to_string()),
+                        regex: Some(false),
+                        ignore_missing_version: Some(false),
+                        ignore_missing_files: Some(false),
+                        // filename: Some(PathBuf::from("CHANGELOG.md")),
+                        include_bumps: Some(include_bumps.clone()),
+                        ..FileChange::default()
+                    },
+                ),
+                (
+                    InputFile::Path("CHANGELOG.md".into()),
+                    FileChange {
+                        parse_pattern: Some(parse.clone()),
+                        serialize_patterns: Some(serialize.clone()),
+                        search: Some("{current_version}...HEAD".to_string()),
+                        replace: Some("{current_version}...{new_version}".to_string()),
+                        regex: Some(false),
+                        ignore_missing_version: Some(false),
+                        ignore_missing_files: Some(false),
+                        // filename: Some(PathBuf::from("CHANGELOG.md")),
+                        include_bumps: Some(include_bumps.clone()),
+                        ..FileChange::default()
+                    },
+                ),
+                (
+                    InputFile::Path("action.yml".into()),
+                    FileChange {
+                        parse_pattern: Some(parse.clone()),
+                        serialize_patterns: Some(serialize.clone()),
+                        search: Some("bump-my-version=={current_version}".to_string()),
+                        replace: Some("bump-my-version=={new_version}".to_string()),
+                        regex: Some(false),
+                        ignore_missing_version: Some(false),
+                        ignore_missing_files: Some(false),
+                        // filename: Some(PathBuf::from("action.yml")),
+                        include_bumps: Some(include_bumps.clone()),
+                        ..FileChange::default()
+                    },
+                ),
+                (
+                    InputFile::Path("Dockerfile".into()),
+                    FileChange {
+                        parse_pattern: Some(parse.clone()),
+                        serialize_patterns: Some(serialize.clone()),
+                        search: Some(
+                            r#"created=\d{{4}}-\d{{2}}-\d{{2}}T\d{{2}}:\d{{2}}:\d{{2}}Z"#
+                                .to_string()
+                        ),
+                        replace: Some(r#"created={utcnow:%Y-%m-%dT%H:%M:%SZ}"#.to_string()),
+                        regex: Some(true),
+                        ignore_missing_version: Some(false),
+                        ignore_missing_files: Some(false),
+                        // filename: Some(PathBuf::from("Dockerfile")),
+                        include_bumps: Some(include_bumps.clone()),
+                        ..FileChange::default()
+                    },
+                ),
+                (
+                    InputFile::Path("Dockerfile".into()),
+                    FileChange {
+                        parse_pattern: Some(parse.clone()),
+                        serialize_patterns: Some(serialize.clone()),
+                        search: Some("{current_version}".to_string()),
+                        replace: Some("{new_version}".to_string()),
+                        regex: Some(false),
+                        ignore_missing_version: Some(false),
+                        ignore_missing_files: Some(false),
+                        // filename: Some(PathBuf::from("Dockerfile")),
+                        include_bumps: Some(include_bumps.clone()),
+                        ..FileChange::default()
+                    },
+                ),
+            ]
+        );
+
         Ok(())
     }
 }

@@ -1,5 +1,5 @@
-// use bumpversion::{Config, GitRepository};
 use clap::Parser;
+use color_eyre::owo_colors::OwoColorize;
 use std::path::{Path, PathBuf};
 
 pub trait Invert {
@@ -13,13 +13,23 @@ impl Invert for Option<bool> {
 }
 
 #[derive(Parser, Debug, Clone)]
-enum Bump {
+pub enum BumpCommand {
     #[clap(name = "major")]
     Major,
     #[clap(name = "minor")]
     Minor,
     #[clap(name = "patch")]
     Patch,
+}
+
+impl From<BumpCommand> for bumpversion::Bump {
+    fn from(value: BumpCommand) -> Self {
+        match value {
+            BumpCommand::Major => Self::Major,
+            BumpCommand::Minor => Self::Minor,
+            BumpCommand::Patch => Self::Patch,
+        }
+    }
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -30,6 +40,13 @@ enum Bump {
     author = "romnn <contact@romnn.com>",
 )]
 pub struct Options {
+    #[clap(
+        long = "dir",
+        help = "repository directory to run bumpversion in",
+        env = "BUMPVERSION_DIR"
+    )]
+    pub dir: Option<PathBuf>,
+
     #[clap(
         long = "config-file",
         help = "config file to read most of the variables from",
@@ -62,12 +79,6 @@ pub struct Options {
     )]
     pub log_format: Option<crate::logging::LogFormat>,
 
-    // #[clap(
-    //     long = "list",
-    //     help = "list machine readable information",
-    //     action = clap::ArgAction::SetTrue,
-    // )]
-    // pub list: Option<bool>,
     #[clap(
         long = "allow-dirty",
         help = "don't abort if working directory is dirty",
@@ -104,7 +115,7 @@ pub struct Options {
         env = "BUMPVERSION_PARSE",
         // default_value = r"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)"
     )]
-    pub parse: Option<String>,
+    pub parse_pattern: Option<String>,
 
     #[clap(
         long = "serialize",
@@ -231,7 +242,7 @@ pub struct Options {
         env = "BUMPVERSION_SIGN_TAGS",
         action = clap::ArgAction::SetTrue,
     )]
-    pub sign_tag: Option<bool>,
+    pub sign_tags: Option<bool>,
 
     #[clap(
         long = "no-sign-tags",
@@ -274,5 +285,8 @@ pub struct Options {
     pub commit_args: Option<String>,
 
     #[clap(subcommand)]
-    pub bump: Bump,
+    pub bump: Option<BumpCommand>,
+
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub args: Vec<String>,
 }
