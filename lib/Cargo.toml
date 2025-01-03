@@ -55,9 +55,11 @@ chrono.workspace = true
 shlex = "1"
 # add async-command
 
-# python parser for parsing f-strings
+# parse python f-strings
+winnow = "0.6"
+
 # rustpython-parser = "0"
-python-fstring = { path = "../crates/python-fstring" }
+# python-fstring = { path = "../crates/python-fstring" }
 
 # regex
 regex = "1"

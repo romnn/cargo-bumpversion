@@ -1,176 +1,12 @@
-// use super::{Config, FileConfig};
-// use crate::config::pyproject_toml::{Error, ValueKind};
-// use crate::diagnostics::{DiagnosticExt, FileId, Span, Spanned};
-// use codespan_reporting::diagnostic::{Diagnostic, Label};
-// use color_eyre::eyre;
-// use toml_span::Value;
-//
-// // #[derive(thiserror::Error, Debug)]
-// // pub enum Error {
-// //     // #[error("{message}")]
-// //     // MissingKey {
-// //     //     key: String,
-// //     //     message: String,
-// //     //     span: Span,
-// //     // },
-// //     #[error("{message}")]
-// //     UnexpectedType {
-// //         message: String,
-// //         expected: Vec<ValueKind>,
-// //         span: Span,
-// //     },
-// //     // #[error("{source}")]
-// //     // Serde {
-// //     //     #[source]
-// //     //     source: serde_json::Error,
-// //     //     span: Span,
-// //     // },
-// //     #[error("{source}")]
-// //     Toml {
-// //         #[source]
-// //         source: toml_span::Error,
-// //     },
-// // }
-// //
-// // mod diagnostics {
-// //     use crate::config::pyproject_toml::ValueKind;
-// //     use crate::diagnostics::ToDiagnostics;
-// //     use codespan_reporting::diagnostic::{self, Diagnostic, Label};
-// //
-// //     impl ToDiagnostics for super::Error {
-// //         fn to_diagnostics<F: Copy + PartialEq>(&self, file_id: F) -> Vec<Diagnostic<F>> {
-// //             match self {
-// //                 // Self::MissingKey {
-// //                 //     message, key, span, ..
-// //                 // } => vec![Diagnostic::error()
-// //                 //     .with_message(format!("missing required key `{key}`"))
-// //                 //     .with_labels(vec![
-// //                 //         Label::secondary(file_id, span.clone()).with_message(message)
-// //                 //     ])],
-// //                 // Self::UnexpectedType {
-// //                 //     expected,
-// //                 //     // found,
-// //                 //     span,
-// //                 //     ..
-// //                 // } => {
-// //                 //     let expected = expected
-// //                 //         .iter()
-// //                 //         .map(|ty| format!("`{ty:?}`"))
-// //                 //         .collect::<Vec<_>>()
-// //                 //         .join(", or ");
-// //                 //     let note = unindent::unindent(&format!(
-// //                 //         "
-// //                 //         expected type {expected}
-// //                 //            found type `{:?}`
-// //                 //         ",
-// //                 //         ValueKind::String
-// //                 //     ));
-// //                 //     let diagnostic = Diagnostic::error()
-// //                 //         .with_message(self.to_string())
-// //                 //         .with_labels(vec![Label::primary(file_id, span.clone())
-// //                 //             .with_message(format!("expected {expected}"))])
-// //                 //         .with_notes(vec![note]);
-// //                 //     vec![diagnostic]
-// //                 // }
-// //                 // Self::Serde { source, span } => vec![Diagnostic::error()
-// //                 //     .with_message(self.to_string())
-// //                 //     .with_labels(vec![
-// //                 //         Label::primary(file_id, span.clone()).with_message(source.to_string())
-// //                 //     ])],
-// //                 Self::Toml { source } => vec![source.to_diagnostic(file_id)],
-// //             }
-// //         }
-// //     }
-// // }
-//
-// impl Config {
-//     pub fn from_toml_value(
-//         config: Value,
-//         file_id: FileId,
-//         strict: bool,
-//         diagnostics: &mut Vec<Diagnostic<FileId>>,
-//     ) -> Result<Option<Self>, Error> {
-//         let Some(config) = config
-//             .as_table()
-//             .and_then(|config| config.get("tool"))
-//             .and_then(|tool| tool.as_table())
-//             .and_then(|tool| tool.get("bumpversion"))
-//         // .map(|config| config.take())
-//         else {
-//             return Ok(None);
-//         };
-//
-//         // let config = config.as_table().ok_or_else(||)
-//
-//         // config
-//         //     .("current_version")
-//         //     .and_then(as_optional)
-//         //     .map(ini::Spanned::into_inner);
-//         Ok(None)
-//     }
-//
-//     pub fn from_toml(
-//         config: &str,
-//         file_id: FileId,
-//         strict: bool,
-//         diagnostics: &mut Vec<Diagnostic<FileId>>,
-//     ) -> Result<Option<Self>, Error> {
-//         let config = toml_span::parse(&config).map_err(|source| Error::Toml { source })?;
-//         Self::from_toml_value(config, file_id, strict, diagnostics)
-//     }
-// }
-//
-// // #[derive(Debug, PartialEq, Eq, serde::Deserialize)]
-// // pub struct BumpversionTomlFileConfig {
-// //     pub filename: String,
-// //     #[serde(flatten)]
-// //     pub config: super::Config,
-// // }
-// //
-// // #[derive(Debug, PartialEq, Eq, serde::Deserialize)]
-// // pub struct BumpversionTomlTool {
-// //     pub files: Vec<BumpversionTomlFileConfig>,
-// // }
-// //
-// // #[derive(Debug, PartialEq, Eq, serde::Deserialize)]
-// // pub struct SetupCfgTomlTools {
-// //     pub bumpversion: BumpversionTomlTool,
-// // }
-// //
-// // #[derive(Debug, PartialEq, Eq, serde::Deserialize)]
-// // pub struct SetupCfgToml {
-// //     pub tool: SetupCfgTomlTools,
-// //     // bumpversion: Option<Config>,
-// // }
-// //
-// // pub type PyProjectToml = SetupCfgToml;
-// //
-// // impl SetupCfgToml {
-// //     pub fn from_str(config: &str) -> eyre::Result<Self> {
-// //         let config: SetupCfgToml = toml::from_str(&config)?;
-// //         Ok(config)
-// //     }
-// // }
-// //
-// // #[derive(Debug, PartialEq, Eq, serde::Deserialize)]
-// // pub struct CargoToml {
-// //     pub tool: SetupCfgTomlTools,
-// // }
-// //
-// // impl CargoToml {
-// //     pub fn from_str(config: &str) -> eyre::Result<Self> {
-// //         let config: Self = toml::from_str(&config)?;
-// //         Ok(config)
-// //     }
-// // }
-
 #[cfg(test)]
 mod tests {
     use crate::{
         config::{
-            pyproject_toml::tests::parse_toml, Config, FileConfig, InputFile, VersionComponentSpec,
+            pyproject_toml::tests::parse_toml, Config, FileConfig, GlobalConfig, InputFile,
+            VersionComponentSpec,
         },
         diagnostics::{Printer, ToDiagnostics},
+        f_string::{OwnedPythonFormatString, OwnedValue},
     };
     use codespan_reporting::diagnostic;
     use color_eyre::eyre;
@@ -223,12 +59,15 @@ mod tests {
         "#};
 
         let expected = Config {
-            global: FileConfig {
+            global: GlobalConfig {
                 current_version: Some("0.1.8".to_string()),
                 commit: Some(true),
                 tag: Some(true),
-                commit_message: Some("DO NOT BUMP VERSIONS WITH THIS FILE".to_string()),
-                ..FileConfig::empty()
+                // commit_message: Some("DO NOT BUMP VERSIONS WITH THIS FILE".to_string()),
+                commit_message: Some(OwnedPythonFormatString(vec![OwnedValue::String(
+                    "DO NOT BUMP VERSIONS WITH THIS FILE".to_string(),
+                )])),
+                ..GlobalConfig::empty()
             },
             files: vec![],
             parts: [].into_iter().collect(),
@@ -300,7 +139,7 @@ mod tests {
         let config = parse_toml(bumpversion_toml, &Printer::default()).0?;
 
         let expected = Config {
-            global: FileConfig {
+            global: GlobalConfig {
                 commit: Some(true),
                 tag: Some(true),
                 current_version: Some("1.0.0".to_string()),
@@ -312,7 +151,7 @@ mod tests {
                     r#"{major}.{minor}.{patch}-{release}"#.to_string(),
                     r#"{major}.{minor}.{patch}"#.to_string(),
                 ]),
-                ..FileConfig::empty()
+                ..GlobalConfig::empty()
             },
             files: vec![
                 (InputFile::Path("setup.py".into()), FileConfig::empty()),
@@ -394,11 +233,11 @@ mod tests {
         let config = parse_toml(bumpversion_toml, &Printer::default()).0?;
 
         let expected = Config {
-            global: FileConfig {
+            global: GlobalConfig {
                 ignore_missing_version: Some(true),
                 regex: Some(true),
                 current_version: Some("0.0.1".to_string()),
-                ..FileConfig::empty()
+                ..GlobalConfig::empty()
             },
             files: vec![
                 (
@@ -497,11 +336,11 @@ mod tests {
         let config = parse_toml(bumpversion_toml, &Printer::default()).0?;
 
         let expected = Config {
-            global: FileConfig {
+            global: GlobalConfig {
                 commit: Some(false),
                 tag: Some(false),
                 current_version: Some("0.0.2".to_string()),
-                ..FileConfig::empty()
+                ..GlobalConfig::empty()
             },
             files: vec![].into_iter().collect(),
             parts: [].into_iter().collect(),
@@ -594,15 +433,28 @@ mod tests {
         let config = parse_toml(bumpversion_toml, &Printer::default()).0?;
 
         let expected = Config {
-            global: FileConfig {
+            global: GlobalConfig {
                 allow_dirty: Some(false),
                 commit: Some(false),
-                commit_message: Some("Bump version: {current_version} → {new_version}".to_string()),
+                commit_message: Some(OwnedPythonFormatString(vec![
+                    OwnedValue::String("Bump version: ".to_string()),
+                    OwnedValue::Argument("current_version".to_string()),
+                    OwnedValue::String(" → ".to_string()),
+                    OwnedValue::Argument("new_version".to_string()),
+                ])),
                 commit_args: Some("".to_string()),
                 tag: Some(false),
                 sign_tags: Some(false),
-                tag_name: Some("v{new_version}".to_string()),
-                tag_message: Some("Bump version: {current_version} → {new_version}".to_string()),
+                tag_name: Some(OwnedPythonFormatString(vec![
+                    OwnedValue::String("v".to_string()),
+                    OwnedValue::Argument("new_version".to_string()),
+                ])),
+                tag_message: Some(OwnedPythonFormatString(vec![
+                    OwnedValue::String("Bump version: ".to_string()),
+                    OwnedValue::Argument("current_version".to_string()),
+                    OwnedValue::String(" → ".to_string()),
+                    OwnedValue::Argument("new_version".to_string()),
+                ])),
                 current_version: Some("1.0.0".to_string()),
                 parse_version_pattern: Some(
                     indoc::indoc! {r#"(?x)
@@ -646,7 +498,7 @@ mod tests {
                 ]),
                 search: Some("{current_version}".to_string()),
                 replace: Some("{new_version}".to_string()),
-                ..FileConfig::empty()
+                ..GlobalConfig::empty()
             },
             files: vec![].into_iter().collect(),
             parts: [
@@ -705,10 +557,10 @@ mod tests {
         let config = parse_toml(bumpversion_toml, &Printer::default()).0?;
 
         let expected = Config {
-            global: FileConfig {
+            global: GlobalConfig {
                 regex: Some(true),
                 current_version: Some("4.7.1".to_string()),
-                ..FileConfig::empty()
+                ..GlobalConfig::empty()
             },
             files: vec![(
                 InputFile::Path("./citation.cff".into()),
@@ -743,10 +595,10 @@ mod tests {
         let config = parse_toml(bumpversion_toml, &Printer::default()).0?;
 
         let expected = Config {
-            global: FileConfig {
+            global: GlobalConfig {
                 regex: Some(true),
                 current_version: Some("1.0.0".to_string()),
-                ..FileConfig::empty()
+                ..GlobalConfig::empty()
             },
             files: vec![(
                 InputFile::Path("thingy.yaml".into()),
@@ -784,9 +636,9 @@ mod tests {
         let config = parse_toml(bumpversion_toml, &Printer::default()).0?;
 
         let expected = Config {
-            global: FileConfig {
+            global: GlobalConfig {
                 current_version: Some("1.2.3".to_string()),
-                ..FileConfig::empty()
+                ..GlobalConfig::empty()
             },
             files: vec![
                 (

@@ -1,7 +1,7 @@
 use crate::command::{Error as CommandError, Output};
 use crate::{
-    backend::TagAndRevision,
     config::{self, Config},
+    vcs::{RevisionInfo, TagAndRevision},
     version::compat::{SerializedVersion, Version},
 };
 use color_eyre::eyre;
@@ -34,14 +34,14 @@ fn vcs_env(tag_and_revision: &TagAndRevision) -> impl Iterator<Item = (String, S
     let tag = tag
         // .and_then(|t| t.tag)
         .clone()
-        .unwrap_or(crate::backend::TagInfo {
+        .unwrap_or(crate::vcs::TagInfo {
             dirty: false,
             commit_sha: "".to_string(),
             distance_to_latest_tag: 0,
             current_tag: "".to_string(),
             current_version: "".to_string(),
         });
-    let revision = revision.clone().unwrap_or(crate::backend::RevisionInfo {
+    let revision = revision.clone().unwrap_or(RevisionInfo {
         branch_name: "".to_string(),
         short_branch_name: "".to_string(),
         repository_root: std::path::PathBuf::default(),

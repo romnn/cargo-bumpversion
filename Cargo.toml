@@ -4,7 +4,7 @@ members = [
   "lib",
   "bin/bumpversion",
   "crates/serde-ini-spanned",
-  "crates/python-fstring",
+  # "crates/python-fstring",
   # "crates/serde-ini",
   # "bin/cargo-bumpversion",
 ]

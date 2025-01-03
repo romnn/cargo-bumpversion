@@ -1,7 +1,6 @@
 #![forbid(unsafe_code)]
 #![allow(warnings)]
 
-pub mod backend;
 pub mod command;
 pub mod config;
 pub mod context;
@@ -11,16 +10,8 @@ pub mod f_string;
 pub mod files;
 pub mod hooks;
 pub mod utils;
+pub mod vcs;
 pub mod version;
-
-// #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-// pub struct Version {
-//     // pub dirty: bool,
-//     // pub commit_sha: String,
-//     // pub distance_to_latest_tag: usize,
-//     // pub current_tag: String,
-//     // pub current_version: String,
-// }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Bump {

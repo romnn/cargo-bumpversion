@@ -1,4 +1,4 @@
-use crate::{backend::VersionControlSystem, command::run_command, utils};
+use crate::{command::run_command, utils, vcs::VersionControlSystem};
 use color_eyre::eyre;
 use regex::Regex;
 use std::io::Write;
@@ -49,7 +49,7 @@ where
             Command::new("git")
                 .arg("add")
                 .args(files)
-                .current_dir(self.repo_dir()),
+                .current_dir(self.path()),
         )?;
         Ok(())
     }

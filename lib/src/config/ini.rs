@@ -1,6 +1,7 @@
-use super::{Config, FileConfig, InputFile, VersionComponentSpec};
+use super::{Config, FileConfig, GlobalConfig, InputFile, VersionComponentSpec};
 use crate::config::pyproject_toml::ValueKind;
 use crate::diagnostics::{DiagnosticExt, FileId, Span, Spanned};
+use crate::f_string::OwnedPythonFormatString;
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use color_eyre::eyre;
 use indexmap::IndexMap;
@@ -21,6 +22,13 @@ pub enum Error {
     UnexpectedType {
         message: String,
         expected: Vec<ValueKind>,
+        span: Span,
+    },
+    #[error("{message}")]
+    InvalidFormatString {
+        #[source]
+        source: crate::f_string::Error,
+        message: String,
         span: Span,
     },
     // #[error("{source}")]
@@ -44,6 +52,17 @@ mod diagnostics {
     impl ToDiagnostics for super::Error {
         fn to_diagnostics<F: Copy + PartialEq>(&self, file_id: F) -> Vec<Diagnostic<F>> {
             match self {
+                Self::InvalidFormatString {
+                    source,
+                    message,
+                    span,
+                    ..
+                } => vec![Diagnostic::error()
+                    .with_message(format!("invalid format string"))
+                    .with_labels(vec![
+                        Label::primary(file_id, span.clone()).with_message(source.to_string()),
+                        Label::secondary(file_id, span.clone()).with_message(message),
+                    ])],
                 Self::MissingKey {
                     message, key, span, ..
                 } => vec![Diagnostic::error()
@@ -101,22 +120,27 @@ pub fn as_bool(value: ini::Spanned<String>) -> Result<bool, Error> {
 }
 
 #[inline]
+pub fn as_format_string(value: ini::Spanned<String>) -> Result<OwnedPythonFormatString, Error> {
+    let ini::Spanned { inner, span } = value;
+    OwnedPythonFormatString::parse(&inner).map_err(|source| Error::InvalidFormatString {
+        source,
+        message: "invalid format string".to_string(),
+        span: span.into(),
+    })
+}
+
+#[inline]
 pub fn as_string_array(
     value: ini::Spanned<String>,
     allow_single_value: bool,
 ) -> Result<Vec<String>, Error> {
-    // ) -> Result<impl Iterator<Item = String>, Error> {
-    // ) -> Result<Box<dyn Iterator<Item = String>>, Error> {
     let ini::Spanned { inner, span } = value;
     if inner.contains("\n") {
         Ok(inner.trim().split("\n").map(ToString::to_string).collect())
-        // Ok(Box::new(inner.trim().split("\n").map(ToString::to_string)))
     } else if inner.contains(",") {
         Ok(inner.trim().split(",").map(ToString::to_string).collect())
-        // Ok(Box::new(inner.trim().split(",").map(ToString::to_string)))
     } else if allow_single_value {
         Ok(vec![inner])
-        // Ok(Box::new(std::iter::once(inner)))
     } else {
         Err(Error::UnexpectedType {
             message: "expected a list".to_string(),
@@ -161,8 +185,9 @@ pub(crate) fn parse_part_config<'de>(
     })
 }
 
-// pub(crate) fn parse_file_config(mut value: ini::Section) -> Result<FileConfig, Error> {
-pub(crate) fn parse_file_config(mut value: ini::SectionProxyMut<'_>) -> Result<FileConfig, Error> {
+pub(crate) fn parse_global_config(
+    mut value: ini::SectionProxyMut<'_>,
+) -> Result<GlobalConfig, Error> {
     let current_version = value
         .remove_option("current_version")
         .and_then(as_optional)
@@ -231,16 +256,19 @@ pub(crate) fn parse_file_config(mut value: ini::SectionProxyMut<'_>) -> Result<F
     let tag_name = value
         .remove_option("tag_name")
         .and_then(as_optional)
-        .map(ini::Spanned::into_inner);
+        .map(|value| as_format_string(value))
+        .transpose()?;
     let tag_message = value
         .remove_option("tag_message")
         .and_then(as_optional)
-        .map(ini::Spanned::into_inner);
+        .map(|value| as_format_string(value))
+        .transpose()?;
     let commit_message = value
         .remove_option("commit_message")
         .and_then(as_optional)
         .or(value.remove_option("message"))
-        .map(ini::Spanned::into_inner);
+        .map(|value| as_format_string(value))
+        .transpose()?;
     let commit_args = value
         .remove_option("commit_args")
         .and_then(as_optional)
@@ -275,7 +303,7 @@ pub(crate) fn parse_file_config(mut value: ini::SectionProxyMut<'_>) -> Result<F
         .transpose()?
         .map(|values| values.into_iter().map(PathBuf::from).collect());
 
-    Ok(FileConfig {
+    Ok(GlobalConfig {
         allow_dirty,
         current_version,
         parse_version_pattern,
@@ -300,6 +328,149 @@ pub(crate) fn parse_file_config(mut value: ini::SectionProxyMut<'_>) -> Result<F
         post_commit_hooks,
         included_paths,
         excluded_paths,
+    })
+}
+
+pub(crate) fn parse_file_config(mut value: ini::SectionProxyMut<'_>) -> Result<FileConfig, Error> {
+    // let current_version = value
+    //     .remove_option("current_version")
+    //     .and_then(as_optional)
+    //     .map(ini::Spanned::into_inner);
+    //
+    // let allow_dirty = value
+    //     .remove_option("allow_dirty")
+    //     .and_then(as_optional)
+    //     .map(as_bool)
+    //     .transpose()?;
+    let parse_version_pattern = value.remove_option("parse").map(ini::Spanned::into_inner);
+    let serialize_version_patterns = value
+        .remove_option("serialize")
+        .and_then(as_optional)
+        .map(|value| as_string_array(value, true))
+        .transpose()?;
+    let search = value
+        .remove_option("search")
+        .and_then(as_optional)
+        .map(ini::Spanned::into_inner);
+    let replace = value
+        .remove_option("replace")
+        .and_then(as_optional)
+        .map(ini::Spanned::into_inner);
+    let regex = value
+        .remove_option("regex")
+        .and_then(as_optional)
+        .map(as_bool)
+        .transpose()?;
+    // let no_configured_files = value
+    //     .remove_option("no_configured_files")
+    //     .and_then(as_optional)
+    //     .map(as_bool)
+    //     .transpose()?;
+    let ignore_missing_file = value
+        .remove_option("ignore_missing_files")
+        .or(value.remove_option("ignore_missing_file"))
+        .and_then(as_optional)
+        .map(as_bool)
+        .transpose()?;
+    let ignore_missing_version = value
+        .remove_option("ignore_missing_version")
+        .and_then(as_optional)
+        .map(as_bool)
+        .transpose()?;
+    // let dry_run = value
+    //     .remove_option("dry_run")
+    //     .and_then(as_optional)
+    //     .map(as_bool)
+    //     .transpose()?;
+    // let commit = value
+    //     .remove_option("commit")
+    //     .and_then(as_optional)
+    //     .map(as_bool)
+    //     .transpose()?;
+    // let tag = value
+    //     .remove_option("tag")
+    //     .and_then(as_optional)
+    //     .map(as_bool)
+    //     .transpose()?;
+    // let sign_tags = value
+    //     .remove_option("sign_tag")
+    //     .or(value.remove_option("sign_tags"))
+    //     .and_then(as_optional)
+    //     .map(as_bool)
+    //     .transpose()?;
+    // let tag_name = value
+    //     .remove_option("tag_name")
+    //     .and_then(as_optional)
+    //     .map(ini::Spanned::into_inner);
+    // let tag_message = value
+    //     .remove_option("tag_message")
+    //     .and_then(as_optional)
+    //     .map(ini::Spanned::into_inner);
+    // let commit_message = value
+    //     .remove_option("commit_message")
+    //     .and_then(as_optional)
+    //     .or(value.remove_option("message"))
+    //     .map(|value| as_format_string(value))
+    //     .transpose()?;
+    // let commit_args = value
+    //     .remove_option("commit_args")
+    //     .and_then(as_optional)
+    //     .map(ini::Spanned::into_inner);
+    //
+    // // extra stuff
+    // let setup_hooks = value
+    //     .remove_option("setup_hooks")
+    //     .and_then(as_optional)
+    //     .map(|value| as_string_array(value, true))
+    //     .transpose()?;
+    // let pre_commit_hooks = value
+    //     .remove_option("pre_commit_hooks")
+    //     .and_then(as_optional)
+    //     .map(|value| as_string_array(value, true))
+    //     .transpose()?;
+    // let post_commit_hooks = value
+    //     .remove_option("post_commit_hooks")
+    //     .and_then(as_optional)
+    //     .map(|value| as_string_array(value, true))
+    //     .transpose()?;
+    // let included_paths = value
+    //     .remove_option("included_paths")
+    //     .and_then(as_optional)
+    //     .map(|value| as_string_array(value, true))
+    //     .transpose()?
+    //     .map(|values| values.into_iter().map(PathBuf::from).collect());
+    // let excluded_paths = value
+    //     .remove_option("excluded_paths")
+    //     .and_then(as_optional)
+    //     .map(|value| as_string_array(value, true))
+    //     .transpose()?
+    //     .map(|values| values.into_iter().map(PathBuf::from).collect());
+
+    Ok(FileConfig {
+        // allow_dirty,
+        // current_version,
+        parse_version_pattern,
+        serialize_version_patterns,
+        search,
+        replace,
+        regex,
+        // no_configured_files,
+        ignore_missing_file,
+        ignore_missing_version,
+        // dry_run,
+        // commit,
+        // tag,
+        // sign_tags,
+        // tag_name,
+        // tag_message,
+        // commit_message,
+        // commit_args,
+        // // extra stuff
+        // setup_hooks,
+        // pre_commit_hooks,
+        // post_commit_hooks,
+        // included_paths,
+        // excluded_paths,
     })
 }
 
@@ -348,7 +519,7 @@ impl Config {
 
             match section_parts[..] {
                 ["bumpversion"] => {
-                    out.global = parse_file_config(section)?;
+                    out.global = parse_global_config(section)?;
                 }
                 ["bumpversion", prefix, value] => {
                     if prefix.starts_with("file") {
@@ -509,8 +680,9 @@ pub fn replace_version(
 
 #[cfg(test)]
 mod tests {
-    use crate::config::{Config, FileConfig, InputFile, VersionComponentSpec};
+    use crate::config::{Config, FileConfig, GlobalConfig, InputFile, VersionComponentSpec};
     use crate::diagnostics::{BufferedPrinter, ToDiagnostics};
+    use crate::f_string::{OwnedPythonFormatString, OwnedValue};
     use codespan_reporting::diagnostic::Diagnostic;
     use color_eyre::eyre;
     use indexmap::IndexMap;
@@ -564,7 +736,7 @@ mod tests {
         .0?;
 
         let expected = Config {
-            global: FileConfig::empty(),
+            global: GlobalConfig::empty(),
             files: vec![
                 (
                     InputFile::Path("coolapp/__init__.py".into()),
@@ -648,12 +820,14 @@ mod tests {
         .0?;
 
         let expected = Config {
-            global: FileConfig {
+            global: GlobalConfig {
                 current_version: Some("0.1.8".to_string()),
                 commit: Some(true),
                 tag: Some(true),
-                commit_message: Some("DO NOT BUMP VERSIONS WITH THIS FILE".to_string()),
-                ..FileConfig::empty()
+                commit_message: Some(OwnedPythonFormatString(vec![OwnedValue::String(
+                    "DO NOT BUMP VERSIONS WITH THIS FILE".to_string(),
+                )])),
+                ..GlobalConfig::empty()
             },
             files: vec![
                 (InputFile::glob("*.txt"), FileConfig::empty()),
@@ -751,7 +925,7 @@ mod tests {
         )
         .0?;
         let expected = Config {
-            global: FileConfig {
+            global: GlobalConfig {
                 commit: Some(true),
                 tag: Some(true),
                 current_version: Some("1.0.0".to_string()),
@@ -763,7 +937,7 @@ mod tests {
                     r#"{major}.{minor}.{patch}-{release}"#.to_string(),
                     r#"{major}.{minor}.{patch}"#.to_string(),
                 ]),
-                ..FileConfig::empty()
+                ..GlobalConfig::empty()
             },
             files: vec![
                 (InputFile::Path("setup.py".into()), FileConfig::empty()),
@@ -826,9 +1000,9 @@ mod tests {
         )
         .0?;
         let expected = Config {
-            global: FileConfig {
+            global: GlobalConfig {
                 current_version: Some("1.0.0".to_string()),
-                ..FileConfig::empty()
+                ..GlobalConfig::empty()
             },
             files: vec![(
                 InputFile::Path("MULTILINE_SEARCH.md".into()),
@@ -867,9 +1041,9 @@ mod tests {
         )
         .0?;
         let expected = Config {
-            global: FileConfig {
+            global: GlobalConfig {
                 current_version: Some("1.0.0".to_string()),
-                ..FileConfig::empty()
+                ..GlobalConfig::empty()
             },
             files: vec![(
                 InputFile::Path("MULTILINE_SEARCH.md".into()),

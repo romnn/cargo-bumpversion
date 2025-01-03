@@ -1,7 +1,7 @@
 use crate::{
-    config::{self, Config, FileChange, FileConfig, InputFile, VersionComponentSpec},
+    config::{self, Config, FileChange, FileConfig, GlobalConfig, InputFile, VersionComponentSpec},
     diagnostics::{DiagnosticExt, FileId, Span, Spanned},
-    f_string::PythonFormatString,
+    f_string::{OwnedPythonFormatString, PythonFormatString},
 };
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use color_eyre::eyre;
@@ -33,6 +33,13 @@ pub enum Error {
         found: ValueKind,
         span: Span,
     },
+    #[error("{message}")]
+    InvalidFormatString {
+        #[source]
+        source: crate::f_string::Error,
+        message: String,
+        span: Span,
+    },
     // #[error("{source}")]
     // Serde {
     //     #[source]
@@ -53,6 +60,17 @@ mod diagnostics {
     impl ToDiagnostics for super::Error {
         fn to_diagnostics<F: Copy + PartialEq>(&self, file_id: F) -> Vec<Diagnostic<F>> {
             match self {
+                Self::InvalidFormatString {
+                    source,
+                    message,
+                    span,
+                    ..
+                } => vec![Diagnostic::error()
+                    .with_message(format!("invalid format string"))
+                    .with_labels(vec![
+                        Label::primary(file_id, span.clone()).with_message(source.to_string()),
+                        Label::secondary(file_id, span.clone()).with_message(message),
+                    ])],
                 Self::InvalidConfiguration { message, span, .. } => vec![Diagnostic::error()
                     .with_message(format!("invalid configuration"))
                     .with_labels(vec![
@@ -172,6 +190,19 @@ pub fn as_str_array<'de>(value: &'de toml::Value<'de>) -> Result<Vec<&'de str>, 
 }
 
 #[inline]
+pub fn as_format_string<'de>(
+    value: &'de toml::Value<'de>,
+) -> Result<OwnedPythonFormatString, Error> {
+    as_str(value).and_then(|s| {
+        OwnedPythonFormatString::parse(s).map_err(|source| Error::InvalidFormatString {
+            source,
+            message: "invalid format string".to_string(),
+            span: value.span.into(),
+        })
+    })
+}
+
+#[inline]
 pub fn as_string<'de>(value: &'de toml::Value<'de>) -> Result<String, Error> {
     as_str(value).map(ToString::to_string)
 }
@@ -225,7 +256,7 @@ pub(crate) fn parse_file<'de>(
         }),
         (None, None) => Err(Error::MissingOneOf {
             keys: vec!["filename".to_string(), "glob".to_string()],
-            message: "file config must specifiy either `filename` or `glob`".to_string(),
+            message: "file config must specify either `filename` or `glob`".to_string(),
             span: value.span.into(),
         }),
         (Some(file_name), None) => Ok(InputFile::Path(file_name.into())),
@@ -267,9 +298,9 @@ pub(crate) fn parse_part_config<'de>(
     })
 }
 
-pub(crate) fn parse_file_config<'de>(
+pub(crate) fn parse_global_config<'de>(
     table: &'de toml::value::Table<'de>,
-) -> Result<FileConfig, Error> {
+) -> Result<GlobalConfig, Error> {
     let current_version = table.get("current_version").map(as_string).transpose()?;
 
     let allow_dirty = table.get("allow_dirty").map(as_bool).transpose()?;
@@ -292,12 +323,12 @@ pub(crate) fn parse_file_config<'de>(
         .or(table.get("sign_tags"))
         .map(as_bool)
         .transpose()?;
-    let tag_name = table.get("tag_name").map(as_string).transpose()?;
-    let tag_message = table.get("tag_message").map(as_string).transpose()?;
+    let tag_name = table.get("tag_name").map(as_format_string).transpose()?;
+    let tag_message = table.get("tag_message").map(as_format_string).transpose()?;
     let commit_message = table
         .get("commit_message")
         .or(table.get("message"))
-        .map(as_string)
+        .map(as_format_string)
         .transpose()?;
     let commit_args = table.get("commit_args").map(as_string).transpose()?;
 
@@ -322,7 +353,7 @@ pub(crate) fn parse_file_config<'de>(
         .transpose()?
         .map(|values| values.into_iter().map(PathBuf::from).collect());
 
-    Ok(FileConfig {
+    Ok(GlobalConfig {
         allow_dirty,
         current_version,
         parse_version_pattern,
@@ -347,6 +378,93 @@ pub(crate) fn parse_file_config<'de>(
         post_commit_hooks,
         included_paths,
         excluded_paths,
+    })
+}
+
+pub(crate) fn parse_file_config<'de>(
+    table: &'de toml::value::Table<'de>,
+) -> Result<FileConfig, Error> {
+    // let current_version = table.get("current_version").map(as_string).transpose()?;
+
+    // let allow_dirty = table.get("allow_dirty").map(as_bool).transpose()?;
+    let parse_version_pattern = table.get("parse").map(as_string).transpose()?;
+    let serialize_version_patterns = table.get("serialize").map(as_string_array).transpose()?;
+    let search = table.get("search").map(as_string).transpose()?;
+    let replace = table.get("replace").map(as_string).transpose()?;
+    let regex = table.get("regex").map(as_bool).transpose()?;
+    // let no_configured_files = table.get("no_configured_files").map(as_bool).transpose()?;
+    let ignore_missing_file = table
+        .get("ignore_missing_files")
+        .or(table.get("ignore_missing_file"))
+        .map(as_bool)
+        .transpose()?;
+    let ignore_missing_version = table
+        .get("ignore_missing_version")
+        .map(as_bool)
+        .transpose()?;
+    // let dry_run = table.get("dry_run").map(as_bool).transpose()?;
+    // let commit = table.get("commit").map(as_bool).transpose()?;
+    // let tag = table.get("tag").map(as_bool).transpose()?;
+    // let sign_tags = table
+    //     .get("sign_tag")
+    //     .or(table.get("sign_tags"))
+    //     .map(as_bool)
+    //     .transpose()?;
+    // let tag_name = table.get("tag_name").map(as_string).transpose()?;
+    // let tag_message = table.get("tag_message").map(as_string).transpose()?;
+    // let commit_message = table
+    //     .get("commit_message")
+    //     .or(table.get("message"))
+    //     .map(as_format_string)
+    //     .transpose()?;
+    // let commit_args = table.get("commit_args").map(as_string).transpose()?;
+    //
+    // // extra stuff
+    // let setup_hooks = table.get("setup_hooks").map(as_string_array).transpose()?;
+    // let pre_commit_hooks = table
+    //     .get("pre_commit_hooks")
+    //     .map(as_string_array)
+    //     .transpose()?;
+    // let post_commit_hooks = table
+    //     .get("post_commit_hooks")
+    //     .map(as_string_array)
+    //     .transpose()?;
+    // let included_paths = table
+    //     .get("included_paths")
+    //     .map(as_string_array)
+    //     .transpose()?
+    //     .map(|values| values.into_iter().map(PathBuf::from).collect());
+    // let excluded_paths = table
+    //     .get("excluded_paths")
+    //     .map(as_string_array)
+    //     .transpose()?
+    //     .map(|values| values.into_iter().map(PathBuf::from).collect());
+
+    Ok(FileConfig {
+        // allow_dirty,
+        // current_version,
+        parse_version_pattern,
+        serialize_version_patterns,
+        search,
+        replace,
+        regex,
+        // no_configured_files,
+        ignore_missing_file,
+        ignore_missing_version,
+        // dry_run,
+        // commit,
+        // tag,
+        // sign_tags,
+        // tag_name,
+        // tag_message,
+        // commit_message,
+        // commit_args,
+        // // extra stuff
+        // setup_hooks,
+        // pre_commit_hooks,
+        // post_commit_hooks,
+        // included_paths,
+        // excluded_paths,
     })
 }
 
@@ -377,7 +495,7 @@ impl Config {
             return Ok(None);
         }
 
-        let global_file_config = parse_file_config(&table)?;
+        let global_file_config = parse_global_config(&table)?;
 
         let files = match table.get("files") {
             None => vec![],
@@ -770,9 +888,11 @@ pub fn replace_version(
 pub mod tests {
     use crate::{
         config::{
-            self, pyproject_toml, Config, FileChange, FileConfig, InputFile, VersionComponentSpec,
+            self, pyproject_toml, Config, FileChange, FileConfig, GlobalConfig, InputFile,
+            VersionComponentSpec,
         },
         diagnostics::{BufferedPrinter, ToDiagnostics},
+        f_string::{OwnedPythonFormatString, OwnedValue},
         tests::sim_assert_eq_sorted,
     };
     use codespan_reporting::diagnostic::Diagnostic;
@@ -895,9 +1015,9 @@ pub mod tests {
         println!("config: {:#?}", config);
 
         let expected = Config {
-            global: FileConfig {
+            global: GlobalConfig {
                 current_version: Some("1.2.3".to_string()),
-                ..FileConfig::empty()
+                ..GlobalConfig::empty()
             },
             files: [(
                 InputFile::Path("config.ini".into()),
@@ -1244,20 +1364,25 @@ pub mod tests {
         println!("config: {:#?}", config);
 
         let expected = Config {
-            global: FileConfig {
+            global: GlobalConfig {
                 current_version: Some("0.28.1".to_string()),
                 commit: Some(true),
                 commit_args: Some("--no-verify".to_string()),
                 tag: Some(true),
-                tag_name: Some("{new_version}".to_string()),
+                tag_name: Some(OwnedPythonFormatString(vec![OwnedValue::Argument("new_version".to_string())])),
                 allow_dirty: Some(true),
                 parse_version_pattern: Some("(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)(\\.(?P<dev>post)\\d+\\.dev\\d+)?".to_string()),
                 serialize_version_patterns: Some(vec![
                     "{major}.{minor}.{patch}.{dev}{$PR_NUMBER}.dev{distance_to_latest_tag}".to_string(),
                     "{major}.{minor}.{patch}".to_string(),
                 ]),
-                commit_message: Some("Version updated from {current_version} to {new_version}".to_string()),
-                ..FileConfig::empty()
+                commit_message: Some(OwnedPythonFormatString(vec![
+                    OwnedValue::String("Version updated from ".to_string()),
+                    OwnedValue::Argument("current_version".to_string()),
+                    OwnedValue::String(" to ".to_string()),
+                    OwnedValue::Argument("new_version".to_string()),
+                ])),
+                ..GlobalConfig::empty()
             },
             files: [
                 (
@@ -1331,7 +1456,7 @@ pub mod tests {
             ]
         "#};
         let expected = Config {
-            global: FileConfig {
+            global: GlobalConfig {
                 current_version: Some("0.10.5".to_string()),
                 parse_version_pattern: Some(
                     r#"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\-(?P<release>[a-z]+))?"#
@@ -1341,7 +1466,7 @@ pub mod tests {
                     "{major}.{minor}.{patch}-{release}".to_string(),
                     "{major}.{minor}.{patch}".to_string(),
                 ]),
-                ..FileConfig::empty()
+                ..GlobalConfig::empty()
             },
             ..Config::default()
         };
@@ -1403,11 +1528,10 @@ pub mod tests {
         "#};
 
         let expected = Config {
-            global: FileConfig {
+            global: GlobalConfig {
                 current_version: Some("1.0.0".to_string()),
                 commit: Some(true),
                 tag: Some(true),
-                // parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)(\\-(?P<release>[a-z]+))?"
                 parse_version_pattern: Some(
                     r#"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\-(?P<release>[a-z]+))?"#
                         .to_string(),
@@ -1416,7 +1540,7 @@ pub mod tests {
                     "{major}.{minor}.{patch}-{release}".to_string(),
                     "{major}.{minor}.{patch}".to_string(),
                 ]),
-                ..FileConfig::empty()
+                ..GlobalConfig::empty()
             },
             parts: [(
                 "release".to_string(),
@@ -1590,12 +1714,9 @@ pub mod tests {
         dbg!(config);
 
         let expected = Config {
-            global: FileConfig {
+            global: GlobalConfig {
                 current_version: Some("1.0.0".to_string()),
-                // commit: Some(true),
-                // tag: Some(true),
-                // commit_message: Some("DO NOT BUMP VERSIONS WITH THIS FILE".to_string()),
-                ..FileConfig::empty()
+                ..GlobalConfig::empty()
             },
             ..Config::default()
         };
@@ -1638,7 +1759,7 @@ pub mod tests {
         let config = parse_toml(&pyproject_toml, &BufferedPrinter::default()).0?;
 
         let expected = Config {
-            global: FileConfig {
+            global: GlobalConfig {
                 current_version: Some("1.0.0".to_string()),
                 parse_version_pattern: Some(
                     indoc::indoc! {r#"
@@ -1657,7 +1778,7 @@ pub mod tests {
                     "{major}.{minor}.{patch}-{pre_label}-{pre_n}".to_string(),
                     "{major}.{minor}.{patch}".to_string(),
                 ]),
-                ..FileConfig::empty()
+                ..GlobalConfig::empty()
             },
             files: [].into_iter().collect(),
             parts: [(
@@ -1695,23 +1816,28 @@ pub mod tests {
             "{major}.{minor}.{patch}".to_string(),
         ];
         let expected = Config {
-            global: FileConfig {
+            global: GlobalConfig {
                 current_version: Some("0.29.0".to_string()),
                 commit: Some(true),
                 commit_args: Some("--no-verify".to_string()),
                 tag: Some(true),
-                tag_name: Some("{new_version}".to_string()),
+                tag_name: Some(OwnedPythonFormatString(vec![OwnedValue::Argument(
+                    "new_version".to_string(),
+                )])),
                 allow_dirty: Some(true),
                 parse_version_pattern: Some(parse.clone()),
                 serialize_version_patterns: Some(serialize.clone()),
-                commit_message: Some(
-                    "Version updated from {current_version} to {new_version}".to_string(),
-                ),
+                commit_message: Some(OwnedPythonFormatString(vec![
+                    OwnedValue::String("Version updated from ".to_string()),
+                    OwnedValue::Argument("current_version".to_string()),
+                    OwnedValue::String(" to ".to_string()),
+                    OwnedValue::Argument("new_version".to_string()),
+                ])),
                 pre_commit_hooks: Some(vec![
                     "uv sync --upgrade".to_string(),
                     "git add uv.lock".to_string(),
                 ]),
-                ..FileConfig::empty()
+                ..GlobalConfig::empty()
             },
             files: [
                 (
@@ -1771,34 +1897,44 @@ pub mod tests {
 
         // the order is important here
         config.merge_global_config();
-        config.apply_defaults(&FileConfig::default());
+        config.apply_defaults(&GlobalConfig::default());
 
         sim_assert_eq!(
             &config.global,
-            &FileConfig {
+            &GlobalConfig {
                 allow_dirty: Some(true),
                 tag: Some(true),
                 sign_tags: Some(false),
                 regex: Some(false),
                 search: Some("{current_version}".to_string()),
                 replace: Some("{new_version}".to_string()),
-                tag_name: Some("{new_version}".to_string()),
+                tag_name: Some(OwnedPythonFormatString(vec![OwnedValue::Argument(
+                    "new_version".to_string()
+                )])),
                 commit: Some(true),
                 commit_args: Some("--no-verify".to_string()),
                 current_version: Some("0.29.0".to_string()),
                 ignore_missing_files: Some(false),
                 ignore_missing_version: Some(false),
-                commit_message: Some(
-                    "Version updated from {current_version} to {new_version}".to_string()
-                ),
-                tag_message: Some("Bump version: {current_version} → {new_version}".to_string()),
+                commit_message: Some(OwnedPythonFormatString(vec![
+                    OwnedValue::String("Version updated from ".to_string()),
+                    OwnedValue::Argument("current_version".to_string()),
+                    OwnedValue::String(" to ".to_string()),
+                    OwnedValue::Argument("new_version".to_string()),
+                ])),
+                tag_message: Some(OwnedPythonFormatString(vec![
+                    OwnedValue::String("Bump version: ".to_string()),
+                    OwnedValue::Argument("current_version".to_string()),
+                    OwnedValue::String(" → ".to_string()),
+                    OwnedValue::Argument("new_version".to_string()),
+                ])),
                 parse_version_pattern: Some(parse.clone()),
                 serialize_version_patterns: Some(serialize.clone()),
                 pre_commit_hooks: Some(vec![
                     "uv sync --upgrade".to_string(),
                     "git add uv.lock".to_string()
                 ]),
-                ..FileConfig::empty()
+                ..GlobalConfig::empty()
             },
         );
 
@@ -1812,10 +1948,7 @@ pub mod tests {
                         values: vec![],
                         optional_value: None,
                         independent: Some(false),
-                        ..VersionComponentSpec::default() // first_value: None,
-                                                          // always_increment: False,
-                                                          // calver_format: None,
-                                                          // depends_on: None
+                        ..VersionComponentSpec::default()
                     }
                 ),
                 (
@@ -1824,10 +1957,7 @@ pub mod tests {
                         values: vec![],
                         optional_value: None,
                         independent: Some(false),
-                        ..VersionComponentSpec::default() // first_value: None,
-                                                          // always_increment: False,
-                                                          // calver_format: None,
-                                                          // depends_on: None
+                        ..VersionComponentSpec::default()
                     }
                 ),
                 (
@@ -1836,10 +1966,7 @@ pub mod tests {
                         values: vec![],
                         optional_value: None,
                         independent: Some(false),
-                        ..VersionComponentSpec::default() // first_value: None,
-                                                          // always_increment: False,
-                                                          // calver_format: None,
-                                                          // depends_on: None
+                        ..VersionComponentSpec::default()
                     }
                 ),
                 (
@@ -1848,10 +1975,7 @@ pub mod tests {
                         values: vec!["release".to_string(), "post".to_string()],
                         optional_value: None,
                         independent: Some(false),
-                        ..VersionComponentSpec::default() // first_value: None,
-                                                          // always_increment: False,
-                                                          // calver_format: None,
-                                                          // depends_on: None
+                        ..VersionComponentSpec::default()
                     }
                 ),
             ]
@@ -1859,7 +1983,7 @@ pub mod tests {
             .collect::<IndexMap<_, _>>(),
         );
 
-        let files = crate::config::get_all_file_configs(&config, &parts);
+        let file_map = crate::files::resolve_files_from_config(&mut config, &parts, None)?;
         let include_bumps = vec![
             "major".to_string(),
             "minor".to_string(),
@@ -1868,100 +1992,90 @@ pub mod tests {
         ];
 
         sim_assert_eq!(
-            files,
+            file_map.into_iter().collect::<Vec<_>>(),
             vec![
                 (
-                    InputFile::Path("bumpversion/__init__.py".into()),
-                    FileChange {
-                        parse_pattern: Some(parse.clone()),
-                        serialize_patterns: Some(serialize.clone()),
-                        search: Some("{current_version}".to_string()),
-                        replace: Some("{new_version}".to_string()),
-                        regex: Some(false),
-                        ignore_missing_version: Some(false),
-                        ignore_missing_files: Some(false),
-                        // filename: Some(PathBuf::from("bumpversion/__init__.py")),
+                    PathBuf::from("bumpversion/__init__.py"),
+                    vec![FileChange {
+                        parse_version_pattern: parse.clone(),
+                        serialize_version_patterns: serialize.clone(),
+                        search: "{current_version}".to_string(),
+                        replace: "{new_version}".to_string(),
+                        regex: false,
+                        ignore_missing_version: false,
+                        ignore_missing_file: false,
                         include_bumps: Some(include_bumps.clone()),
                         ..FileChange::default()
-                    }
+                    }]
                 ),
                 (
-                    InputFile::Path("CHANGELOG.md".into()),
-                    FileChange {
-                        parse_pattern: Some(parse.clone()),
-                        serialize_patterns: Some(serialize.clone()),
-                        search: Some("Unreleased".to_string()),
-                        replace: Some("{new_version}".to_string()),
-                        regex: Some(false),
-                        ignore_missing_version: Some(false),
-                        ignore_missing_files: Some(false),
-                        // filename: Some(PathBuf::from("CHANGELOG.md")),
-                        include_bumps: Some(include_bumps.clone()),
-                        ..FileChange::default()
-                    },
+                    PathBuf::from("CHANGELOG.md"),
+                    vec![
+                        FileChange {
+                            parse_version_pattern: parse.clone(),
+                            serialize_version_patterns: serialize.clone(),
+                            search: "Unreleased".to_string(),
+                            replace: "{new_version}".to_string(),
+                            regex: false,
+                            ignore_missing_version: false,
+                            ignore_missing_file: false,
+                            include_bumps: Some(include_bumps.clone()),
+                            ..FileChange::default()
+                        },
+                        FileChange {
+                            parse_version_pattern: parse.clone(),
+                            serialize_version_patterns: serialize.clone(),
+                            search: "{current_version}...HEAD".to_string(),
+                            replace: "{current_version}...{new_version}".to_string(),
+                            regex: false,
+                            ignore_missing_version: false,
+                            ignore_missing_file: false,
+                            include_bumps: Some(include_bumps.clone()),
+                            ..FileChange::default()
+                        },
+                    ],
                 ),
                 (
-                    InputFile::Path("CHANGELOG.md".into()),
-                    FileChange {
-                        parse_pattern: Some(parse.clone()),
-                        serialize_patterns: Some(serialize.clone()),
-                        search: Some("{current_version}...HEAD".to_string()),
-                        replace: Some("{current_version}...{new_version}".to_string()),
-                        regex: Some(false),
-                        ignore_missing_version: Some(false),
-                        ignore_missing_files: Some(false),
-                        // filename: Some(PathBuf::from("CHANGELOG.md")),
+                    PathBuf::from("action.yml"),
+                    vec![FileChange {
+                        parse_version_pattern: parse.clone(),
+                        serialize_version_patterns: serialize.clone(),
+                        search: "bump-my-version=={current_version}".to_string(),
+                        replace: "bump-my-version=={new_version}".to_string(),
+                        regex: false,
+                        ignore_missing_version: false,
+                        ignore_missing_file: false,
                         include_bumps: Some(include_bumps.clone()),
                         ..FileChange::default()
-                    },
+                    },],
                 ),
                 (
-                    InputFile::Path("action.yml".into()),
-                    FileChange {
-                        parse_pattern: Some(parse.clone()),
-                        serialize_patterns: Some(serialize.clone()),
-                        search: Some("bump-my-version=={current_version}".to_string()),
-                        replace: Some("bump-my-version=={new_version}".to_string()),
-                        regex: Some(false),
-                        ignore_missing_version: Some(false),
-                        ignore_missing_files: Some(false),
-                        // filename: Some(PathBuf::from("action.yml")),
-                        include_bumps: Some(include_bumps.clone()),
-                        ..FileChange::default()
-                    },
-                ),
-                (
-                    InputFile::Path("Dockerfile".into()),
-                    FileChange {
-                        parse_pattern: Some(parse.clone()),
-                        serialize_patterns: Some(serialize.clone()),
-                        search: Some(
-                            r#"created=\d{{4}}-\d{{2}}-\d{{2}}T\d{{2}}:\d{{2}}:\d{{2}}Z"#
-                                .to_string()
-                        ),
-                        replace: Some(r#"created={utcnow:%Y-%m-%dT%H:%M:%SZ}"#.to_string()),
-                        regex: Some(true),
-                        ignore_missing_version: Some(false),
-                        ignore_missing_files: Some(false),
-                        // filename: Some(PathBuf::from("Dockerfile")),
-                        include_bumps: Some(include_bumps.clone()),
-                        ..FileChange::default()
-                    },
-                ),
-                (
-                    InputFile::Path("Dockerfile".into()),
-                    FileChange {
-                        parse_pattern: Some(parse.clone()),
-                        serialize_patterns: Some(serialize.clone()),
-                        search: Some("{current_version}".to_string()),
-                        replace: Some("{new_version}".to_string()),
-                        regex: Some(false),
-                        ignore_missing_version: Some(false),
-                        ignore_missing_files: Some(false),
-                        // filename: Some(PathBuf::from("Dockerfile")),
-                        include_bumps: Some(include_bumps.clone()),
-                        ..FileChange::default()
-                    },
+                    PathBuf::from("Dockerfile"),
+                    vec![
+                        FileChange {
+                            parse_version_pattern: parse.clone(),
+                            serialize_version_patterns: serialize.clone(),
+                            search: r#"created=\d{{4}}-\d{{2}}-\d{{2}}T\d{{2}}:\d{{2}}:\d{{2}}Z"#
+                                .to_string(),
+                            replace: r#"created={utcnow:%Y-%m-%dT%H:%M:%SZ}"#.to_string(),
+                            regex: true,
+                            ignore_missing_version: false,
+                            ignore_missing_file: false,
+                            include_bumps: Some(include_bumps.clone()),
+                            ..FileChange::default()
+                        },
+                        FileChange {
+                            parse_version_pattern: parse.clone(),
+                            serialize_version_patterns: serialize.clone(),
+                            search: "{current_version}".to_string(),
+                            replace: "{new_version}".to_string(),
+                            regex: false,
+                            ignore_missing_version: false,
+                            ignore_missing_file: false,
+                            include_bumps: Some(include_bumps.clone()),
+                            ..FileChange::default()
+                        },
+                    ]
                 ),
             ]
         );

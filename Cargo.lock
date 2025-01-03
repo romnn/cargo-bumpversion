@@ -160,7 +160,6 @@ dependencies = [
  "indexmap",
  "indoc",
  "once_cell",
- "python-fstring",
  "rand 0.8.5",
  "regex",
  "serde",
@@ -173,6 +172,7 @@ dependencies = [
  "toml_edit",
  "tracing",
  "unindent",
+ "winnow",
 ]
 
 [[package]]
@@ -185,7 +185,7 @@ dependencies = [
  "clap-verbosity-flag",
  "codespan-reporting",
  "color-eyre",
- "indexmap",
+ "shlex",
  "termcolor",
  "tracing",
  "tracing-subscriber",
@@ -748,23 +748,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37d3544b3f2748c54e147655edb5025752e2303145b5aefb3c3ea2c78b973bb0"
 dependencies = [
  "unicode-ident",
-]
-
-[[package]]
-name = "python-fstring"
-version = "0.1.0"
-dependencies = [
- "color-eyre",
- "indoc",
- "nom",
- "pest",
- "pest-test",
- "pest-test-gen",
- "pest_derive",
- "rand 0.8.5",
- "similar-asserts",
- "thiserror 2.0.9",
- "winnow",
 ]
 
 [[package]]

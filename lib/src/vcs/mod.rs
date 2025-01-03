@@ -1,11 +1,12 @@
-pub mod native;
-
-use std::borrow::Cow;
-use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Output, Stdio};
+pub mod git;
 
 #[cfg(test)]
 pub mod temp;
+
+use crate::f_string::OwnedPythonFormatString;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::process::{Command, ExitStatus, Output, Stdio};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TagInfo {
@@ -43,16 +44,32 @@ pub trait VersionControlSystem {
         Self: Sized;
 
     /// Get the path to the VCS directory.
-    fn repo_dir(&self) -> &Path;
+    fn path(&self) -> &Path;
 
     /// Add files to the staging area of the VCS.
     fn add(&self, files: &[impl AsRef<Path>]) -> Result<(), Self::Error>;
 
     /// Commit current changes to the VCS.
-    fn commit(&self, message: &str) -> Result<(), Self::Error>;
+    fn commit<A, E, AS, EK, EV>(
+        &self,
+        message: &str,
+        // extra_args: Option<impl IntoIterator<Item = S>>,
+        extra_args: A,
+        // env: &HashMap<&str, &str>,
+        env: E,
+    ) -> Result<(), Self::Error>
+    where
+        A: IntoIterator<Item = AS>,
+        E: IntoIterator<Item = (EK, EV)>,
+        AS: AsRef<std::ffi::OsStr>,
+        EK: AsRef<std::ffi::OsStr>,
+        EV: AsRef<std::ffi::OsStr>;
 
     /// Create a new tag for the VCS.
     fn tag(&self, name: &str, message: Option<&str>, sign: bool) -> Result<(), Self::Error>;
+
+    /// Get all tags for the VCS
+    fn tags(&self) -> Result<Vec<String>, Self::Error>;
 
     /// Get the list of dirty files in the VCS.
     fn dirty_files(&self) -> Result<Vec<PathBuf>, Self::Error>;
@@ -60,7 +77,7 @@ pub trait VersionControlSystem {
     /// Get the information on the latest tag and revision for the VCS.
     fn latest_tag_and_revision(
         &self,
-        tag_name: &str,
+        tag_name: &OwnedPythonFormatString,
         parse_pattern: &str,
     ) -> Result<TagAndRevision, Self::Error>;
 }

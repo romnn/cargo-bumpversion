@@ -5,15 +5,18 @@ mod logging;
 mod options;
 
 use bumpversion::{
-    backend::{native, TagAndRevision, VersionControlSystem},
-    config, context,
+    config::{self, DEFAULT_COMMIT_MESSAGE},
+    context,
     diagnostics::{Printer, ToDiagnostics},
     files::FileMap,
-    hooks, Bump,
+    hooks,
+    vcs::{git::GitRepository, TagAndRevision, VersionControlSystem},
+    Bump,
 };
 use clap::Parser;
 use color_eyre::eyre::{self, WrapErr};
 use options::Invert;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 fn fix_options(options: &mut options::Options) {
@@ -54,7 +57,7 @@ fn main() -> eyre::Result<()> {
 
     let cwd = std::env::current_dir().wrap_err("could not determine current working dir")?;
     let dir = options.dir.unwrap_or(cwd).canonicalize()?;
-    let repo = native::GitRepository::open(&dir)?;
+    let repo = GitRepository::open(&dir)?;
 
     // find config file
     let config_files = config::config_file_locations(&dir);
@@ -144,7 +147,7 @@ fn main() -> eyre::Result<()> {
     // the order is important here
     config.merge_global_config();
 
-    let defaults = config::FileConfig::default();
+    let defaults = config::GlobalConfig::default();
     config.apply_defaults(&defaults);
 
     // build list of parts
@@ -178,18 +181,20 @@ fn main() -> eyre::Result<()> {
     dbg!(&bump);
     dbg!(&cli_files);
 
-    let TagAndRevision { tag, revision } = repo.latest_tag_and_revision(
-        config
-            .global
-            .tag_name
-            .as_deref()
-            .unwrap_or(config::DEFAULT_TAG_NAME),
-        config
-            .global
-            .parse_version_pattern
-            .as_deref()
-            .unwrap_or(config::DEFAULT_PARSE_VERSION_PATTERN),
-    )?;
+    let tag_name = config
+        .global
+        .tag_name
+        .as_ref()
+        .unwrap_or(&config::DEFAULT_TAG_NAME);
+
+    let parse_version_pattern = config
+        .global
+        .parse_version_pattern
+        .as_deref()
+        .unwrap_or(config::DEFAULT_PARSE_VERSION_PATTERN);
+
+    let TagAndRevision { tag, revision } =
+        repo.latest_tag_and_revision(tag_name, parse_version_pattern)?;
     tracing::debug!(?tag, "current");
     tracing::debug!(?revision, "current");
 
@@ -248,7 +253,8 @@ fn main() -> eyre::Result<()> {
     // dbg!(&files);
 
     // build resolved file map
-    let file_map = bumpversion::files::resolve_files_from_config(&mut config, &parts)?;
+    let file_map =
+        bumpversion::files::resolve_files_from_config(&mut config, &parts, Some(repo.path()))?;
     dbg!(&file_map);
 
     if options.no_configured_files == Some(true) {
@@ -263,7 +269,8 @@ fn main() -> eyre::Result<()> {
 
     do_bump(
         &bump,
-        &dir,
+        &repo,
+        // &dir,
         options.new_version.as_deref(),
         &config,
         &TagAndRevision { tag, revision },
@@ -281,7 +288,8 @@ fn main() -> eyre::Result<()> {
 /// Bump the version_part to the next value or set the version to new_version.
 fn do_bump(
     version_component_to_bump: &Bump,
-    working_dir: &Path,
+    repo: &GitRepository,
+    // working_dir: &Path,
     new_version: Option<&str>,
     config: &config::Config,
     tag_and_revision: &TagAndRevision,
@@ -295,33 +303,44 @@ fn do_bump(
     config_file: Option<&Path>,
     dry_run: bool,
 ) -> eyre::Result<()> {
-    let current_version = config
+    let current_version_serialized = config
         .global
         .current_version
         .as_ref()
         .ok_or_else(|| eyre::eyre!("missing current version"))?;
 
-    tracing::debug!(version = current_version, "parsing current version");
+    tracing::debug!(
+        version = current_version_serialized,
+        "parsing current version"
+    );
 
     let version_config =
         bumpversion::version::compat::VersionConfig::from_config(&config.global, &parts.clone())?;
 
-    let version = version_config.parse(&*current_version)?;
-    let version = version.ok_or_else(|| eyre::eyre!("empty version"))?;
-    dbg!(&version);
+    let current_version = version_config.parse(&*current_version_serialized)?;
+    let current_version = current_version.ok_or_else(|| eyre::eyre!("empty version"))?;
+    dbg!(&current_version);
+
+    let working_dir = repo.path();
     hooks::run_setup_hooks(
         config,
         working_dir,
         tag_and_revision,
-        Some(&version),
+        Some(&current_version),
         dry_run,
     )?;
 
-    use std::collections::HashMap;
-    let ctx: HashMap<String, String> = context::get_context(config, None, None, None).collect();
+    let ctx_without_new_version: HashMap<String, String> = context::get_context(
+        Some(tag_and_revision),
+        Some(&current_version),
+        None,
+        Some(current_version_serialized),
+        None,
+    )
+    .collect();
 
     let next_version = bumpversion::version::get_next_version(
-        &version,
+        &current_version,
         &version_config,
         // config,
         version_component_to_bump,
@@ -333,11 +352,13 @@ fn do_bump(
     let next_version_serialized = version_config.serialize(
         &next_version,
         // ctx.iter().map()move |(k, v)| (k.as_str(), v.as_str())),
-        ctx.iter().map(|(k, v)| (k.as_str(), v.as_str())),
+        ctx_without_new_version
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str())),
     )?;
     tracing::info!(version = next_version_serialized, "next version");
 
-    if current_version == &next_version_serialized {
+    if current_version_serialized == &next_version_serialized {
         tracing::info!(
             version = next_version_serialized,
             "next version matches current version"
@@ -376,21 +397,44 @@ fn do_bump(
     });
     dbg!(&configured_files);
 
-    // let ctx: bumpversion::context::Env = bumpversion::context::get_context(
-    let ctx = context::get_context(
-        config,
-        Some(tag_and_revision),
-        Some(&version),
-        Some(&next_version),
-    );
+    // let ctx = context::get_context(
+    //     Some(tag_and_revision),
+    //     Some(&current_version),
+    //     Some(&next_version),
+    //     Some(&current_version_serialized),
+    //     Some(&next_version_serialized),
+    // );
     // .collect();
     // dbg!(ctx);
 
-    // modify_files(configured_files, version, next_version, ctx, dry_run)
+    let ctx_with_new_version: HashMap<String, String> = context::get_context(
+        Some(tag_and_revision),
+        Some(&current_version),
+        Some(&next_version),
+        Some(current_version_serialized),
+        Some(&next_version_serialized),
+    )
+    .collect();
+
+    for file in configured_files.iter() {
+        assert!(file.path.is_absolute());
+        bumpversion::files::replace_version(
+            &file.path,
+            &file.file_change,
+            &current_version,
+            &next_version,
+            &current_version_serialized,
+            &next_version_serialized,
+            &ctx_with_new_version,
+            dry_run,
+        )?;
+    }
+
     if let Some(config_file) = config_file {
         // check if config file is inside repo
         assert!(working_dir.is_absolute());
         assert!(config_file.is_absolute());
+
         if config_file.starts_with(working_dir) {
             match config_file
                 .extension()
@@ -401,21 +445,15 @@ fn do_bump(
                 Some("cfg" | "ini") => bumpversion::config::ini::replace_version(
                     config_file,
                     config,
-                    // config.current_version,
-                    // next_version_str,
-                    current_version,
+                    current_version_serialized,
                     &next_version_serialized,
                     dry_run,
                 ),
                 Some("toml") => bumpversion::config::pyproject_toml::replace_version(
                     config_file,
                     config,
-                    current_version,
+                    current_version_serialized,
                     &next_version_serialized,
-                    // config,
-                    // version,
-                    // next_version,
-                    // ctx,
                     dry_run,
                 ),
                 other => Err(eyre::eyre!("unknown config file format {other:?}")),
@@ -425,15 +463,6 @@ fn do_bump(
         }
     }
 
-    let ctx = context::get_context(
-        config,
-        Some(tag_and_revision),
-        Some(&version),
-        Some(&next_version),
-    );
-    // ctx["new_version"] = next_version_str
-    //
-
     let new_version_serialized = bumpversion::version::compat::SerializedVersion {
         version: next_version_serialized.clone(),
         tag: tag_and_revision
@@ -441,53 +470,119 @@ fn do_bump(
             .as_ref()
             .map(|tag| tag.current_tag.clone()),
     };
+
     hooks::run_pre_commit_hooks(
         config,
         working_dir,
         tag_and_revision,
-        Some(&version),
+        Some(&current_version),
         Some(&next_version),
         &new_version_serialized,
         dry_run,
     )?;
-    //
-    // commit_and_tag(config, config_file, configured_files, ctx, dry_run)
-    //
+
+    let extra_args = config
+        .global
+        .commit_args
+        .as_deref()
+        .and_then(shlex::split)
+        .unwrap_or_default();
+
+    let mut files_to_commit: HashSet<&Path> = configured_files
+        .iter()
+        .map(|file| file.path.as_path())
+        .collect();
+    if let Some(config_file) = config_file {
+        files_to_commit.insert(config_file);
+    }
+
+    let commit = config.global.commit.unwrap_or(true);
+    if commit {
+        if dry_run {
+            tracing::info!("would prepare commit")
+        } else {
+            tracing::info!("prepare commit")
+        }
+
+        for path in files_to_commit {
+            if dry_run {
+                tracing::info!(?path, "would add changes");
+            } else {
+                tracing::info!(?path, "adding changes");
+                repo.add(&[path]);
+            }
+        }
+
+        let commit_message = config
+            .global
+            .commit_message
+            .as_ref()
+            .unwrap_or(&config::DEFAULT_COMMIT_MESSAGE);
+
+        let commit_message = commit_message.format(&ctx_with_new_version, true)?;
+        tracing::info!(msg = commit_message, "commit");
+
+        if !dry_run {
+            let env = std::env::vars().into_iter().chain(
+                [
+                    ("HGENCODING".to_string(), "utf-8".to_string()),
+                    (
+                        "BUMPVERSION_CURRENT_VERSION".to_string(),
+                        current_version_serialized.clone(),
+                    ),
+                    (
+                        "BUMPVERSION_NEW_VERSION".to_string(),
+                        next_version_serialized.clone(),
+                    ),
+                ]
+                .into_iter(),
+            );
+            repo.commit(commit_message.as_str(), extra_args.as_slice(), env)?;
+        }
+    }
+
+    let tag = config.global.tag.unwrap_or(config::DEFAULT_CREATE_TAG);
+    if tag {
+        let sign_tag = config.global.sign_tags.unwrap_or(config::DEFAULT_SIGN_TAGS);
+
+        let tag_name = config
+            .global
+            .tag_name
+            .as_ref()
+            .unwrap_or(&config::DEFAULT_TAG_NAME)
+            .format(&ctx_with_new_version, true)?;
+
+        let tag_message = config
+            .global
+            .tag_message
+            .as_ref()
+            .unwrap_or(&config::DEFAULT_TAG_MESSAGE)
+            .format(&ctx_with_new_version, true)?;
+
+        tracing::info!(msg = tag_message, name = tag_name, "tag");
+
+        let existing_tags = repo.tags()?;
+
+        if existing_tags.contains(&tag_name) {
+            tracing::warn!("tag {tag_name:?} already exists and will not be created");
+        } else {
+            if dry_run {
+                tracing::info!(msg = tag_message, sign = sign_tag, "would tag {tag_name:?}",);
+            } else {
+                repo.tag(tag_name.as_str(), Some(&tag_message), sign_tag)?;
+            }
+        }
+    }
+
     hooks::run_post_commit_hooks(
         config,
         working_dir,
         tag_and_revision,
-        Some(&version),
+        Some(&current_version),
         Some(&next_version),
         &new_version_serialized,
         dry_run,
     )?;
-    //
+
     Ok(())
 }
-
-// let config = Config::open(opts.config_file);
-// config_file = _determine_config_file(explicit_config)
-// config, config_file_exists, config_newlines, part_configs, files = _load_configuration(
-//     config_file, explicit_config, defaults,
-// )
-//
-// version_config = _setup_versionconfig(known_args, part_configs)
-// current_version = version_config.parse(known_args.current_version)
-
-// # calculate the desired new version
-// new_version = _assemble_new_version(
-//     context, current_version, defaults, known_args.current_version, positionals, version_config
-// )
-
-// if not os.path.exists(".bumpversion.cfg") and os.path.exists("setup.cfg"):
-//     return "setup.cfg"
-// return ".bumpversion.cfg"
-
-// if let Some(subcommand) = opts.commands {
-// match subcommand.bump {
-//     Bump::Major => {}
-//     Bump::Major => {}
-//     Bump::Major => {}
-// }
-// }

@@ -66,6 +66,11 @@ tasks:
     cmds:
       - cargo test --workspace --all-targets {{.CLI_ARGS}}
 
+  test:fc:
+    desc: "test cargo workspace for all combinations of features"
+    cmds:
+      - cargo fc test --workspace --all-targets {{.CLI_ARGS}}
+
   lint:
     desc: "lint cargo workspace"
     cmds:

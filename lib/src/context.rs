@@ -1,4 +1,4 @@
-use crate::{backend::TagAndRevision, config, version::compat::Version};
+use crate::{config, vcs::TagAndRevision, version::compat::Version};
 use std::collections::HashMap;
 
 pub type Env = HashMap<String, String>;
@@ -58,17 +58,25 @@ fn base_context(
 
 /// Return the context for rendering messages and tags
 pub fn get_context(
-    config: &config::Config,
     tag_and_revision: Option<&TagAndRevision>,
     current_version: Option<&Version>,
     new_version: Option<&Version>,
+    current_version_serialized: Option<&str>,
+    new_version_serialized: Option<&str>,
 ) -> impl Iterator<Item = (String, String)> {
     base_context(tag_and_revision)
         .chain(
-            [(
-                "current_version".to_string(),
-                config.global.current_version.clone().unwrap_or_default(),
-            )]
+            [
+                (
+                    "current_version".to_string(),
+                    // config.global.current_version.clone().unwrap_or_default(),
+                    current_version_serialized.unwrap_or_default().to_string(),
+                ),
+                (
+                    "new_version".to_string(),
+                    new_version_serialized.unwrap_or_default().to_string(),
+                ),
+            ]
             .into_iter(),
         )
         .chain(

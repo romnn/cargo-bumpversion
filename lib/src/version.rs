@@ -708,7 +708,7 @@ pub mod compat {
         let serialized = chosen_pattern.format(&ctx, true)?;
         tracing::debug!(serialized, "serialized");
 
-        Ok("todo".to_string())
+        Ok(serialized)
     }
 
     /// Parse a version string into a dictionary of the parts and values using a regular expression.
@@ -759,7 +759,7 @@ pub mod compat {
 
     impl VersionConfig {
         pub fn from_config(
-            config: &config::FileConfig,
+            config: &config::GlobalConfig,
             parts: &config::Parts,
             // ) -> Result<Self, regex::Error> {
         ) -> eyre::Result<Self> {

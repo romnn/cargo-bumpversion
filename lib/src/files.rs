@@ -1,7 +1,10 @@
 use crate::{
     config::{Config, FileChange, FileConfig, InputFile, Parts},
-    version::compat::VersionConfig,
+    f_string::OwnedPythonFormatString,
+    version::compat::{Version, VersionConfig},
 };
+use color_eyre::eyre;
+use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -30,21 +33,24 @@ impl ConfiguredFile {
         // .filter_map(|v| v)
         // .next();
 
-        let mut merged_file_change = FileChange {
-            search: search.map(ToString::to_string),
-            replace: replace.map(ToString::to_string),
-            ..FileChange::default()
-        };
-        merged_file_change.merge_with(&file_change);
-        merged_file_change.merge_with(&FileChange {
-            // TODO: should file change also store a regex?
-            parse_pattern: Some(version_config.parse_version_regex.as_str().to_string()),
-            serialize_patterns: version_config.serialize_version_patterns.clone(),
-            search: version_config.search.clone(),
-            replace: version_config.replace.clone(),
-            ..FileChange::default() // TODO: empty?
-        });
-        merged_file_change.merge_with(&FileChange::defaults());
+        // let mut merged_file_change = FileChange {
+        //     search: search.map(ToString::to_string),
+        //     replace: replace.map(ToString::to_string),
+        //     ..FileChange::default()
+        // };
+        // merged_file_change.merge_with(&file_change);
+        // merged_file_change.merge_with(&FileChange {
+        //     // TODO: should file change also store a regex?
+        //     parse_pattern: Some(version_config.parse_version_regex.as_str().to_string()),
+        //     serialize_patterns: version_config.serialize_version_patterns.clone(),
+        //     search: version_config.search.clone(),
+        //     replace: version_config.replace.clone(),
+        //     ..FileChange::default() // TODO: empty?
+        // });
+        // merged_file_change.merge_with(&FileChange::defaults());
+
+        let search = search.unwrap_or(file_change.search.as_str());
+        let replace = replace.unwrap_or(file_change.replace.as_str());
 
         // let file_change = FileChange{
         //     parse_pattern: file_change.parse_pattern.or(version_config.parse_regex),
@@ -99,10 +105,76 @@ impl ConfiguredFile {
     //     self._newlines: Optional[str] = None
 }
 
+/// Make the change to the file
+pub fn replace_version<K, V>(
+    path: &Path,
+    file_change: &FileChange,
+    current_version: &Version,
+    new_version: &Version,
+    current_version_serialized: &str,
+    new_version_serialized: &str,
+    // ctx: &HashMap<&str, &str>,
+    ctx: &HashMap<K, V>,
+    dry_run: bool,
+) -> eyre::Result<()>
+where
+    K: std::borrow::Borrow<str>,
+    K: std::hash::Hash + Eq,
+    V: AsRef<str>,
+{
+    tracing::info!(
+        file = ?path,
+        search = ?file_change.search,
+        replace = ?file_change.replace,
+        "update file",
+    );
+
+    if !path.is_file() {
+        if file_change.ignore_missing_file {
+            tracing::info!(?path, "file not found");
+            return Ok(());
+        }
+        eyre::bail!("file not found {:?}", path);
+    }
+
+    // context["current_version"] = self._get_serialized_version("current_version", current_version, context)
+    // if new_version:
+    //     context["new_version"] = self._get_serialized_version("new_version", new_version, context)
+    // else:
+    //     logger.debug("No new version, using current version as new version")
+    //     context["new_version"] = context["current_version"]
+    //
+    let search_regex = file_change.search_pattern(ctx);
+    let replace = OwnedPythonFormatString::parse(&file_change.replace)?;
+    let replace_with = replace.format(ctx, true)?;
+
+    dbg!(search_regex);
+    dbg!(replace);
+    dbg!(replace_with);
+    //
+    // if not self._contains_change_pattern(search_for, raw_search_pattern, current_version, context):
+    //     logger.dedent()
+    //     return
+    //
+    // file_content_before = self.get_file_contents()
+    //
+    // file_content_after = search_for.sub(replace_with, file_content_before)
+    //
+    // if file_content_before == file_content_after and current_version.original:
+    //     og_context = deepcopy(context)
+    //     og_context["current_version"] = current_version.original
+    //     search_for_og, _ = self.file_change.get_search_pattern(og_context)
+    //     file_content_after = search_for_og.sub(replace_with, file_content_before)
+    //
+    // log_changes(self.file_change.filename, file_content_before, file_content_after, dry_run)
+    // logger.dedent()
+    // if not dry_run:  # pragma: no-coverage
+    //     self.write_file_contents(file_content_after)
+    Ok(())
+}
+
 /// Resolve the files, searching and replacing values according to the FileConfig
 pub fn resolve<'a>(
-    // files: Vec<FileChange>,
-    // files: impl IntoIterator<Item = &'a (&'a PathBuf, &'a Vec<&'a FileChange>)>,
     files: &'a [(PathBuf, &'a FileChange)],
     version_config: &VersionConfig,
     search: Option<&str>,
@@ -135,6 +207,22 @@ pub enum GlobError {
     Glob(#[from] glob::GlobError),
 }
 
+#[derive(thiserror::Error, Debug)]
+#[error("io error for {path:?}")]
+pub struct IoError {
+    #[source]
+    source: std::io::Error,
+    path: PathBuf,
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error(transparent)]
+    Glob(#[from] GlobError),
+    #[error(transparent)]
+    Io(#[from] IoError),
+}
+
 /// Return a list of file configurations that match the glob pattern
 fn resolve_glob_files(
     pattern: &str,
@@ -161,26 +249,16 @@ fn resolve_glob_files(
     Ok(included.difference(&excluded).cloned().collect())
 }
 
-// pub type FileMap<'a> = HashMap<PathBuf, Vec<&'a FileChange>>;
-pub type FileMap = HashMap<PathBuf, Vec<FileChange>>;
+pub type FileMap = IndexMap<PathBuf, Vec<FileChange>>;
 
 /// Return a map of filenames to file configs, expanding any globs
 pub fn resolve_files_from_config<'a>(
     config: &mut Config,
     parts: &Parts,
-    // files: impl IntoIterator<Item = &'a (InputFile, FileChange)>,
-    // ) -> Result<FileMap<'a>, GlobError> {
-) -> Result<FileMap, GlobError> {
+    base_dir: Option<&Path>,
+) -> Result<FileMap, Error> {
     let files = config.files.drain(..);
-    // .cloned()
-    // .map(|(input_file, file_config)| {
-    //     let global = config.global.clone();
-    //     let file_change = ;
-    //     (input_file, file_change)
-    // })
-    // .collect();
-
-    let new_files = files
+    let new_files: Vec<_> = files
         .into_iter()
         .map(|(file, file_config)| {
             let new_files = match file {
@@ -193,20 +271,34 @@ pub fn resolve_files_from_config<'a>(
 
             let global = config.global.clone();
             let file_change = FileChange::new(file_config, parts);
-            // (input_file, file_change)
             Ok(new_files
                 .into_iter()
-                .map(move |file| (file, file_change.clone())))
+                .map(|file| {
+                    if file.is_absolute() {
+                        Ok(file)
+                    } else if let Some(base_dir) = base_dir {
+                        let file = base_dir.join(&file);
+                        file.canonicalize()
+                            .map_err(|source| IoError { source, path: file })
+                    } else {
+                        Ok(file)
+                    }
+                })
+                .map(move |file| file.map(|file| (file, file_change.clone()))))
         })
-        .collect::<Result<Vec<_>, GlobError>>()?;
+        .collect::<Result<_, Error>>()?;
 
-    let new_files = new_files.into_iter().flat_map(|new_files| new_files).fold(
-        HashMap::<PathBuf, Vec<FileChange>>::new(),
-        |mut acc, (file, config)| {
-            acc.entry(file).or_default().push(config);
-            acc
-        },
-    );
+    let new_files = new_files
+        .into_iter()
+        .flat_map(|new_files| new_files)
+        .try_fold(
+            IndexMap::<PathBuf, Vec<FileChange>>::new(),
+            |mut acc, res| {
+                let (file, config) = res?;
+                acc.entry(file).or_default().push(config);
+                Ok::<_, Error>(acc)
+            },
+        )?;
     Ok(new_files)
 }
 
