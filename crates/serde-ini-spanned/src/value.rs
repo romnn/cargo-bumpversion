@@ -15,7 +15,7 @@ pub struct InvalidBooleanError(pub String);
 
 /// Return a boolean value translating from other types if necessary
 ///
-/// adopted from https://github.com/python/cpython/blob/main/Lib/configparser.py#L634
+/// adopted from <https://github.com/python/cpython/blob/main/Lib/configparser.py#L634>
 pub fn convert_to_boolean(value: &str) -> Result<bool, InvalidBooleanError> {
     let value = value.to_ascii_lowercase();
     match value.as_str() {
@@ -49,7 +49,7 @@ impl Default for Section {
     fn default() -> Self {
         Self {
             inner: IndexMap::default(),
-            name: Spanned::dummy("".to_string()),
+            name: Spanned::dummy(String::new()),
         }
     }
 }
@@ -105,11 +105,11 @@ impl Section {
         self
     }
 
-    pub fn is_empty(&self) -> bool {
+    #[must_use] pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
 
-    pub fn lowercase_keys(self) -> Self {
+    #[must_use] pub fn lowercase_keys(self) -> Self {
         self.into_iter()
             .map(|(mut k, v)| {
                 k.inner = k.inner.to_lowercase();
@@ -118,7 +118,7 @@ impl Section {
             .collect()
     }
 
-    pub fn span(&self) -> &Span {
+    #[must_use] pub fn span(&self) -> &Span {
         &self.name.span
     }
 
@@ -132,17 +132,17 @@ impl Section {
         self.inner.drain(range)
     }
 
-    pub fn iter(
+    #[must_use] pub fn iter(
         &self,
     ) -> indexmap::map::Iter<'_, Spanned<std::string::String>, Spanned<std::string::String>> {
         self.inner.iter()
     }
 
-    pub fn options(&self) -> indexmap::map::Keys<'_, Spanned<String>, Spanned<String>> {
+    #[must_use] pub fn options(&self) -> indexmap::map::Keys<'_, Spanned<String>, Spanned<String>> {
         self.keys()
     }
 
-    pub fn keys(&self) -> indexmap::map::Keys<'_, Spanned<String>, Spanned<String>> {
+    #[must_use] pub fn keys(&self) -> indexmap::map::Keys<'_, Spanned<String>, Spanned<String>> {
         self.inner.keys()
     }
 
@@ -322,19 +322,19 @@ pub struct SectionProxy<'a> {
     defaults: Option<&'a Section>,
 }
 
-impl<'a> AsRef<Section> for SectionProxy<'a> {
+impl AsRef<Section> for SectionProxy<'_> {
     fn as_ref(&self) -> &Section {
-        &self.section
+        self.section
     }
 }
 
-impl<'a> std::fmt::Debug for SectionProxy<'a> {
+impl std::fmt::Debug for SectionProxy<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Debug::fmt(&self.section, f)
     }
 }
 
-impl<'a> PartialEq<RawSection> for SectionProxy<'a> {
+impl PartialEq<RawSection> for SectionProxy<'_> {
     fn eq(&self, other: &RawSection) -> bool {
         std::cmp::PartialEq::eq(&self.section.inner, other)
     }
@@ -346,7 +346,7 @@ impl<'a> PartialEq<RawSection> for &'a SectionProxy<'a> {
     }
 }
 
-impl<'a> std::ops::Index<&str> for SectionProxy<'a> {
+impl std::ops::Index<&str> for SectionProxy<'_> {
     type Output = Spanned<String>;
 
     fn index(&self, index: &str) -> &Self::Output {
@@ -359,13 +359,13 @@ pub struct SectionProxyMut<'a> {
     defaults: Option<&'a Section>,
 }
 
-impl<'a> std::fmt::Debug for SectionProxyMut<'a> {
+impl std::fmt::Debug for SectionProxyMut<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Debug::fmt(&self.section, f)
     }
 }
 
-impl<'a> PartialEq<RawSection> for SectionProxyMut<'a> {
+impl PartialEq<RawSection> for SectionProxyMut<'_> {
     fn eq(&self, other: &RawSection) -> bool {
         std::cmp::PartialEq::eq(&self.section.inner, other)
     }
@@ -377,7 +377,7 @@ impl<'a> PartialEq<RawSection> for &'a SectionProxyMut<'a> {
     }
 }
 
-impl<'a> std::ops::Index<&str> for SectionProxyMut<'a> {
+impl std::ops::Index<&str> for SectionProxyMut<'_> {
     type Output = Spanned<String>;
 
     fn index(&self, index: &str) -> &Self::Output {
@@ -385,7 +385,7 @@ impl<'a> std::ops::Index<&str> for SectionProxyMut<'a> {
     }
 }
 
-impl<'a> std::ops::IndexMut<&str> for SectionProxyMut<'a> {
+impl std::ops::IndexMut<&str> for SectionProxyMut<'_> {
     fn index_mut(&mut self, index: &str) -> &mut Self::Output {
         self.get_mut(index).unwrap()
     }
@@ -448,7 +448,7 @@ pub trait Lowercase {
     fn lowercase(&self) -> String;
 }
 
-impl<'a> Lowercase for &'a str {
+impl Lowercase for &str {
     fn lowercase(&self) -> String {
         self.to_lowercase()
     }
@@ -472,14 +472,14 @@ impl Lowercase for Spanned<String> {
     }
 }
 
-impl<'a> Lowercase for &'a Spanned<String> {
+impl Lowercase for &Spanned<String> {
     fn lowercase(&self) -> String {
         self.as_ref().to_lowercase()
     }
 }
 
 pub static EMPTY_SECTION: once_cell::sync::Lazy<Section> =
-    once_cell::sync::Lazy::new(|| Section::default());
+    once_cell::sync::Lazy::new(Section::default);
 
 pub type Keys<'a> = std::iter::Chain<
     indexmap::map::Keys<'a, Spanned<String>, Spanned<String>>,
@@ -494,11 +494,11 @@ pub type OwnedKeys<'a> = std::iter::Chain<
 macro_rules! impl_section_proxy {
     ($name:ident) => {
         impl<'a> $name<'a> {
-            pub fn span(&self) -> &Span {
+            #[must_use] pub fn span(&self) -> &Span {
                 &self.section.name.span
             }
 
-            pub fn section(&self) -> &RawSection {
+            #[must_use] pub fn section(&self) -> &RawSection {
                 &self.section.inner
             }
 
@@ -656,7 +656,7 @@ macro_rules! impl_section_proxy {
 impl_section_proxy!(SectionProxy);
 impl_section_proxy!(SectionProxyMut);
 
-impl<'a> std::fmt::Display for SectionProxy<'a> {
+impl std::fmt::Display for SectionProxy<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Section({})", self.section.name.as_ref())
     }
@@ -667,7 +667,7 @@ impl<'a> std::fmt::Display for SectionProxy<'a> {
 pub struct NoSectionError(pub String);
 
 impl Value {
-    pub fn is_empty(&self) -> bool {
+    #[must_use] pub fn is_empty(&self) -> bool {
         self.sections.is_empty() && self.defaults.is_empty()
     }
 
@@ -676,7 +676,7 @@ impl Value {
         std::mem::replace(old_section, section)
     }
 
-    pub fn with_defaults(defaults: Section) -> Self {
+    #[must_use] pub fn with_defaults(defaults: Section) -> Self {
         Self {
             sections: Sections::default(),
             defaults: defaults.lowercase_keys(),
@@ -703,7 +703,7 @@ impl Value {
             .and_then(|mut section| section.remove_option(option))
     }
 
-    pub fn defaults(&self) -> &Section {
+    #[must_use] pub fn defaults(&self) -> &Section {
         &self.defaults
     }
 
@@ -711,12 +711,12 @@ impl Value {
         &mut self.defaults
     }
 
-    pub fn has_section(&self, section: &str) -> bool {
+    #[must_use] pub fn has_section(&self, section: &str) -> bool {
         self.section(section).is_some()
     }
 
     pub fn section_names(&self) -> impl Iterator<Item = &Spanned<String>> {
-        self.sections.keys().into_iter()
+        self.sections.keys()
     }
 
     pub fn clear(&mut self) {
@@ -731,9 +731,9 @@ impl Value {
         self.remove_section(&first_section_name)
     }
 
-    pub fn section<'a>(&'a self, name: &str) -> Option<SectionProxy<'a>> {
+    #[must_use] pub fn section<'a>(&'a self, name: &str) -> Option<SectionProxy<'a>> {
         self.sections.get(name).map(|section| SectionProxy {
-            section: &section,
+            section,
             defaults: Some(&self.defaults),
         })
     }
@@ -749,20 +749,19 @@ impl Value {
     //
     // If the specified `section` is None or an empty string, DEFAULT is
     // assumed. If the specified `section` does not exist, returns False."""
-    pub fn has_option(&self, section: &str, option: &str) -> bool {
+    #[must_use] pub fn has_option(&self, section: &str, option: &str) -> bool {
         self.section(section)
-            .map(|section| section.has_option(option))
-            .unwrap_or(false)
+            .is_some_and(|section| section.has_option(option))
     }
 
     pub fn options<'a>(&'a self, section: &str) -> Keys<'a> {
         self.section(section)
-            .map(|section| section.options())
+            .map(SectionProxy::options)
             .unwrap_or_default()
     }
 
-    pub fn set<'a>(
-        &'a mut self,
+    pub fn set(
+        &mut self,
         section: &str,
         option: Spanned<String>,
         value: Spanned<String>,
@@ -773,7 +772,7 @@ impl Value {
         Ok(section.set(option, value))
     }
 
-    pub fn get<'a>(&'a self, section: &str, option: &'a str) -> Option<&'a Spanned<String>> {
+    #[must_use] pub fn get<'a>(&'a self, section: &str, option: &'a str) -> Option<&'a Spanned<String>> {
         self.section(section)
             .and_then(|section| section.get_owned(option))
     }
@@ -827,9 +826,9 @@ fn get_section<'a>(
     }
 }
 
-fn finalize_continuation_value<'a>(
+fn finalize_continuation_value(
     current_option: &Option<Spanned<String>>,
-    section: &'a mut Section,
+    section: &mut Section,
 ) {
     if let Some(mut current_value) = current_option.as_ref().and_then(|op| section.get_mut(op)) {
         // finalize previous

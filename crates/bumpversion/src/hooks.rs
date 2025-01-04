@@ -36,14 +36,14 @@ fn vcs_env(tag_and_revision: &TagAndRevision) -> impl Iterator<Item = (String, S
         .clone()
         .unwrap_or(crate::vcs::TagInfo {
             dirty: false,
-            commit_sha: "".to_string(),
+            commit_sha: String::new(),
             distance_to_latest_tag: 0,
-            current_tag: "".to_string(),
-            current_version: "".to_string(),
+            current_tag: String::new(),
+            current_version: String::new(),
         });
     let revision = revision.clone().unwrap_or(RevisionInfo {
-        branch_name: "".to_string(),
-        short_branch_name: "".to_string(),
+        branch_name: String::new(),
+        short_branch_name: String::new(),
         repository_root: std::path::PathBuf::default(),
     });
     vec![
@@ -78,7 +78,7 @@ fn version_env<'a>(
     })
 }
 
-/// Provide the environment dictionary for new_version serialized and tag name.
+/// Provide the environment dictionary for `new_version` serialized and tag name.
 fn new_version_env<'a>(
     // new_version: &SerializedVersion,
     new_version_serialized: &str,
@@ -99,7 +99,7 @@ fn new_version_env<'a>(
         ),
         (
             format!("{ENV_PREFIX}NEW_VERSION_TAG"),
-            tag.as_deref().unwrap_or_default().to_string(),
+            tag.unwrap_or_default().to_string(),
         ),
     ]
     .into_iter()
@@ -261,7 +261,7 @@ fn run_hook(
 
     let args = shlex::split(script).ok_or_else(|| Error::Shell(script.to_string()))?;
     let mut cmd = Command::new("sh");
-    cmd.args(["-c".to_string()].into_iter().chain(args.into_iter()));
+    cmd.args(["-c".to_string()].into_iter().chain(args));
     cmd.envs(env);
     cmd.current_dir(working_dir);
     let output = crate::command::run_command(&mut cmd)?;
@@ -421,7 +421,7 @@ mod tests {
     //
     //
 
-    /// The version_env for a version should include all its parts"""
+    /// The `version_env` for a version should include all its parts"""
     #[test]
     fn test_current_version_env_includes_correct_info() {
         // config, _, current_version = get_config_data(

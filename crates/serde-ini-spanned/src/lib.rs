@@ -3,7 +3,6 @@
 pub mod diagnostics;
 pub mod lines;
 pub mod parse;
-// pub mod parse2;
 pub mod spanned;
 pub mod value;
 
@@ -25,7 +24,7 @@ pub mod tests {
 
     /// Initialize test
     ///
-    /// This ensures color_eyre is setup once.
+    /// This ensures `color_eyre` is setup once.
     pub fn init() {
         INIT.call_once(|| {
             color_eyre::install().ok();
@@ -79,7 +78,7 @@ pub mod tests {
     }
 
     impl Printer {
-        pub fn new(color_choice: term::termcolor::ColorChoice) -> Self {
+        #[must_use] pub fn new(color_choice: term::termcolor::ColorChoice) -> Self {
             use term::termcolor::WriteColor;
             let writer = term::termcolor::Buffer::ansi();
             let diagnostic_config = term::Config {
@@ -109,7 +108,7 @@ pub mod tests {
 
         /// Print written diagnostics to stderr.
         ///
-        /// This is a workaround for https://github.com/BurntSushi/termcolor/issues/51.
+        /// This is a workaround for <https://github.com/BurntSushi/termcolor/issues/51>.
         pub fn print(&self) {
             use std::io::Write;
             let mut writer = self.writer.lock().unwrap();
@@ -129,8 +128,8 @@ pub mod tests {
         if let Err(ref err) = config {
             diagnostics.extend(err.to_diagnostics(file_id));
         }
-        for diagnostic in diagnostics.iter() {
-            printer.emit(&diagnostic);
+        for diagnostic in &diagnostics {
+            printer.emit(diagnostic);
         }
         printer.print();
         (config, file_id, diagnostics)

@@ -27,7 +27,7 @@ pub enum Bump<'a> {
     NewVersion(&'a str),
 }
 
-/// Bump the desired version component to the next value or set the version to new_version.
+/// Bump the desired version component to the next value or set the version to `new_version`.
 pub fn bump(
     bump: Bump<'_>,
     // version_component_to_bump: &str,
@@ -57,7 +57,7 @@ pub fn bump(
         .parse_version_pattern
         .as_deref()
         .unwrap_or(config::DEFAULT_PARSE_VERSION_PATTERN);
-    let parse_version_pattern = regex::RegexBuilder::new(&parse_version_pattern).build()?;
+    let parse_version_pattern = regex::RegexBuilder::new(parse_version_pattern).build()?;
 
     let version_spec = version::VersionSpec::from_components(components)?;
 
@@ -140,7 +140,7 @@ pub fn bump(
     // dbg!(&files_to_modify);
     // let mut configured_files = files::resolve(&files_to_modify, None, None);
     let mut configured_files: IndexMap<&PathBuf, &Vec<config::FileChange>> =
-        files::files_to_modify(&config, &file_map)
+        files::files_to_modify(config, file_map)
             // .into_iter()
             // .map(|(file, changes)| {
             //     files::ConfiguredFile::new(
@@ -173,11 +173,11 @@ pub fn bump(
 
     // dbg!(&ctx_with_new_version);
 
-    for (path, change) in configured_files.iter() {
+    for (path, change) in &configured_files {
         assert!(path.is_absolute());
         files::replace_version_in_file(
-            &path,
-            &change,
+            path,
+            change,
             &current_version,
             &next_version,
             &ctx_with_new_version,
@@ -194,7 +194,7 @@ pub fn bump(
             match config_file
                 .extension()
                 .and_then(|ext| ext.to_str())
-                .map(|ext| ext.to_ascii_lowercase())
+                .map(str::to_ascii_lowercase)
                 .as_deref()
             {
                 Some("cfg" | "ini") => config::ini::replace_version(
@@ -255,9 +255,9 @@ pub fn bump(
     let commit = config.global.commit.unwrap_or(true);
     if commit {
         if dry_run {
-            tracing::info!("would prepare commit")
+            tracing::info!("would prepare commit");
         } else {
-            tracing::info!("prepare commit")
+            tracing::info!("prepare commit");
         }
 
         for path in files_to_commit {
@@ -279,7 +279,7 @@ pub fn bump(
         tracing::info!(msg = commit_message, "commit");
 
         if !dry_run {
-            let env = std::env::vars().into_iter().chain(
+            let env = std::env::vars().chain(
                 [
                     ("HGENCODING".to_string(), "utf-8".to_string()),
                     (
@@ -290,8 +290,7 @@ pub fn bump(
                         "BUMPVERSION_NEW_VERSION".to_string(),
                         next_version_serialized.clone(),
                     ),
-                ]
-                .into_iter(),
+                ],
             );
             repo.commit(commit_message.as_str(), extra_args.as_slice(), env)?;
         }
@@ -321,12 +320,10 @@ pub fn bump(
 
         if existing_tags.contains(&tag_name) {
             tracing::warn!("tag {tag_name:?} already exists and will not be created");
+        } else if dry_run {
+            tracing::info!(msg = tag_message, sign = sign_tag, "would tag {tag_name:?}",);
         } else {
-            if dry_run {
-                tracing::info!(msg = tag_message, sign = sign_tag, "would tag {tag_name:?}",);
-            } else {
-                repo.tag(tag_name.as_str(), Some(&tag_message), sign_tag)?;
-            }
+            repo.tag(tag_name.as_str(), Some(&tag_message), sign_tag)?;
         }
     }
 

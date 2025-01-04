@@ -51,7 +51,7 @@ pub struct Spanned<T> {
 impl std::ops::Deref for Spanned<&String> {
     type Target = str;
     fn deref(&self) -> &Self::Target {
-        &self.inner
+        self.inner
     }
 }
 
@@ -186,7 +186,7 @@ where
     T: PartialOrd,
 {
     fn partial_cmp(&self, other: &T) -> Option<std::cmp::Ordering> {
-        PartialOrd::partial_cmp(&self.inner, &other)
+        PartialOrd::partial_cmp(&self.inner, other)
     }
 }
 
@@ -220,13 +220,13 @@ impl ToSourceName for String {
     }
 }
 
-impl<'a> ToSourceName for &'a Path {
+impl ToSourceName for &Path {
     fn to_source_name(self) -> String {
         self.to_string_lossy().to_string()
     }
 }
 
-impl<'a> ToSourceName for &'a PathBuf {
+impl ToSourceName for &PathBuf {
     fn to_source_name(self) -> String {
         self.to_string_lossy().to_string()
     }
@@ -251,7 +251,7 @@ impl Default for Printer<term::termcolor::Buffer> {
 }
 
 impl Printer<term::termcolor::Buffer> {
-    pub fn buffered(color_choice: term::termcolor::ColorChoice) -> Self {
+    #[must_use] pub fn buffered(color_choice: term::termcolor::ColorChoice) -> Self {
         let writer = term::termcolor::Buffer::ansi();
         let diagnostic_config = term::Config {
             styles: term::Styles::with_blue(term::termcolor::Color::Blue),
@@ -267,7 +267,7 @@ impl Printer<term::termcolor::Buffer> {
 
     /// Print written diagnostics to stderr.
     ///
-    /// This is a workaround for https://github.com/BurntSushi/termcolor/issues/51.
+    /// This is a workaround for <https://github.com/BurntSushi/termcolor/issues/51>.
     pub fn print(&self) {
         use std::io::Write;
         let mut writer = self.writer.lock().unwrap();
@@ -277,7 +277,7 @@ impl Printer<term::termcolor::Buffer> {
 }
 
 impl Printer<term::termcolor::StandardStream> {
-    pub fn stderr(color_choice: term::termcolor::ColorChoice) -> Self {
+    #[must_use] pub fn stderr(color_choice: term::termcolor::ColorChoice) -> Self {
         let writer = term::termcolor::StandardStream::stderr(color_choice);
         use term::termcolor::WriteColor;
         let diagnostic_config = term::Config {

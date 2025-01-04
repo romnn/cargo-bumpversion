@@ -34,18 +34,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: arduino/setup-task@v2
+      - uses: Homebrew/actions/setup-homebrew@master
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo install cargo-audit
+      # - run: cargo install cargo-audit
+      - run: brew install cargo-audit
       - name: Audit
-        run: cargo audit
+        run: task audit
 
   outdated:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: arduino/setup-task@v2
+      - uses: Homebrew/actions/setup-homebrew@master
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo install cargo-outdated
+      # - run: cargo install cargo-outdated
+      - run: brew install cargo-outdated
       - name: Check for outdated dependencies
         run: task outdated
 
@@ -55,7 +60,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: arduino/setup-task@v2
       - uses: Homebrew/actions/setup-homebrew@master
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
       - run: brew install cargo-udeps
       - name: Check for outdated dependencies
         run: task unused-dependencies
@@ -67,6 +72,6 @@ jobs:
       - uses: arduino/setup-task@v2
       - uses: Homebrew/actions/setup-homebrew@master
       - uses: dtolnay/rust-toolchain@stable
-      - run: brew install typos
+      - run: brew install typos-cli
       - name: Spellcheck
         run: task spellcheck

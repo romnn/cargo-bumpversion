@@ -19,7 +19,7 @@ mod tests {
         crate::tests::init();
 
         // invalid (unlike ini files, quotation is required for values)
-        let bumpversion_toml = indoc::indoc! {r#"
+        let bumpversion_toml = indoc::indoc! {r"
             [bumpversion]
             current_version = 0.1.8
             commit = True
@@ -31,10 +31,10 @@ mod tests {
 
             [bdist_wheel]
             universal = 1
-        "#};
+        "};
 
         let printer = Printer::default();
-        let (config, file_id, diagnostics) = parse_toml(&bumpversion_toml, &printer);
+        let (config, file_id, diagnostics) = parse_toml(bumpversion_toml, &printer);
         let err = config.unwrap_err();
         similar_asserts::assert_eq!(&err.to_string(), "expected newline, found a period");
         similar_asserts::assert_eq!(printer.lines(&diagnostics[0]).ok(), Some(vec![1]));
@@ -78,7 +78,7 @@ mod tests {
         Ok(())
     }
 
-    /// Taken from https://github.com/callowayproject/bump-my-version/blob/master/tests/fixtures/basic_cfg.toml
+    /// Taken from <https://github.com/callowayproject/bump-my-version/blob/master/tests/fixtures/basic_cfg.toml>
     #[test]
     fn parse_compat_basic_cfg_toml() -> eyre::Result<()> {
         crate::tests::init();
@@ -144,12 +144,12 @@ mod tests {
                 tag: Some(true),
                 current_version: Some("1.0.0".to_string()),
                 parse_version_pattern: Some(
-                    r#"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\-(?P<release>[a-z]+))?"#
+                    r"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\-(?P<release>[a-z]+))?"
                         .to_string(),
                 ),
                 serialize_version_patterns: Some(vec![
-                    r#"{major}.{minor}.{patch}-{release}"#.to_string(),
-                    r#"{major}.{minor}.{patch}"#.to_string(),
+                    r"{major}.{minor}.{patch}-{release}".to_string(),
+                    r"{major}.{minor}.{patch}".to_string(),
                 ]),
                 ..GlobalConfig::empty()
             },
@@ -165,9 +165,9 @@ mod tests {
                         search: Some("**unreleased**".to_string()),
                         replace: Some(
                             indoc::indoc! {
-                                r#"
+                                r"
                                 **unreleased**
-                                **v{new_version}**"#
+                                **v{new_version}**"
                             }
                             .to_string(),
                         ),
@@ -191,7 +191,7 @@ mod tests {
         Ok(())
     }
 
-    /// Taken from https://github.com/callowayproject/bump-my-version/blob/master/tests/fixtures/file_config_overrides.toml
+    /// Taken from <https://github.com/callowayproject/bump-my-version/blob/master/tests/fixtures/file_config_overrides.toml>
     #[test]
     fn parse_compat_file_config_overrides() -> eyre::Result<()> {
         crate::tests::init();
@@ -293,7 +293,7 @@ mod tests {
         Ok(())
     }
 
-    /// Taken from https://github.com/callowayproject/bump-my-version/blob/master/tests/fixtures/partial_version_strings.toml
+    /// Taken from <https://github.com/callowayproject/bump-my-version/blob/master/tests/fixtures/partial_version_strings.toml>
     #[test]
     fn parse_compat_partial_version_strings_toml() -> eyre::Result<()> {
         crate::tests::init();
@@ -349,7 +349,7 @@ mod tests {
         Ok(())
     }
 
-    /// Taken from https://github.com/callowayproject/bump-my-version/blob/master/tests/fixtures/pep440.toml
+    /// Taken from <https://github.com/callowayproject/bump-my-version/blob/master/tests/fixtures/pep440.toml>
     #[test]
     fn parse_compat_pep440_toml() -> eyre::Result<()> {
         crate::tests::init();
@@ -442,7 +442,7 @@ mod tests {
                     OwnedValue::String(" → ".to_string()),
                     OwnedValue::Argument("new_version".to_string()),
                 ])),
-                commit_args: Some("".to_string()),
+                commit_args: Some(String::new()),
                 tag: Some(false),
                 sign_tags: Some(false),
                 tag_name: Some(OwnedPythonFormatString(vec![
@@ -457,7 +457,7 @@ mod tests {
                 ])),
                 current_version: Some("1.0.0".to_string()),
                 parse_version_pattern: Some(
-                    indoc::indoc! {r#"(?x)
+                    indoc::indoc! {r"(?x)
                     (?:
                         (?P<major>[0-9]+)
                         (?:
@@ -488,7 +488,7 @@ mod tests {
                         )?
                     )
                     (?:\+(?P<local>[a-z0-9]+(?:[-_\.][a-z0-9]+)*))?
-                    "#,
+                    ",
                     }
                     .to_string(),
                 ),
@@ -538,7 +538,7 @@ mod tests {
         Ok(())
     }
 
-    /// Taken from https://github.com/callowayproject/bump-my-version/blob/master/tests/fixtures/regex_test_config.toml
+    /// Taken from <https://github.com/callowayproject/bump-my-version/blob/master/tests/fixtures/regex_test_config.toml>
     #[test]
     fn parse_compat_regex_test_config_toml() -> eyre::Result<()> {
         crate::tests::init();
@@ -565,7 +565,7 @@ mod tests {
             files: vec![(
                 InputFile::Path("./citation.cff".into()),
                 FileConfig {
-                    search: Some(r#"date-released: \d{{4}}-\d{{2}}-\d{{2}}"#.to_string()),
+                    search: Some(r"date-released: \d{{4}}-\d{{2}}-\d{{2}}".to_string()),
                     replace: Some("date-released: {utcnow:%Y-%m-%d}".to_string()),
                     ..FileConfig::empty()
                 },
@@ -576,7 +576,7 @@ mod tests {
         Ok(())
     }
 
-    /// Taken from https://github.com/callowayproject/bump-my-version/blob/master/tests/fixtures/regex_with_caret_config.toml
+    /// Taken from <https://github.com/callowayproject/bump-my-version/blob/master/tests/fixtures/regex_with_caret_config.toml>
     #[test]
     fn parse_compat_regex_with_caret_config_toml() -> eyre::Result<()> {
         crate::tests::init();
@@ -603,7 +603,7 @@ mod tests {
             files: vec![(
                 InputFile::Path("thingy.yaml".into()),
                 FileConfig {
-                    search: Some(r#"^version: {current_version}"#.to_string()),
+                    search: Some(r"^version: {current_version}".to_string()),
                     replace: Some("version: {new_version}".to_string()),
                     ..FileConfig::empty()
                 },
@@ -614,7 +614,7 @@ mod tests {
         Ok(())
     }
 
-    /// Taken from https://github.com/callowayproject/bump-my-version/blob/master/tests/fixtures/replace-date-config.toml
+    /// Taken from <https://github.com/callowayproject/bump-my-version/blob/master/tests/fixtures/replace-date-config.toml>
     #[test]
     fn parse_compat_replace_date_config_toml() -> eyre::Result<()> {
         crate::tests::init();
@@ -644,7 +644,7 @@ mod tests {
                 (
                     InputFile::Path("VERSION".into()),
                     FileConfig {
-                        search: Some(r#"__date__ = '\d{{4}}-\d{{2}}-\d{{2}}'"#.to_string()),
+                        search: Some(r"__date__ = '\d{{4}}-\d{{2}}-\d{{2}}'".to_string()),
                         replace: Some("__date__ = '{now:%Y-%m-%d}'".to_string()),
                         regex: Some(true),
                         ..FileConfig::empty()

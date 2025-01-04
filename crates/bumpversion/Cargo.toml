@@ -28,8 +28,8 @@ thiserror.workspace = true
 tracing.workspace = true
 once_cell.workspace = true
 
-# todo: remove tempdir (tests only??
-tempdir = "0"
+# temporary file for git messages
+tempfile = "3"
 
 # resolve glob patterns
 glob = "0"

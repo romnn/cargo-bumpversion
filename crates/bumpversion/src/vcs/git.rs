@@ -58,7 +58,7 @@ pub struct GitRepository {
 }
 
 static FLAG_PATTERN: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
-    regex::RegexBuilder::new(r#"^(\(\?[aiLmsux]+\))"#)
+    regex::RegexBuilder::new(r"^(\(\?[aiLmsux]+\))")
         .build()
         .unwrap()
 });
@@ -133,7 +133,7 @@ pub fn get_version_from_tag<'a>(
 
 pub static BRANCH_NAME_REGEX: once_cell::sync::Lazy<regex::Regex> =
     once_cell::sync::Lazy::new(|| {
-        regex::RegexBuilder::new(r#"([^a-zA-Z0-9]*)"#)
+        regex::RegexBuilder::new(r"([^a-zA-Z0-9]*)")
             .build()
             .unwrap()
     });
@@ -146,7 +146,7 @@ impl GitRepository {
             .current_dir(&self.path);
 
         let res = run_command(&mut cmd)?;
-        let mut lines = res.stdout.lines().map(|line| line.trim());
+        let mut lines = res.stdout.lines().map(str::trim);
         let Some(repository_root) = lines.next().map(PathBuf::from) else {
             return Ok(None);
         };
@@ -200,7 +200,7 @@ impl GitRepository {
         match run_command(&mut cmd) {
             Ok(tag_info) => {
                 let raw_tag = tag_info.stdout;
-                let mut tag_parts: Vec<&str> = raw_tag.split("-").collect();
+                let mut tag_parts: Vec<&str> = raw_tag.split('-').collect();
                 dbg!(&tag_parts);
 
                 let dirty = tag_parts
@@ -299,7 +299,7 @@ impl VersionControlSystem for GitRepository {
     {
         use std::io::Write;
 
-        let tmp = tempdir::TempDir::new("")?;
+        let tmp = tempfile::TempDir::new()?;
         let tmp_file_path = tmp.path().join("commit-message.txt");
         let mut tmp_file = std::fs::File::create(&tmp_file_path)?;
         tmp_file.write_all(message.as_bytes())?;
@@ -341,10 +341,10 @@ impl VersionControlSystem for GitRepository {
         let dirty = status_output
             .stdout
             .lines()
-            .map(|line| line.trim())
+            .map(str::trim)
             .filter(|line| !line.is_empty())
             .filter(|line| !line.starts_with("??"))
-            .filter_map(|line| line.split_once(" "))
+            .filter_map(|line| line.split_once(' '))
             .map(|(_, file)| self.path().join(file))
             .collect();
         Ok(dirty)
@@ -410,7 +410,7 @@ mod tests {
     use std::io::Write;
     use std::path::{Path, PathBuf};
     use std::process::Command;
-    use tempdir::TempDir;
+    use tempfile::TempDir;
 
     #[ignore = "wip"]
     #[test]
@@ -462,13 +462,13 @@ mod tests {
         similar_asserts::assert_eq!(repo.dirty_files()?.len(), 0);
 
         // add some dirty files
-        let mut dirty_files: Vec<PathBuf> = vec!["foo.txt", "dir/bar.txt"]
+        let mut dirty_files: Vec<PathBuf> = ["foo.txt", "dir/bar.txt"]
             .iter()
             .map(|f| repo.path().join(f))
             .collect();
 
-        for dirty_file in dirty_files.iter() {
-            crate::utils::create_dirs(&dirty_file);
+        for dirty_file in &dirty_files {
+            crate::utils::create_dirs(dirty_file);
             let mut file = std::fs::File::create(dirty_file)?;
             file.write_all(b"Hello, world!")?;
         }

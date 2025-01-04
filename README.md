@@ -3,6 +3,7 @@
 [<img alt="build status" src="https://img.shields.io/github/actions/workflow/status/romnn/cargo-bumpversion/build.yaml?branch=main&label=build">](https://github.com/romnn/cargo-bumpversion/actions/workflows/build.yaml)
 [<img alt="test status" src="https://img.shields.io/github/actions/workflow/status/romnn/cargo-bumpversion/test.yaml?branch=main&label=test">](https://github.com/romnn/cargo-bumpversion/actions/workflows/test.yaml)
 [<img alt="crates.io" src="https://img.shields.io/crates/v/bumpversion">](https://crates.io/crates/bumpversion)
+[![dependency status](https://deps.rs/repo/github/romnn/cargo-bumpversion/status.svg)](https://deps.rs/repo/github/romnn/cargo-bumpversion)
 [<img alt="docs.rs" src="https://img.shields.io/docsrs/bumpversion/latest?label=docs.rs">](https://docs.rs/taski)
 
 This is an improved version of the popular [callowayproject/bump-my-version](https://github.com/callowayproject/bump-my-version) (formerly [peritus/bumpversion](https://github.com/peritus/bumpversion) and [c4urself/bump2version](https://github.com/c4urself/bump2version)) written in Rust.

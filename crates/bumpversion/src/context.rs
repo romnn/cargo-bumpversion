@@ -48,8 +48,7 @@ fn base_context(
         [
             ("#".to_string(), "#".to_string()),
             (";".to_string(), ";".to_string()),
-        ]
-        .into_iter(),
+        ],
     )
 }
 
@@ -72,8 +71,7 @@ pub fn get_context(
                     "new_version".to_string(),
                     new_version_serialized.unwrap_or_default().to_string(),
                 ),
-            ]
-            .into_iter(),
+            ],
         )
         .chain(
             current_version

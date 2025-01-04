@@ -18,6 +18,6 @@ pub(crate) fn create_dirs<P: AsRef<Path>>(path: P) -> eyre::Result<()> {
     } else {
         path
     };
-    std::fs::create_dir_all(&dir)?;
+    std::fs::create_dir_all(dir)?;
     Ok(())
 }

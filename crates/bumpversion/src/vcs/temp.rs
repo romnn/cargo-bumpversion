@@ -4,7 +4,7 @@ use regex::Regex;
 use std::io::Write;
 use std::path::Path;
 use std::process::Command;
-use tempdir::TempDir;
+use tempfile::TempDir;
 
 fn random_string_of_length(length: usize) -> String {
     use rand::{distributions::Alphanumeric, Rng};
@@ -29,7 +29,7 @@ where
     }
 
     pub fn with_name(name: &str) -> eyre::Result<Self> {
-        let dir = TempDir::new(name)?;
+        let dir = TempDir::with_prefix(name)?;
         Self::init(dir.path())?;
         let inner = VCS::open(dir.path())?;
         Ok(Self { inner, dir })
@@ -37,7 +37,7 @@ where
 
     fn init(path: &Path) -> eyre::Result<()> {
         std::fs::create_dir_all(path)?;
-        let _ = run_command(Command::new("git").args(["init"]).current_dir(&path))?;
+        let _ = run_command(Command::new("git").args(["init"]).current_dir(path))?;
         Ok(())
     }
 

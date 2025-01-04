@@ -14,7 +14,7 @@ pub struct ValuesFunction<'a> {
     values: &'a [String],
 }
 
-impl<'a> ValuesFunction<'a> {
+impl ValuesFunction<'_> {
     /// Return the item after ``value`` in the list
     fn bump(&self, value: &str) -> eyre::Result<&str> {
         let current_idx = self.values.iter().position(|v| *v == value);
@@ -32,7 +32,7 @@ impl<'a> ValuesFunction<'a> {
 
 pub static FIRST_NUMERIC_REGEX: once_cell::sync::Lazy<regex::Regex> =
     once_cell::sync::Lazy::new(|| {
-        regex::RegexBuilder::new(r#"(?P<prefix>[^-0-9]*)(?P<number>-?\d+)(?P<suffix>.*)"#)
+        regex::RegexBuilder::new(r"(?P<prefix>[^-0-9]*)(?P<number>-?\d+)(?P<suffix>.*)")
             .build()
             .unwrap()
     });
@@ -46,9 +46,9 @@ pub struct NumericFunction<'a> {
 }
 
 impl<'a> NumericFunction<'a> {
-    pub fn new(first_value: Option<&'a str>, optional_value: Option<&'a str>) -> Self {
+    #[must_use] pub fn new(first_value: Option<&'a str>, optional_value: Option<&'a str>) -> Self {
         let first_value = first_value.unwrap_or("0"); // .to_string();
-        let optional_value = optional_value.unwrap_or(&first_value); // .to_string();
+        let optional_value = optional_value.unwrap_or(first_value); // .to_string();
         Self {
             first_value,
             optional_value,
@@ -130,7 +130,7 @@ impl AsRef<str> for VersionComponent {
 }
 
 impl VersionComponent {
-    pub fn new(value: Option<&str>, spec: VersionComponentSpec) -> Self {
+    #[must_use] pub fn new(value: Option<&str>, spec: VersionComponentSpec) -> Self {
         // let func = ValuesFunction {
         //     values: spec.values.clone(),
         // };
@@ -145,17 +145,17 @@ impl VersionComponent {
         // else:
         //     self.func = NumericFunction(optional_value, first_value or "0")
         Self {
-            value: value.map(|v| v.to_string()),
+            value: value.map(std::string::ToString::to_string),
             spec,
         }
     }
 
-    pub fn value(&self) -> Option<&str> {
+    #[must_use] pub fn value(&self) -> Option<&str> {
         self.value.as_deref().or(self.spec.first_value.as_deref())
     }
 
     /// Return the component with with first value
-    pub fn first(&self) -> Self {
+    #[must_use] pub fn first(&self) -> Self {
         Self {
             value: self.spec.first_value.clone(),
             ..self.clone()
@@ -227,8 +227,8 @@ impl Version {
     }
 
     /// Serialize a version to a string.
-    pub fn serialize<'a, S, K, V>(
-        &'a self,
+    pub fn serialize<S, K, V>(
+        &self,
         serialize_version_patterns: impl IntoIterator<Item = S>,
         ctx: &HashMap<K, V>,
     ) -> eyre::Result<String>
@@ -247,12 +247,12 @@ impl Version {
     }
 
     // Return the values of the parts
-    pub fn into_iter(self) -> indexmap::map::IntoIter<String, VersionComponent> {
+    #[must_use] pub fn into_iter(self) -> indexmap::map::IntoIter<String, VersionComponent> {
         self.components.into_iter()
     }
 
     // Return the values of the parts
-    pub fn iter(&self) -> indexmap::map::Iter<String, VersionComponent> {
+    #[must_use] pub fn iter(&self) -> indexmap::map::Iter<String, VersionComponent> {
         self.components.iter()
     }
 
@@ -291,13 +291,13 @@ impl Version {
     fn always_increment(&self) -> eyre::Result<(HashMap<&str, VersionComponent>, HashSet<&str>)> {
         let values = self.increment_always_incr()?;
         let mut dependents = self.always_incr_dependencies();
-        for (comp_name, value) in values.iter() {
+        for (comp_name, value) in &values {
             if value == &self.components[*comp_name] {
                 dependents.remove(comp_name);
             }
         }
         let unique_dependents: HashSet<&str> =
-            dependents.values().flat_map(|v| v).copied().collect();
+            dependents.values().flatten().copied().collect();
         Ok((values, unique_dependents))
     }
 
@@ -380,12 +380,12 @@ impl VersionSpec {
                 dependency_map
                     .entry(depends_on.clone())
                     .or_default()
-                    .push(comp_name.clone())
+                    .push(comp_name.clone());
             } else {
                 dependency_map
                     .entry(previous_component.clone())
                     .or_default()
-                    .push(comp_name.clone())
+                    .push(comp_name.clone());
             }
             previous_component = comp_name;
         }
@@ -401,7 +401,7 @@ impl VersionSpec {
     }
 
     /// Return the components that depend on the given component.
-    pub fn dependents(&self, comp_name: &str) -> HashSet<&str> {
+    #[must_use] pub fn dependents(&self, comp_name: &str) -> HashSet<&str> {
         use std::collections::VecDeque;
         let mut stack = VecDeque::from_iter(
             self.dependency_map
@@ -420,7 +420,7 @@ impl VersionSpec {
                     .map(|deps| deps.iter())
                     .unwrap_or_default()
                 {
-                    stack.push_front(dep)
+                    stack.push_front(dep);
                 }
             }
         }
@@ -428,7 +428,7 @@ impl VersionSpec {
     }
 
     /// Generate a version from the given values
-    pub fn build(&self, raw_components: &RawVersion) -> Version {
+    #[must_use] pub fn build(&self, raw_components: &RawVersion) -> Version {
         let components = self
             .components
             .iter()
@@ -452,8 +452,8 @@ impl VersionSpec {
 /// - the shortest valid serialization pattern is used
 /// - if two patterns are equally short, the first one is used
 /// - if no valid serialization pattern is found, an error is raised
-fn serialize_version<'a, S, K, V>(
-    version: &'a Version,
+fn serialize_version<S, K, V>(
+    version: &Version,
     // serialize_patterns: &[String],
     serialize_patterns: impl IntoIterator<Item = S>,
     // ctx: impl IntoIterator<Item = (&'a str, &'a str)>,
@@ -468,7 +468,7 @@ where
     tracing::debug!(?version, "serializing");
 
     let ctx: HashMap<&str, &str> = ctx
-        .into_iter()
+        .iter()
         .map(|(k, v)| (k.borrow(), v.as_ref()))
         .chain(version.iter().map(|(k, v)| (k.as_str(), v.as_ref())))
         .collect();
@@ -516,7 +516,7 @@ where
 /// Parse a version string into a dictionary of the parts and values using a regular expression.
 ///
 /// # Errors
-/// If the parse_pattern is not a valid regular expression.
+/// If the `parse_pattern` is not a valid regular expression.
 fn parse_raw_version<'a>(version: &'a str, pattern: &'a regex::Regex) -> RawVersion<'a> {
     if version.is_empty() {
         tracing::warn!("version string is empty");
@@ -532,7 +532,7 @@ fn parse_raw_version<'a>(version: &'a str, pattern: &'a regex::Regex) -> RawVers
 
     let parsed: RawVersion = pattern
         .capture_names()
-        .filter_map(|name| name)
+        .flatten()
         .filter_map(|name| matches.name(name).map(|value| (name, value.as_str())))
         .collect();
 
@@ -571,7 +571,7 @@ pub fn parse_version(
     regex: &regex::Regex,
     version_spec: &VersionSpec,
 ) -> eyre::Result<Option<Version>> {
-    let parsed = parse_raw_version(value, &regex);
+    let parsed = parse_raw_version(value, regex);
     if parsed.is_empty() {
         return Ok(None);
     }

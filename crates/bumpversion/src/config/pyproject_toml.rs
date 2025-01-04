@@ -66,13 +66,13 @@ mod diagnostics {
                     span,
                     ..
                 } => vec![Diagnostic::error()
-                    .with_message(format!("invalid format string"))
+                    .with_message("invalid format string".to_string())
                     .with_labels(vec![
                         Label::primary(file_id, span.clone()).with_message(source.to_string()),
                         Label::secondary(file_id, span.clone()).with_message(message),
                     ])],
                 Self::InvalidConfiguration { message, span, .. } => vec![Diagnostic::error()
-                    .with_message(format!("invalid configuration"))
+                    .with_message("invalid configuration".to_string())
                     .with_labels(vec![
                         Label::secondary(file_id, span.clone()).with_message(message)
                     ])],
@@ -176,7 +176,7 @@ pub fn as_string_array<'de>(value: &'de toml::Value<'de>) -> Result<Vec<String>,
 #[inline]
 pub fn as_str_array<'de>(value: &'de toml::Value<'de>) -> Result<Vec<&'de str>, Error> {
     match value.as_ref() {
-        toml::value::ValueInner::String(value) => Ok(vec![&*value]),
+        toml::value::ValueInner::String(value) => Ok(vec![value]),
         toml::value::ValueInner::Array(array) => {
             array.iter().map(as_str).collect::<Result<Vec<_>, _>>()
         }
@@ -263,7 +263,7 @@ pub(crate) fn parse_file<'de>(
         (None, Some(glob_pattern)) => {
             let exclude_patterns = table.get("glob_exclude").map(as_string_array).transpose()?;
             Ok(InputFile::GlobPattern {
-                pattern: glob_pattern.into(),
+                pattern: glob_pattern,
                 exclude_patterns,
             })
         }
@@ -495,7 +495,7 @@ impl Config {
             return Ok(None);
         }
 
-        let global_file_config = parse_global_config(&table)?;
+        let global_file_config = parse_global_config(table)?;
 
         let files = match table.get("files") {
             None => vec![],
@@ -551,7 +551,7 @@ impl Config {
         strict: bool,
         diagnostics: &mut Vec<Diagnostic<FileId>>,
     ) -> Result<Option<Self>, Error> {
-        let config = toml_span::parse(&config).map_err(|source| Error::Toml { source })?;
+        let config = toml_span::parse(config).map_err(|source| Error::Toml { source })?;
         Self::from_pyproject_value(config, file_id, strict, diagnostics)
     }
 }
@@ -689,7 +689,7 @@ fn replace_version_of_document(
     } else {
         tracing::warn!(
             "key {:?} does not match {}",
-            key_path.iter().copied().collect::<Vec<_>>().join("."),
+            key_path.to_vec().join("."),
             search.as_str(),
         );
         // tracing::info!("could not find current version ({current_version}) in {path:?}");
@@ -754,7 +754,7 @@ fn replace_version_of_document(
 //     Ok("todo".to_string())
 // }
 
-/// Update the current_version key in the configuration file
+/// Update the `current_version` key in the configuration file
 pub fn replace_version(
     path: &Path,
     config: &Config,
@@ -808,8 +808,8 @@ pub fn replace_version(
     let updated = replace_version_of_document(
         &mut document,
         &["tool", "bumpversion", "current_version"],
-        &*search,
-        &replacement,
+        search,
+        replacement,
     );
     dbg!(updated);
     let new_config = document.to_string();
@@ -873,8 +873,8 @@ pub mod tests {
         if let Err(ref err) = config {
             diagnostics.extend(err.to_diagnostics(file_id));
         }
-        for diagnostic in diagnostics.iter() {
-            printer.emit(&diagnostic);
+        for diagnostic in &diagnostics {
+            printer.emit(diagnostic);
         }
         printer.print();
         (config, file_id, diagnostics)
@@ -907,7 +907,7 @@ pub mod tests {
         super::replace_version_of_document(
             &mut document,
             &["tool", "bumpversion", "current_version"],
-            &*search,
+            search,
             replacement,
         )?;
 
@@ -967,8 +967,8 @@ pub mod tests {
             version={new_version}"""
         "#};
 
-        let config = parse_toml(&pyproject_toml, &BufferedPrinter::default()).0?;
-        println!("config: {:#?}", config);
+        let config = parse_toml(pyproject_toml, &BufferedPrinter::default()).0?;
+        println!("config: {config:#?}");
 
         let expected = Config {
             global: GlobalConfig {
@@ -979,15 +979,15 @@ pub mod tests {
                 InputFile::Path("config.ini".into()),
                 FileConfig {
                     search: Some(
-                        indoc::indoc! {r#"
+                        indoc::indoc! {r"
                         [myproject]
-                        version={current_version}"#}
+                        version={current_version}"}
                         .to_string(),
                     ),
                     replace: Some(
-                        indoc::indoc! {r#"
+                        indoc::indoc! {r"
                         [myproject]
-                        version={new_version}"#}
+                        version={new_version}"}
                         .to_string(),
                     ),
                     ..FileConfig::empty()
@@ -1316,8 +1316,8 @@ pub mod tests {
             check-class-attributes = false
         "#};
 
-        let config = parse_toml(&pyproject_toml, &BufferedPrinter::default()).0?;
-        println!("config: {:#?}", config);
+        let config = parse_toml(pyproject_toml, &BufferedPrinter::default()).0?;
+        println!("config: {config:#?}");
 
         let expected = Config {
             global: GlobalConfig {
@@ -1415,7 +1415,7 @@ pub mod tests {
             global: GlobalConfig {
                 current_version: Some("0.10.5".to_string()),
                 parse_version_pattern: Some(
-                    r#"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\-(?P<release>[a-z]+))?"#
+                    r"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\-(?P<release>[a-z]+))?"
                         .to_string(),
                 ),
                 serialize_version_patterns: Some(vec![
@@ -1427,7 +1427,7 @@ pub mod tests {
             ..Config::default()
         };
 
-        let config = parse_toml(&pyproject_toml, &BufferedPrinter::default()).0?;
+        let config = parse_toml(pyproject_toml, &BufferedPrinter::default()).0?;
         sim_assert_eq!(config, Some(expected));
 
         let pyproject_toml = indoc::indoc! {r#"
@@ -1489,7 +1489,7 @@ pub mod tests {
                 commit: Some(true),
                 tag: Some(true),
                 parse_version_pattern: Some(
-                    r#"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\-(?P<release>[a-z]+))?"#
+                    r"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\-(?P<release>[a-z]+))?"
                         .to_string(),
                 ),
                 serialize_version_patterns: Some(vec![
@@ -1517,12 +1517,12 @@ pub mod tests {
                 (
                     InputFile::Path("CHANGELOG.md".into()),
                     FileConfig {
-                        search: Some(r#"**unreleased**"#.to_string()),
+                        search: Some(r"**unreleased**".to_string()),
                         replace: Some(
                             indoc::indoc! {
-                            r#"
+                            r"
                             **unreleased**
-                            **v{new_version}**"#}
+                            **v{new_version}**"}
                             .to_string(),
                         ),
                         ..FileConfig::empty()
@@ -1534,7 +1534,7 @@ pub mod tests {
             ..Config::default()
         };
 
-        let config = parse_toml(&pyproject_toml, &BufferedPrinter::default()).0?;
+        let config = parse_toml(pyproject_toml, &BufferedPrinter::default()).0?;
         sim_assert_eq!(config, Some(expected));
 
         Ok(())
@@ -1593,7 +1593,7 @@ pub mod tests {
             bump-my-version = "bumpversion.cli:cli"
         "#};
 
-        let config = parse_toml(&pyproject_toml, &BufferedPrinter::default()).0?;
+        let config = parse_toml(pyproject_toml, &BufferedPrinter::default()).0?;
         sim_assert_eq!(config, None);
         Ok(())
     }
@@ -1653,7 +1653,7 @@ pub mod tests {
             bump-my-version = "bumpversion.cli:cli"
         "#};
 
-        let config = parse_toml(&pyproject_toml, &BufferedPrinter::default()).0?;
+        let config = parse_toml(pyproject_toml, &BufferedPrinter::default()).0?;
         sim_assert_eq!(config, None);
         Ok(())
     }
@@ -1712,13 +1712,13 @@ pub mod tests {
             ]
         "#};
 
-        let config = parse_toml(&pyproject_toml, &BufferedPrinter::default()).0?;
+        let config = parse_toml(pyproject_toml, &BufferedPrinter::default()).0?;
 
         let expected = Config {
             global: GlobalConfig {
                 current_version: Some("1.0.0".to_string()),
                 parse_version_pattern: Some(
-                    indoc::indoc! {r#"
+                    indoc::indoc! {r"
                         (?x)
                             (?P<major>[0-9]+)
                             \.(?P<minor>[0-9]+)
@@ -1727,7 +1727,7 @@ pub mod tests {
                                 -(?P<pre_label>alpha|beta|stable)
                                 (?:-(?P<pre_n>[0-9]+))?
                             )?
-                    "#}
+                    "}
                     .to_string(),
                 ),
                 serialize_version_patterns: Some(vec![
@@ -1760,12 +1760,12 @@ pub mod tests {
     fn parse_pyproject_toml_of_bump_my_version() -> eyre::Result<()> {
         crate::tests::init();
         let pyproject_toml = include_str!("../../test-data/bump-my-version.pyproject.toml");
-        let mut config = parse_toml(&pyproject_toml, &BufferedPrinter::default())
+        let mut config = parse_toml(pyproject_toml, &BufferedPrinter::default())
             .0?
             .unwrap();
 
         let parse =
-            r#"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\.(?P<dev>post)\d+\.dev\d+)?"#
+            r"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\.(?P<dev>post)\d+\.dev\d+)?"
                 .to_string();
         let serialize = vec![
             "{major}.{minor}.{patch}.{dev}{$PR_NUMBER}.dev{distance_to_latest_tag}".to_string(),
@@ -1827,10 +1827,10 @@ pub mod tests {
                     InputFile::Path("Dockerfile".into()),
                     FileConfig {
                         search: Some(
-                            r#"created=\d{{4}}-\d{{2}}-\d{{2}}T\d{{2}}:\d{{2}}:\d{{2}}Z"#
+                            r"created=\d{{4}}-\d{{2}}-\d{{2}}T\d{{2}}:\d{{2}}:\d{{2}}Z"
                                 .to_string(),
                         ),
-                        replace: Some(r#"created={utcnow:%Y-%m-%dT%H:%M:%SZ}"#.to_string()),
+                        replace: Some(r"created={utcnow:%Y-%m-%dT%H:%M:%SZ}".to_string()),
                         regex: Some(true),
                         ..FileConfig::empty()
                     },
@@ -2011,9 +2011,9 @@ pub mod tests {
                         FileChange {
                             parse_version_pattern: parse.clone(),
                             serialize_version_patterns: serialize.clone(),
-                            search: r#"created=\d{{4}}-\d{{2}}-\d{{2}}T\d{{2}}:\d{{2}}:\d{{2}}Z"#
+                            search: r"created=\d{{4}}-\d{{2}}-\d{{2}}T\d{{2}}:\d{{2}}:\d{{2}}Z"
                                 .to_string(),
-                            replace: r#"created={utcnow:%Y-%m-%dT%H:%M:%SZ}"#.to_string(),
+                            replace: r"created={utcnow:%Y-%m-%dT%H:%M:%SZ}".to_string(),
                             regex: true,
                             ignore_missing_version: false,
                             ignore_missing_file: false,

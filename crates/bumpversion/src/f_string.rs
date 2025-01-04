@@ -27,14 +27,14 @@ mod parser {
     }
 
     impl OwnedValue {
-        pub fn as_argument(&self) -> Option<&str> {
+        #[must_use] pub fn as_argument(&self) -> Option<&str> {
             match self {
                 Self::Argument(arg) => Some(arg),
                 _ => None,
             }
         }
 
-        pub fn is_argument(&self) -> bool {
+        #[must_use] pub fn is_argument(&self) -> bool {
             matches!(self, Self::Argument(_))
         }
     }
@@ -45,15 +45,15 @@ mod parser {
         Argument(&'a str),
     }
 
-    impl<'a> Value<'a> {
-        pub fn as_argument(&self) -> Option<&str> {
+    impl Value<'_> {
+        #[must_use] pub fn as_argument(&self) -> Option<&str> {
             match self {
                 Self::Argument(arg) => Some(arg),
                 _ => None,
             }
         }
 
-        pub fn is_argument(&self) -> bool {
+        #[must_use] pub fn is_argument(&self) -> bool {
             matches!(self, Self::Argument(_))
         }
     }
@@ -83,7 +83,7 @@ mod parser {
             alt((any_except_curly_bracket1, "{{".value("{"), "}}".value("}"))),
         )
         .fold(String::new, |mut string, c| {
-            string.push_str(&c);
+            string.push_str(c);
             string
         })
         .map(Value::String)
@@ -95,7 +95,7 @@ mod parser {
         s: &mut &'a str,
     ) -> PResult<Value<'a>, InputError<&'a str>> {
         delimited("{", any_except_curly_bracket0, "}")
-            .map(|inner| Value::Argument(inner))
+            .map(Value::Argument)
             .context("non_escaped_bracket_argument")
             .parse_next(s)
     }
@@ -121,7 +121,7 @@ mod parser {
             .map_err(|_| Error {
                 format_string: value.to_string(),
             })?;
-        return Ok(test);
+        Ok(test)
     }
 
     #[cfg(test)]
@@ -248,8 +248,8 @@ pub struct OwnedPythonFormatString(pub Vec<parser::OwnedValue>);
 
 impl std::fmt::Display for OwnedPythonFormatString {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for value in self.0.iter() {
-            write!(f, "{value}")?
+        for value in &self.0 {
+            write!(f, "{value}")?;
         }
         Ok(())
     }
@@ -320,7 +320,7 @@ impl OwnedPythonFormatString {
                 parser::OwnedValue::Argument(arg) => {
                     let as_timestamp = || {
                         // try to parse as timestamp of format "utcnow:%Y-%m-%dT%H:%M:%SZ"
-                        arg.split_once(":").and_then(|(arg, format)| {
+                        arg.split_once(':').and_then(|(arg, format)| {
                             values.get(arg).and_then(|value| {
                                 let timestamp =
                                     chrono::DateTime::parse_from_rfc3339(value.as_ref()).ok()?;
@@ -329,14 +329,14 @@ impl OwnedPythonFormatString {
                         })
                     };
                     let value = values
-                        .get(&arg)
+                        .get(arg)
                         .map(|value| value.as_ref().to_string())
                         .or_else(as_timestamp);
 
                     match value {
                         Some(value) => Ok(value),
                         None if strict => Err(MissingArgumentError(arg.to_string())),
-                        None => Ok("".to_string()),
+                        None => Ok(String::new()),
                     }
                 }
                 parser::OwnedValue::String(s) => Ok(s.clone()),

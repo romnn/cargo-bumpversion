@@ -53,7 +53,7 @@ pub enum ConfigFile {
 }
 
 impl ConfigFile {
-    pub fn path(&self) -> &Path {
+    #[must_use] pub fn path(&self) -> &Path {
         match self {
             Self::BumpversionToml(path) => path.as_ref(),
             Self::PyProject(path) => path.as_ref(),
@@ -161,7 +161,7 @@ pub struct GlobalConfig {
 }
 
 impl GlobalConfig {
-    pub fn empty() -> Self {
+    #[must_use] pub fn empty() -> Self {
         Self {
             allow_dirty: None,
             current_version: None,
@@ -249,7 +249,7 @@ pub struct FileConfig {
 }
 
 impl FileConfig {
-    pub fn empty() -> Self {
+    #[must_use] pub fn empty() -> Self {
         Self {
             // allow_dirty: None,
             // current_version: None,
@@ -517,7 +517,7 @@ impl InputFile {
         }
     }
 
-    pub fn as_path(&self) -> Option<&Path> {
+    #[must_use] pub fn as_path(&self) -> Option<&Path> {
         match self {
             Self::Path(path) => Some(path.as_path()),
             _ => None,
@@ -553,7 +553,7 @@ impl Default for Config {
 impl Config {
     /// Merge global config with per-file configurations
     pub fn merge_global_config(&mut self) {
-        for (_, file_config) in self.files.iter_mut() {
+        for (_, file_config) in &mut self.files {
             file_config.merge_with(&self.global);
         }
     }
@@ -562,7 +562,7 @@ impl Config {
     // pub fn apply_defaults(&mut self, defaults: &FileConfig) {
     pub fn apply_defaults(&mut self, defaults: &GlobalConfig) {
         self.global.merge_with(defaults);
-        for (_, file_config) in self.files.iter_mut() {
+        for (_, file_config) in &mut self.files {
             file_config.merge_with(defaults);
         }
     }
@@ -686,7 +686,7 @@ impl FileChange {
         }
 
         let ctx: HashMap<&str, String> = ctx
-            .into_iter()
+            .iter()
             .map(|(k, v)| (k.borrow(), regex::escape(v.as_ref())))
             .collect();
         let regex_pattern = search.format(&ctx, strict)?;
@@ -730,16 +730,16 @@ impl FileChange {
     //     self.exclude_bumps.merge_with(other.exclude_bumps.as_ref());
     // }
 
-    pub fn will_bump_component(&self, component: &str) -> bool {
+    #[must_use] pub fn will_bump_component(&self, component: &str) -> bool {
         self.include_bumps
             .as_ref()
-            .is_some_and(|bumps| bumps.iter().find(|c| c.as_str() == component).is_some())
+            .is_some_and(|bumps| bumps.iter().any(|c| c.as_str() == component))
     }
 
-    pub fn will_not_bump_component(&self, component: &str) -> bool {
+    #[must_use] pub fn will_not_bump_component(&self, component: &str) -> bool {
         self.exclude_bumps
             .as_ref()
-            .is_some_and(|bumps| bumps.iter().find(|c| c.as_str() == component).is_some())
+            .is_some_and(|bumps| bumps.iter().any(|c| c.as_str() == component))
     }
 }
 
@@ -796,7 +796,7 @@ pub struct VersionComponentSpec {
     ///
     /// - Defaults to first value in values or 0 in the case of numeric.
     /// - Empty string means nothing is optional.
-    /// - CalVer components ignore this."""
+    /// - `CalVer` components ignore this."""
     pub optional_value: Option<String>,
 
     /// The possible values for the component.
@@ -810,7 +810,7 @@ pub struct VersionComponentSpec {
     /// Should the component always increment, even if it is not necessary?
     pub always_increment: bool,
 
-    /// The format string for a CalVer component
+    /// The format string for a `CalVer` component
     pub calver_format: Option<String>,
 
     /// The name of the component this component depends on
@@ -823,7 +823,7 @@ pub fn version_component_configs(config: &Config) -> eyre::Result<VersionCompone
         Some(parse) => {
             let re = regex::Regex::new(parse)?;
             re.capture_names()
-                .filter_map(|name| name)
+                .flatten()
                 .map(ToString::to_string)
                 .collect::<Vec<_>>()
         }
@@ -832,7 +832,7 @@ pub fn version_component_configs(config: &Config) -> eyre::Result<VersionCompone
     let part_configs: VersionComponentConfigs = parsing_groups
         .into_iter()
         .map(|label| {
-            let is_independent = label.starts_with("$");
+            let is_independent = label.starts_with('$');
             let mut spec = match config.components.get(&label) {
                 Some(part) => part.clone(),
                 None => VersionComponentSpec::default(),

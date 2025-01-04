@@ -47,6 +47,6 @@ pub fn check_exit_status(
 
 pub fn run_command(cmd: &mut std::process::Command) -> Result<Output, Error> {
     let output = cmd.output()?;
-    check_exit_status(&cmd, &output)?;
+    check_exit_status(cmd, &output)?;
     Ok(output.into())
 }

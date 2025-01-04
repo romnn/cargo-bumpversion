@@ -34,12 +34,12 @@ aho-corasick = "1"
 codespan-reporting = "0"
 unindent = "0"
 
-# optional: pest parser
-pest = "2"
-pest_derive = "2"
+# # optional: pest parser
+# pest = "2"
+# pest_derive = "2"
 
-# optional: nom parser
-nom = "7"
+# # optional: nom parser
+# nom = "7"
 
 [dev-dependencies]
 color-eyre = "0"
@@ -47,5 +47,5 @@ similar-asserts = "1"
 indoc = "2"
 lazy_static = "1"
 
-pest-test = "0"
-pest-test-gen = "0"
+# pest-test = "0"
+# pest-test-gen = "0"

@@ -3,7 +3,7 @@ use termcolor::ColorChoice;
 use tracing::{info, warn};
 use tracing_subscriber::layer::SubscriberExt;
 
-pub const APPLICATION_NAME: &'static str = "bumpversion";
+pub const APPLICATION_NAME: &str = "bumpversion";
 
 pub trait ToLogLevel {
     fn to_log_level(self) -> tracing::metadata::Level;
@@ -79,7 +79,10 @@ pub fn setup_logging(
         ColorChoice::Always => true,
         ColorChoice::AlwaysAnsi => true,
         ColorChoice::Never => false,
-        ColorChoice::Auto => atty::is(atty::Stream::Stdout),
+        ColorChoice::Auto => {
+            use std::io::IsTerminal;
+            std::io::stdout().is_terminal()
+        }
     };
 
     let fmt_layer_pretty = tracing_subscriber::fmt::Layer::new()

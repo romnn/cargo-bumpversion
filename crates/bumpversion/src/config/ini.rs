@@ -58,7 +58,7 @@ mod diagnostics {
                     span,
                     ..
                 } => vec![Diagnostic::error()
-                    .with_message(format!("invalid format string"))
+                    .with_message("invalid format string".to_string())
                     .with_labels(vec![
                         Label::primary(file_id, span.clone()).with_message(source.to_string()),
                         Label::secondary(file_id, span.clone()).with_message(message),
@@ -125,7 +125,7 @@ pub fn as_format_string(value: ini::Spanned<String>) -> Result<OwnedPythonFormat
     OwnedPythonFormatString::parse(&inner).map_err(|source| Error::InvalidFormatString {
         source,
         message: "invalid format string".to_string(),
-        span: span.into(),
+        span,
     })
 }
 
@@ -135,10 +135,10 @@ pub fn as_string_array(
     allow_single_value: bool,
 ) -> Result<Vec<String>, Error> {
     let ini::Spanned { inner, span } = value;
-    if inner.contains("\n") {
-        Ok(inner.trim().split("\n").map(ToString::to_string).collect())
-    } else if inner.contains(",") {
-        Ok(inner.trim().split(",").map(ToString::to_string).collect())
+    if inner.contains('\n') {
+        Ok(inner.trim().split('\n').map(ToString::to_string).collect())
+    } else if inner.contains(',') {
+        Ok(inner.trim().split(',').map(ToString::to_string).collect())
     } else if allow_single_value {
         Ok(vec![inner])
     } else {
@@ -151,7 +151,7 @@ pub fn as_string_array(
 }
 
 #[inline]
-pub fn as_optional(value: ini::Spanned<String>) -> Option<ini::Spanned<String>> {
+#[must_use] pub fn as_optional(value: ini::Spanned<String>) -> Option<ini::Spanned<String>> {
     if value.as_ref() == "None" {
         None
     } else {
@@ -177,12 +177,7 @@ pub(crate) fn parse_part_config<'de>(
         .transpose()?
         .unwrap_or_default();
 
-    Ok(VersionComponentSpec {
-        optional_value,
-        values,
-        independent,
-        ..VersionComponentSpec::default()
-    })
+    Ok(VersionComponentSpec { independent, optional_value, values, ..VersionComponentSpec::default() })
 }
 
 pub(crate) fn parse_global_config(
@@ -256,18 +251,18 @@ pub(crate) fn parse_global_config(
     let tag_name = value
         .remove_option("tag_name")
         .and_then(as_optional)
-        .map(|value| as_format_string(value))
+        .map(as_format_string)
         .transpose()?;
     let tag_message = value
         .remove_option("tag_message")
         .and_then(as_optional)
-        .map(|value| as_format_string(value))
+        .map(as_format_string)
         .transpose()?;
     let commit_message = value
         .remove_option("commit_message")
         .and_then(as_optional)
         .or(value.remove_option("message"))
-        .map(|value| as_format_string(value))
+        .map(as_format_string)
         .transpose()?;
     let commit_args = value
         .remove_option("commit_args")
@@ -515,7 +510,7 @@ impl Config {
             }
 
             found = true;
-            let section_parts = section_name.split(":").map(str::trim).collect::<Vec<_>>();
+            let section_parts = section_name.split(':').map(str::trim).collect::<Vec<_>>();
 
             match section_parts[..] {
                 ["bumpversion"] => {
@@ -555,7 +550,7 @@ impl Config {
                                 section_parts.join(":")
                             ))
                             .with_labels(vec![Label::primary(file_id, span.clone()).with_message(
-                                format!("should be of the form `bumpversion:kind:file_name`",),
+                                "should be of the form `bumpversion:kind:file_name`".to_string(),
                             )]);
                         diagnostics.push(diagnostic);
                     }
@@ -577,7 +572,7 @@ impl Config {
         strict: bool,
         diagnostics: &mut Vec<Diagnostic<FileId>>,
     ) -> Result<Option<Self>, Error> {
-        let config = ini::from_str(&config, options, file_id, diagnostics)
+        let config = ini::from_str(config, options, file_id, diagnostics)
             .map_err(|source| Error::Ini { source })?;
         let allow_unknown = false;
         Self::from_ini_value(config, file_id, strict, allow_unknown, diagnostics)
@@ -590,7 +585,7 @@ impl Config {
         strict: bool,
         diagnostics: &mut Vec<Diagnostic<FileId>>,
     ) -> Result<Option<Self>, Error> {
-        let config = ini::from_str(&config, options, file_id, diagnostics)
+        let config = ini::from_str(config, options, file_id, diagnostics)
             .map_err(|source| Error::Ini { source })?;
         let allow_unknown = true;
         Self::from_ini_value(config, file_id, strict, allow_unknown, diagnostics)
@@ -599,13 +594,13 @@ impl Config {
 
 static CONFIG_CURRENT_VERSION_REGEX: once_cell::sync::Lazy<regex::Regex> =
     once_cell::sync::Lazy::new(|| {
-        regex::RegexBuilder::new(r#"(?P<section_prefix>\\[bumpversion]\n[^[]*current_version\\s*=\\s*)(?P<version>{current_version})"#).multi_line(true).build().unwrap()
+        regex::RegexBuilder::new(r"(?P<section_prefix>\\[bumpversion]\n[^[]*current_version\\s*=\\s*)(?P<version>{current_version})").multi_line(true).build().unwrap()
     });
 
-/// Update the current_version key in the configuration file.
+/// Update the `current_version` key in the configuration file.
 ///
 /// Instead of parsing and re-writing the config file with new information,
-/// it will use a regular expression to just replace the current_version value.
+/// it will use a regular expression to just replace the `current_version` value.
 /// The idea is it will avoid unintentional changes (like formatting) to the
 /// config file.
 pub fn replace_version(
@@ -706,8 +701,8 @@ mod tests {
         if let Err(ref err) = config {
             diagnostics.extend(err.to_diagnostics(file_id));
         }
-        for diagnostic in diagnostics.iter() {
-            printer.emit(&diagnostic);
+        for diagnostic in &diagnostics {
+            printer.emit(diagnostic);
         }
         printer.print();
         (config, file_id, diagnostics)
@@ -717,7 +712,7 @@ mod tests {
     fn parse_cfg_ini_simple() -> eyre::Result<()> {
         crate::tests::init();
 
-        let bumpversion_cfg = indoc::indoc! {r#"
+        let bumpversion_cfg = indoc::indoc! {r"
             [bumpversion:file:coolapp/__init__.py]
 
             [bumpversion:file(version heading):CHANGELOG.md]
@@ -726,7 +721,7 @@ mod tests {
             [bumpversion:file(previous version):CHANGELOG.md]
             search = {current_version}...HEAD
             replace = {current_version}...{new_version}
-        "#};
+        "};
 
         let config = parse_ini(
             bumpversion_cfg,
@@ -877,12 +872,12 @@ mod tests {
         Ok(())
     }
 
-    /// Taken from https://github.com/callowayproject/bump-my-version/blob/master/tests/fixtures/basic_cfg.cfg
+    /// Taken from <https://github.com/callowayproject/bump-my-version/blob/master/tests/fixtures/basic_cfg.cfg>
     #[test]
     fn parse_compat_basic_cfg_cfg() -> eyre::Result<()> {
         crate::tests::init();
 
-        let bumpversion_cfg = indoc::indoc! {r#"
+        let bumpversion_cfg = indoc::indoc! {r"
             [options.packages.find]
             exclude =
                 example*
@@ -916,7 +911,7 @@ mod tests {
             values =
                 dev
                 gamma
-        "#};
+        "};
 
         let config = parse_ini(
             bumpversion_cfg,
@@ -930,12 +925,12 @@ mod tests {
                 tag: Some(true),
                 current_version: Some("1.0.0".to_string()),
                 parse_version_pattern: Some(
-                    r#"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\-(?P<release>[a-z]+))?"#
+                    r"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\-(?P<release>[a-z]+))?"
                         .to_string(),
                 ),
                 serialize_version_patterns: Some(vec![
-                    r#"{major}.{minor}.{patch}-{release}"#.to_string(),
-                    r#"{major}.{minor}.{patch}"#.to_string(),
+                    r"{major}.{minor}.{patch}-{release}".to_string(),
+                    r"{major}.{minor}.{patch}".to_string(),
                 ]),
                 ..GlobalConfig::empty()
             },
@@ -951,9 +946,9 @@ mod tests {
                         search: Some("**unreleased**".to_string()),
                         replace: Some(
                             indoc::indoc! {
-                                r#"
+                                r"
                                 **unreleased**
-                                **v{new_version}**"#
+                                **v{new_version}**"
                             }
                             .to_string(),
                         ),
@@ -977,12 +972,12 @@ mod tests {
         Ok(())
     }
 
-    /// Taken from https://github.com/callowayproject/bump-my-version/blob/master/tests/fixtures/legacy_multiline_search.cfg
+    /// Taken from <https://github.com/callowayproject/bump-my-version/blob/master/tests/fixtures/legacy_multiline_search.cfg>
     #[test]
     fn parse_compat_legacy_multiline_search_cfg() -> eyre::Result<()> {
         crate::tests::init();
 
-        let bumpversion_cfg = indoc::indoc! {r#"
+        let bumpversion_cfg = indoc::indoc! {r"
             [bumpversion]
             current_version = 1.0.0
 
@@ -991,7 +986,7 @@ mod tests {
                 **v{current_version}**
             replace = **unreleased**
                 **v{new_version}**
-        "#};
+        "};
 
         let config = parse_ini(
             bumpversion_cfg,
@@ -1018,12 +1013,12 @@ mod tests {
         Ok(())
     }
 
-    /// Taken from https://github.com/callowayproject/bump-my-version/blob/master/tests/fixtures/legacy_multiline_search_comma.cfg
+    /// Taken from <https://github.com/callowayproject/bump-my-version/blob/master/tests/fixtures/legacy_multiline_search_comma.cfg>
     #[test]
     fn parse_compat_legacy_multiline_search_comma_cfg() -> eyre::Result<()> {
         crate::tests::init();
 
-        let bumpversion_cfg = indoc::indoc! {r#"
+        let bumpversion_cfg = indoc::indoc! {r"
             [bumpversion]
             current_version = 1.0.0
 
@@ -1032,7 +1027,7 @@ mod tests {
                 **v{current_version}**,
             replace = **unreleased**,
                 **v{new_version}**,
-        "#};
+        "};
 
         let config = parse_ini(
             bumpversion_cfg,

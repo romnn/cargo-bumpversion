@@ -113,12 +113,12 @@ where
     for change in changes {
         // we need to update the version because each file may serialize versions differently
         let current_version_serialized =
-            current_version.serialize(&change.serialize_version_patterns, &ctx)?;
+            current_version.serialize(&change.serialize_version_patterns, ctx)?;
         let new_version_serialized =
-            new_version.serialize(&change.serialize_version_patterns, &ctx)?;
+            new_version.serialize(&change.serialize_version_patterns, ctx)?;
 
         let ctx: HashMap<&str, &str> = ctx
-            .into_iter()
+            .iter()
             .map(|(k, v)| (k.borrow(), v.as_ref()))
             .chain([
                 ("current_version", current_version_serialized.as_str()),
@@ -295,7 +295,7 @@ fn resolve_glob_files(
         require_literal_leading_dot: false,
     };
     let included: HashSet<PathBuf> = glob::glob_with(pattern, options)?
-        .map(|entry| entry.map(|path| path.to_path_buf()))
+        .map(|entry| entry)
         .collect::<Result<_, _>>()?;
 
     let excluded: HashSet<PathBuf> = exclude_patterns
@@ -303,8 +303,8 @@ fn resolve_glob_files(
         .map(|pattern| glob::glob_with(pattern, options))
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
-        .flat_map(|pattern| pattern.into_iter())
-        .map(|entry| entry.map(|path| path.to_path_buf()))
+        .flat_map(std::iter::IntoIterator::into_iter)
+        .map(|entry| entry)
         .collect::<Result<_, _>>()?;
 
     Ok(included.difference(&excluded).cloned().collect())
@@ -351,7 +351,7 @@ pub fn resolve_files_from_config<'a>(
 
     let new_files = new_files
         .into_iter()
-        .flat_map(|new_files| new_files)
+        .flatten()
         .try_fold(
             IndexMap::<PathBuf, Vec<FileChange>>::new(),
             |mut acc, res| {
@@ -381,7 +381,7 @@ pub fn files_to_modify<'a>(
         .included_paths
         .as_deref()
         .unwrap_or_default()
-        .into_iter()
+        .iter()
         .collect();
 
     let included_files: HashSet<&'a PathBuf> = file_map

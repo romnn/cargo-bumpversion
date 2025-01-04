@@ -26,7 +26,7 @@ where
     type Target = <T as std::ops::Deref>::Target;
 
     fn deref(&self) -> &Self::Target {
-        self.as_ref().deref()
+        self.as_ref()
     }
 }
 
@@ -134,7 +134,7 @@ impl PartialEq<str> for Spanned<String> {
     }
 }
 
-impl<'a> PartialEq<str> for &'a Spanned<String> {
+impl PartialEq<str> for &Spanned<String> {
     fn eq(&self, other: &str) -> bool {
         std::cmp::PartialEq::eq(self.as_ref().as_str(), other)
     }
@@ -163,7 +163,7 @@ where
     T: PartialOrd,
 {
     fn partial_cmp(&self, other: &T) -> Option<std::cmp::Ordering> {
-        PartialOrd::partial_cmp(&self.inner, &other)
+        PartialOrd::partial_cmp(&self.inner, other)
     }
 }
 

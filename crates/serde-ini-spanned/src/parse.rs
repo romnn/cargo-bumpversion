@@ -54,7 +54,7 @@ impl std::fmt::Display for SyntaxError {
                 f,
                 r"variable assignment missing one of: {}",
                 assignment_delimiters
-                    .into_iter()
+                    .iter()
                     .map(|d| format!("`{d}`"))
                     .collect::<Vec<_>>()
                     .join(", ")
@@ -137,7 +137,7 @@ pub fn trim_trailing_whitespace(value: &mut String, span: &mut Span) {
     *value = value.split_at(value.len() - count).0.to_string();
 }
 
-pub fn compact_span(line: &str, span: Span) -> Span {
+#[must_use] pub fn compact_span(line: &str, span: Span) -> Span {
     let Span { mut start, mut end } = span;
     assert!(start <= end);
 
@@ -162,13 +162,11 @@ fn to_byte_span(line: &str, span: Span) -> Span {
     let start = line
         .char_indices()
         .nth(span.start)
-        .map(|(offset, _)| offset)
-        .unwrap_or(span.start);
+        .map_or(span.start, |(offset, _)| offset);
     let end = line
         .char_indices()
         .nth(span.end)
-        .map(|(offset, _)| offset)
-        .unwrap_or(span.end);
+        .map_or(span.end, |(offset, _)| offset);
     Span { start, end }
 }
 
@@ -186,21 +184,13 @@ impl AddOffset for Span {
 }
 
 #[derive(Debug)]
+#[derive(Default)]
 pub struct ParseState {
     current_section: HashMap<String, Vec<String>>,
     option_name: Option<String>,
     indent_level: usize,
 }
 
-impl Default for ParseState {
-    fn default() -> Self {
-        Self {
-            current_section: Default::default(),
-            option_name: None,
-            indent_level: 0,
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Config {
@@ -337,7 +327,7 @@ where
                 ));
             }
 
-            let is_empty = line.chars().all(|c| c.is_whitespace());
+            let is_empty = line.chars().all(char::is_whitespace);
 
             // check if continue
             let mut is_continue = false;
@@ -374,7 +364,7 @@ where
                     println!("\t=> empty (continuation)");
                     items.push(Spanned::new(
                         to_byte_span(&line, span.clone()).add_offset(offset),
-                        Item::ContinuationValue { value: line.into() },
+                        Item::ContinuationValue { value: line },
                     ));
                 } else {
                     // reset current option
@@ -415,7 +405,7 @@ where
 
                 state.indent_level = key_span.start;
 
-                println!("\t=> key={} value={}", key, value);
+                println!("\t=> key={key} value={value}");
                 state.option_name = Some(key.to_string());
                 state
                     .current_section
@@ -488,7 +478,7 @@ mod tests {
         use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
 
-        let config = indoc::indoc! {r#"
+        let config = indoc::indoc! {r"
             [DEFAULT]
             key1 = value1
             pizzatime = yes
@@ -500,7 +490,7 @@ mod tests {
 
             [github.com]
             User = QEDK
-        "#};
+        "};
 
         let have = parse(config, Options::default(), &Printer::default()).0?;
         let mut expected = Value::with_defaults([].into_iter().collect());
@@ -570,7 +560,7 @@ mod tests {
         ];
         sim_assert_eq!(
             have.section_names()
-                .map(|name| name.as_ref())
+                .map(std::convert::AsRef::as_ref)
                 .collect::<Vec<_>>(),
             expected_section_names
         );
@@ -708,7 +698,7 @@ mod tests {
         sim_assert_eq!(&*section["foo"], "bar3");
         sim_assert_eq!(&*section["baz"], "qwe");
         sim_assert_eq!(
-            &*have
+            have
                 .section("Commented Bar")
                 .unwrap()
                 .get("foo")
@@ -717,7 +707,7 @@ mod tests {
             "bar4"
         );
         sim_assert_eq!(
-            &*have
+            have
                 .section("Commented Bar")
                 .unwrap()
                 .get("baz")
@@ -726,7 +716,7 @@ mod tests {
             "qwe"
         );
         sim_assert_eq!(
-            &*have
+            have
                 .section("Spaces")
                 .unwrap()
                 .get("key with spaces")
@@ -735,7 +725,7 @@ mod tests {
             "value"
         );
         sim_assert_eq!(
-            &*have
+            have
                 .section("Spaces")
                 .unwrap()
                 .get("another with spaces")
@@ -923,7 +913,7 @@ mod tests {
         );
 
         // self.assertTrue(cf.has_option('Foo Bar', 'this_value'))
-        assert_eq!(have.has_option("Foo Bar", "this_value"), true);
+        assert!(have.has_option("Foo Bar", "this_value"));
 
         // self.assertFalse(cf.remove_option('Foo Bar', 'this_value'))
         assert!(have.remove_option("Foo Bar", "this_value").is_none());
@@ -1131,7 +1121,7 @@ mod tests {
                 config.get("A", option).is_some(),
                 true,
                 "has_option() returned false for option which should exist"
-            )
+            );
         }
 
         sim_assert_eq!(
@@ -1346,18 +1336,18 @@ mod tests {
         for x in 1..5 {
             sim_assert_eq!(
                 config
-                    .get_bool("BOOLTEST", &format!("t{}", x))?
+                    .get_bool("BOOLTEST", &format!("t{x}"))?
                     .map(Spanned::into_inner),
                 Some(true)
             );
             sim_assert_eq!(
                 config
-                    .get_bool("BOOLTEST", &format!("f{}", x))?
+                    .get_bool("BOOLTEST", &format!("f{x}"))?
                     .map(Spanned::into_inner),
                 Some(false)
             );
             assert!(config
-                .get_bool("BOOLTEST", &format!("e{}", x))
+                .get_bool("BOOLTEST", &format!("e{x}"))
                 .unwrap_err()
                 .to_string()
                 .starts_with("invalid boolean: "));
@@ -1550,7 +1540,7 @@ mod tests {
 
         sim_assert_eq!(config.section_names().collect::<Vec<_>>(), vec!["zing"]);
         sim_assert_eq!(
-            config.section("zing").map(|section| section.keys_vec()),
+            config.section("zing").map(super::super::tests::SectionProxyExt::keys_vec),
             Some(vec!["option1", "option2", "foo"]),
         );
 
@@ -1779,7 +1769,7 @@ mod tests {
                 .defaults()
                 .get_float("1")?
                 .as_ref()
-                .map(|value| value.as_ref())
+                .map(std::convert::AsRef::as_ref)
                 .copied(),
             Some(2.4)
         );
@@ -1792,7 +1782,7 @@ mod tests {
                 .defaults()
                 .get_float("a")?
                 .as_ref()
-                .map(|value| value.as_ref())
+                .map(std::convert::AsRef::as_ref)
                 .copied(),
             Some(5.2)
         );
@@ -1805,7 +1795,7 @@ mod tests {
         crate::tests::init();
 
         let config = unindent(
-            r#"
+            r"
             [numbers]
             one = 1
             two = %(one)s * 2
@@ -1813,7 +1803,7 @@ mod tests {
 
             [hexen]
             sixteen = ${numbers:two} * 8
-            "#,
+            ",
         );
         let config = parse(&config, Options::default(), &Printer::default()).0?;
 
@@ -1851,7 +1841,7 @@ mod tests {
 
         let wonderful_spam =
             "I'm having spam spam spam spam spam spam spam beaked beans spam spam spam and spam!"
-                .replace(" ", "\n\t");
+                .replace(' ', "\n\t");
 
         // we're reading from file because this is where the code changed
         // during performance updates in Python 3.2
@@ -1895,7 +1885,7 @@ mod tests {
 
         let mut config = Value::default();
         config.add_section("non-string".into(), []);
-        config.set("non-string".into(), "int".into(), "1".into());
+        config.set("non-string", "int".into(), "1".into());
         todo!("support for different value types similar to serde_json");
         // config.set("non-string", "list", vec![0, 1, 1, 2, 3, 5, 8, 13]);
         // // config.set("non-string", "dict", {'pi': 3.14159});
@@ -1913,7 +1903,7 @@ mod tests {
         use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
         let config = include_str!("../test-data/cfgparser.1.ini");
-        let mut config = parse(&config, Options::default(), &Printer::default()).0?;
+        let mut config = parse(config, Options::default(), &Printer::default()).0?;
         println!("{}", &config);
         Ok(())
     }
@@ -1933,7 +1923,7 @@ mod tests {
             },
             ..Options::default()
         };
-        let mut config = parse(&config, options, &Printer::default()).0?;
+        let mut config = parse(config, options, &Printer::default()).0?;
         println!("{}", &config);
 
         sim_assert_eq!(
@@ -1956,7 +1946,7 @@ mod tests {
             config
                 .get_int("global", "max log size")?
                 .as_ref()
-                .map(|value| value.as_ref())
+                .map(std::convert::AsRef::as_ref)
                 .copied(),
             Some(50)
         );
@@ -1987,7 +1977,7 @@ mod tests {
             },
             ..Options::default()
         };
-        let mut config = parse(&config, options, &Printer::default()).0?;
+        let mut config = parse(config, options, &Printer::default()).0?;
         println!("{}", &config);
 
         sim_assert_eq!(
@@ -2094,7 +2084,7 @@ mod tests {
 
     /// Basic configparser compat test
     ///
-    /// adapted from: https://github.com/python/cpython/blob/3.13/Lib/test/test_configparser.py#L294
+    /// adapted from: <https://github.com/python/cpython/blob/3.13/Lib/test/test_configparser.py#L294>
     #[test]
     fn configparser_compat_basic() -> eyre::Result<()> {
         crate::tests::init();
@@ -2233,7 +2223,7 @@ mod tests {
     fn parse_ini_multi_line_continuation() -> eyre::Result<()> {
         crate::tests::init();
 
-        let config = indoc::indoc! {r#"
+        let config = indoc::indoc! {r"
             [options.packages.find]
             exclude =
                 example*
@@ -2250,7 +2240,7 @@ mod tests {
             values =
                 dev
                 gamma
-        "#};
+        "};
 
         let have = parse(config, Options::default(), &Printer::default()).0?;
         dbg!(&have);

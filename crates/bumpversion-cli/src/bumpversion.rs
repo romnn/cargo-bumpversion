@@ -127,14 +127,14 @@ fn main() -> eyre::Result<()> {
                 }
             };
             // emit diagnostics
-            for diagnostic in diagnostics.iter() {
+            for diagnostic in &diagnostics {
                 printer.emit(diagnostic);
             }
-            config_res.map(|c| c.map(|c| (path.to_path_buf(), c)))
+            config_res.map(|c| c.map(|c| (path.clone(), c)))
             // let config = config_res?;
             // Ok::<Option<config::Config>, eyre::Report>(config)
         })
-        .filter_map(|v| v.transpose());
+        .filter_map(std::result::Result::transpose);
 
     let config_files: Vec<_> = config_files.collect();
     dbg!(&config_files);
