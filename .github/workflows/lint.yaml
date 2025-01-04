@@ -13,7 +13,7 @@ jobs:
 
   lint:
     name: lint ${{ matrix.package.name }} (features ${{ matrix.package.features }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [feature-matrix]
     strategy:
       fail-fast: false
@@ -31,7 +31,7 @@ jobs:
           --features "${{ matrix.package.features }}"
 
   audit:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: arduino/setup-task@v2
@@ -43,7 +43,7 @@ jobs:
         run: task audit
 
   outdated:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: arduino/setup-task@v2
@@ -55,7 +55,7 @@ jobs:
         run: task outdated
 
   unused-dependencies:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: arduino/setup-task@v2
@@ -66,7 +66,7 @@ jobs:
         run: task unused-dependencies
 
   spellcheck:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: arduino/setup-task@v2

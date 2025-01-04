@@ -8,7 +8,7 @@ on:
 jobs:
   matrix:
     name: Generate feature matrix
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       matrix: ${{ steps.compute-matrix.outputs.matrix }}
     steps:

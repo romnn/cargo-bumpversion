@@ -186,7 +186,7 @@ async fn main() -> eyre::Result<()> {
         &repo,
         &config,
         &TagAndRevision { tag, revision },
-        &file_map,
+        file_map,
         components,
         Some(config_file_path.as_path()),
         dry_run,

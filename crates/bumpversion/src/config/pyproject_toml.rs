@@ -733,7 +733,7 @@ fn replace_version_of_document(
 // }
 
 /// Update the `current_version` key in the configuration file
-pub fn replace_version(
+pub async fn replace_version(
     path: &Path,
     config: &Config,
     current_version: &str,
@@ -742,7 +742,7 @@ pub fn replace_version(
 ) -> eyre::Result<bool> {
     tracing::info!(config = ?path, "processing config file");
 
-    let existing_config = std::fs::read_to_string(path)?;
+    let existing_config = tokio::fs::read_to_string(path).await?;
     let extension = path.extension().and_then(|ext| ext.to_str());
 
     if extension.is_some_and(|ext| !ext.eq_ignore_ascii_case("toml")) {
@@ -805,15 +805,16 @@ pub fn replace_version(
         println!("{diff}");
     } else {
         todo!("write");
-        use std::io::Write;
-        let file = std::fs::OpenOptions::new()
+        use tokio::io::AsyncWriteExt;
+        let file = tokio::fs::OpenOptions::new()
             .write(true)
             .create(false)
             .truncate(true)
-            .open(path)?;
-        let mut writer = std::io::BufWriter::new(file);
-        writer.write_all(new_config.as_bytes())?;
-        writer.flush()?;
+            .open(path)
+            .await?;
+        let mut writer = tokio::io::BufWriter::new(file);
+        writer.write_all(new_config.as_bytes()).await?;
+        writer.flush().await?;
     }
     Ok(true)
 }

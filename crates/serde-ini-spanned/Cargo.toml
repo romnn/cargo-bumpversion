@@ -1,8 +1,9 @@
 [package]
 name = "serde-ini-spanned"
 version = "0.2.0"
+description = "INI configuration file deserialization similar to Python's configparser"
 publish = true
-description = "Windows INI file {de,}serialization"
+
 edition.workspace = true
 authors.workspace = true
 license-file.workspace = true

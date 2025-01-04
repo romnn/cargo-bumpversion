@@ -560,14 +560,14 @@ static CONFIG_CURRENT_VERSION_REGEX: once_cell::sync::Lazy<regex::Regex> =
 /// it will use a regular expression to just replace the `current_version` value.
 /// The idea is it will avoid unintentional changes (like formatting) to the
 /// config file.
-pub fn replace_version(
+pub async fn replace_version(
     path: &Path,
     _config: &Config,
     current_version: &str,
     new_version: &str,
     dry_run: bool,
 ) -> eyre::Result<bool> {
-    let existing_config = std::fs::read_to_string(path)?;
+    let existing_config = tokio::fs::read_to_string(path).await?;
     // let extension = path.extension().and_then(|ext| ext.to_str());
     let matches = CONFIG_CURRENT_VERSION_REGEX.find_iter(&existing_config);
     // let new_config = if extension == Some("cfg") && matches.count() > 0 {
@@ -597,38 +597,19 @@ pub fn replace_version(
     if dry_run {
         println!("{diff}");
     } else {
-        use std::io::Write;
-        let file = std::fs::OpenOptions::new()
+        use tokio::io::AsyncWriteExt;
+        let file = tokio::fs::OpenOptions::new()
             .write(true)
             .create(false)
             .truncate(true)
-            .open(path)?;
-        let mut writer = std::io::BufWriter::new(file);
-        writer.write_all(new_config.as_bytes())?;
-        writer.flush()?;
+            .open(path)
+            .await?;
+        let mut writer = tokio::io::BufWriter::new(file);
+        writer.write_all(new_config.as_bytes()).await?;
+        writer.flush().await?;
     }
     Ok(true)
 }
-
-// def autocast_value(var: Any) -> Any:
-//     """
-//     Guess the string representation of the variable's type.
-//
-//     Args:
-//         var: Value to autocast.
-//
-//     Returns:
-//         The autocasted value.
-//     """
-//     if not isinstance(var, str):  # don't need to guess non-string types
-//         return var
-//
-//     # guess string representation of var
-//     for caster in (boolify, int, float, noneify, listify):
-//         with contextlib.suppress(ValueError):
-//             return caster(var)  # type: ignore[operator]
-//
-//     return var
 
 #[cfg(test)]
 mod tests {

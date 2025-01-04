@@ -8,7 +8,6 @@ pub mod diagnostics;
 pub mod f_string;
 pub mod files;
 pub mod hooks;
-pub mod utils;
 pub mod vcs;
 pub mod version;
 
@@ -21,6 +20,7 @@ use futures::stream::{StreamExt, TryStreamExt};
 use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 pub enum Bump<'a> {
     Component(&'a str),
@@ -143,7 +143,7 @@ pub async fn bump(
     repo: &GitRepository,
     config: &config::Config,
     tag_and_revision: &TagAndRevision,
-    file_map: &FileMap,
+    file_map: FileMap,
     components: config::VersionComponentConfigs,
     config_file: Option<&Path>,
     dry_run: bool,
@@ -159,13 +159,11 @@ pub async fn bump(
         "parsing current version"
     );
 
-    // TODO: parse this as regex already
     let parse_version_pattern = config
         .global
         .parse_version_pattern
         .as_deref()
         .unwrap_or(&config::defaults::PARSE_VERSION_REGEX);
-    // let parse_version_pattern = regex::RegexBuilder::new(parse_version_pattern).build()?;
 
     let version_spec = version::VersionSpec::from_components(components)?;
 
@@ -175,7 +173,6 @@ pub async fn bump(
         &version_spec,
     )?;
     let current_version = current_version.ok_or_else(|| eyre::eyre!("current version is empty"))?;
-    // dbg!(&current_version);
 
     let working_dir = repo.path();
     hooks::run_setup_hooks(
@@ -212,14 +209,13 @@ pub async fn bump(
     )
     .collect();
 
-    let next_version_serialized = next_version.serialize(
-        config
-            .global
-            .serialize_version_patterns
-            .as_deref()
-            .unwrap_or_default(),
-        &ctx_without_new_version,
-    )?;
+    let serialize_version_patterns = config
+        .global
+        .serialize_version_patterns
+        .as_deref()
+        .unwrap_or_default();
+    let next_version_serialized =
+        next_version.serialize(serialize_version_patterns, &ctx_without_new_version)?;
     tracing::info!(version = next_version_serialized, "next version");
 
     if current_version_serialized == &next_version_serialized {
@@ -234,42 +230,16 @@ pub async fn bump(
         tracing::info!("dry run active, won't touch any files.");
     }
 
-    // let mut files_to_modify: Vec<(PathBuf, &config::FileChange)> =
-    // let mut files_to_modify: IndexMap<PathBuf, &config::FileChange> =
-    //     files::files_to_modify(&config, &file_map)
-    //         // .flat_map(|(file, configs)| {
-    //         //     configs
-    //         //         .into_iter()
-    //         //         // .copied()
-    //         //         .map(|config| (file.clone(), config))
-    //         // })
-    //         .collect();
-    // files_to_modify.sort();
-
-    // dbg!(&files_to_modify);
-    // let mut configured_files = files::resolve(&files_to_modify, None, None);
-    let mut configured_files: IndexMap<&PathBuf, &Vec<config::FileChange>> =
-        files::files_to_modify(config, file_map)
-            // .into_iter()
-            // .map(|(file, changes)| {
-            //     files::ConfiguredFile::new(
-            //         file.to_path_buf(),
-            //         (*config).clone(),
-            //         // version_config,
-            //         search,
-            //         replace,
-            //     )
-            // })
-            .collect();
+    let mut configured_files: IndexMap<PathBuf, Vec<config::FileChange>> =
+        files::files_to_modify(config, file_map).collect();
 
     // filter the files that are not valid for this bump
     if let Bump::Component(version_component_to_bump) = bump {
-        // TODO: use iter_mut() and retain on the changes...
-        // configured_files.retain(|_, change| change.will_bump_component(version_component_to_bump));
-        // configured_files
-        //     .retain(|_, change| !change.will_not_bump_component(version_component_to_bump));
+        for changes in configured_files.values_mut() {
+            changes.retain(|change| change.will_bump_component(version_component_to_bump));
+            changes.retain(|change| !change.will_not_bump_component(version_component_to_bump));
+        }
     }
-    // dbg!(&configured_files);
 
     let ctx_with_new_version: HashMap<String, String> = context::get_context(
         Some(tag_and_revision),
@@ -280,19 +250,31 @@ pub async fn bump(
     )
     .collect();
 
-    // dbg!(&ctx_with_new_version);
+    let configured_files = Arc::new(configured_files);
 
-    for (path, change) in &configured_files {
-        assert!(path.is_absolute());
-        files::replace_version_in_file(
-            path,
-            change,
-            &current_version,
-            &next_version,
-            &ctx_with_new_version,
-            dry_run,
-        )?;
-    }
+    futures::stream::iter(configured_files.iter())
+        .map(|file| async move { file })
+        .buffer_unordered(8)
+        .then(|(path, change)| {
+            let current_version = current_version.clone();
+            let next_version = next_version.clone();
+            let ctx_with_new_version = ctx_with_new_version.clone();
+            async move {
+                assert!(path.is_absolute());
+                files::replace_version_in_file(
+                    &path,
+                    &change,
+                    &current_version,
+                    &next_version,
+                    &ctx_with_new_version,
+                    dry_run,
+                )
+                .await?;
+                Ok::<_, eyre::Report>(())
+            }
+        })
+        .try_collect()
+        .await?;
 
     if let Some(config_file) = config_file {
         // check if config file is inside repo
@@ -306,34 +288,32 @@ pub async fn bump(
                 .map(str::to_ascii_lowercase)
                 .as_deref()
             {
-                Some("cfg" | "ini") => config::ini::replace_version(
-                    config_file,
-                    config,
-                    current_version_serialized,
-                    &next_version_serialized,
-                    dry_run,
-                ),
-                Some("toml") => config::pyproject_toml::replace_version(
-                    config_file,
-                    config,
-                    current_version_serialized,
-                    &next_version_serialized,
-                    dry_run,
-                ),
+                Some("cfg" | "ini") => {
+                    config::ini::replace_version(
+                        config_file,
+                        config,
+                        current_version_serialized,
+                        &next_version_serialized,
+                        dry_run,
+                    )
+                    .await
+                }
+                Some("toml") => {
+                    config::pyproject_toml::replace_version(
+                        config_file,
+                        config,
+                        current_version_serialized,
+                        &next_version_serialized,
+                        dry_run,
+                    )
+                    .await
+                }
                 other => Err(eyre::eyre!("unknown config file format {other:?}")),
             }?;
         } else {
             tracing::warn!("config file {config_file:?} is outside of the repo {working_dir:?} and will not be modified");
         }
     }
-
-    // let new_version_serialized = bumpversion::version::compat::SerializedVersion {
-    //     version: next_version_serialized.clone(),
-    //     tag: tag_and_revision
-    //         .tag
-    //         .as_ref()
-    //         .map(|tag| tag.current_tag.clone()),
-    // };
 
     hooks::run_pre_commit_hooks(
         config,
@@ -353,11 +333,8 @@ pub async fn bump(
         .and_then(shlex::split)
         .unwrap_or_default();
 
-    let mut files_to_commit: HashSet<&Path> = configured_files
-        .keys()
-        .copied()
-        .map(PathBuf::as_path)
-        .collect();
+    let mut files_to_commit: HashSet<&Path> =
+        configured_files.keys().map(PathBuf::as_path).collect();
     if let Some(config_file) = config_file {
         files_to_commit.insert(config_file);
     }

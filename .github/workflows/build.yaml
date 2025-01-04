@@ -13,7 +13,7 @@ jobs:
 
   build:
     name: build ${{ matrix.package.name }} (features ${{ matrix.package.features }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [feature-matrix]
     strategy:
       fail-fast: false

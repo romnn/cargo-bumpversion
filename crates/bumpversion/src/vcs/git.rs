@@ -1,7 +1,6 @@
 use crate::{
     command::run_command,
     f_string::{PythonFormatString, Value},
-    utils,
     vcs::{RevisionInfo, TagAndRevision, TagInfo, VersionControlSystem},
 };
 use async_process::{Command, Output, Stdio};
@@ -278,21 +277,25 @@ impl VersionControlSystem for GitRepository {
         EK: AsRef<std::ffi::OsStr>,
         EV: AsRef<std::ffi::OsStr>,
     {
-        use std::io::Write;
+        use tokio::io::AsyncWriteExt;
 
         let tmp = tempfile::TempDir::new()?;
         let tmp_file_path = tmp.path().join("commit-message.txt");
-        let mut tmp_file = std::fs::File::create(&tmp_file_path)?;
-        tmp_file.write_all(message.as_bytes())?;
+        let tmp_file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&tmp_file_path)
+            .await?;
+        let mut writer = tokio::io::BufWriter::new(tmp_file);
+        writer.write_all(message.as_bytes()).await?;
 
         let mut cmd = Command::new("git");
         cmd.arg("commit");
         cmd.arg("-F");
         cmd.arg(tmp_file_path.to_string_lossy().to_string());
-        // if let Some(extra_args) = extra_args {
         cmd.args(extra_args);
         cmd.envs(env);
-        // }
         cmd.current_dir(&self.path);
         let commit_output = run_command(&mut cmd).await?;
         dbg!(&commit_output);
@@ -383,7 +386,6 @@ mod tests {
     use crate::{
         command::run_command,
         tests::sim_assert_eq_sorted,
-        utils,
         vcs::{git, temp, VersionControlSystem},
     };
     use async_process::Command;
@@ -404,7 +406,7 @@ mod tests {
                 .current_dir(repo.path()),
         )
         .await?;
-        assert!(utils::contains(&status.stdout, "No commits yet")?.is_some());
+        assert!(status.stdout.contains("No commits yet"));
         Ok(())
     }
 
@@ -452,9 +454,18 @@ mod tests {
             .collect();
 
         for dirty_file in &dirty_files {
-            crate::utils::create_dirs(dirty_file);
-            let mut file = std::fs::File::create(dirty_file)?;
-            file.write_all(b"Hello, world!")?;
+            use tokio::io::AsyncWriteExt;
+            if let Some(parent) = dirty_file.parent() {
+                tokio::fs::create_dir_all(parent);
+            }
+            let file = tokio::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(dirty_file)
+                .await?;
+            let mut writer = tokio::io::BufWriter::new(file);
+            writer.write_all(b"Hello, world!").await?;
         }
         similar_asserts::assert_eq!(repo.dirty_files().await?.len(), 0);
 

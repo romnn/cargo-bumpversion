@@ -221,15 +221,6 @@ impl std::fmt::Display for Version {
 }
 
 impl Version {
-    pub fn from_components(
-        components: impl IntoIterator<Item = (String, VersionComponent)>,
-    ) -> Self {
-        let components = components.into_iter().collect();
-        // let spec = VersionSpec::from_components(&components).expect("TODO");
-        let spec = VersionSpec::default();
-        Self { components, spec }
-    }
-
     /// Serialize a version to a string.
     pub fn serialize<S, K, V>(
         &self,
@@ -241,13 +232,7 @@ impl Version {
         V: AsRef<str> + std::fmt::Debug,
         S: AsRef<str> + std::fmt::Debug,
     {
-        serialize_version(
-            self,
-            serialize_version_patterns,
-            // .as_deref()
-            // .unwrap_or_default(),
-            ctx,
-        )
+        serialize_version(self, serialize_version_patterns, ctx)
     }
 
     // Return the values of the parts
@@ -461,10 +446,7 @@ impl VersionSpec {
 /// - if no valid serialization pattern is found, an error is raised
 fn serialize_version<S, K, V>(
     version: &Version,
-    // serialize_patterns: &[String],
     serialize_patterns: impl IntoIterator<Item = S>,
-    // ctx: impl IntoIterator<Item = (&'a str, &'a str)>,
-    // ctx: impl IntoIterator<Item = (&'a str, &'a str)>,
     ctx: &HashMap<K, V>,
 ) -> eyre::Result<String>
 where
@@ -481,22 +463,12 @@ where
         .collect();
 
     let required_component_names: HashSet<_> = version.required_component_names().collect();
-    // local_context_keys = set(local_context.keys())
-
-    // dbg!(&serialize_patterns);
 
     let mut patterns: Vec<(usize, PythonFormatString)> = serialize_patterns
         .into_iter()
         .enumerate()
         .map(|(idx, pattern)| PythonFormatString::parse(pattern.as_ref()).map(|f| (idx, f)))
         .collect::<Result<_, _>>()?;
-
-    // dbg!(&patterns);
-
-    // let mut valid_patterns: Vec<_> = patterns
-    //     .iter()
-    //     .filter(|(_, pattern)| ctx.len() >= pattern.named_arguments().count())
-    //     .collect();
 
     patterns.sort_by_key(|(idx, pattern)| {
         let labels: HashSet<&str> = pattern.named_arguments().collect();
@@ -505,13 +477,9 @@ where
         (std::cmp::Reverse(has_required_components), num_labels, *idx)
     });
 
-    // dbg!(&patterns);
-
     let (_, chosen_pattern) = patterns.first().ok_or_else(|| {
         eyre::eyre!("could not find a valid serialization format in {patterns:?} for {version:?}")
     })?;
-
-    // dbg!(&ctx);
 
     tracing::debug!(format = ?chosen_pattern, "serialization format");
     let serialized = chosen_pattern.format(&ctx, true)?;
@@ -548,39 +516,12 @@ fn parse_raw_version<'a>(version: &'a str, pattern: &'a regex::Regex) -> RawVers
     parsed
 }
 
-// impl VersionConfig {
-//     pub fn from_config(
-//         config: &config::GlobalConfig,
-//         parts: &config::VersionComponentConfigs,
-//     ) -> eyre::Result<Self> {
-//         let parse_version_regex = regex::RegexBuilder::new(
-//             config
-//                 .parse_version_pattern
-//                 .as_deref()
-//                 .unwrap_or(config::DEFAULT_PARSE_VERSION_PATTERN),
-//         )
-//         .build()?;
-//
-//         let version_spec = VersionSpec::from_components(parts)?;
-//         Ok(Self {
-//             // parse_pattern: config.parse_pattern.clone(),
-//             parse_version_regex,
-//             serialize_version_patterns: config.serialize_version_patterns.clone(),
-//             search: config.search.clone(),
-//             replace: config.replace.clone(),
-//             version_spec,
-//         })
-//     }
-
 /// Parse a version string into a Version object.
 pub fn parse_version(
     value: &str,
     regex: &regex::Regex,
     version_spec: &VersionSpec,
 ) -> eyre::Result<Option<Version>> {
-    // let config::FormatStringOrRegex::Regex(config::Regex(regex)) = regex else {
-    //     todo!();
-    // };
     let parsed = parse_raw_version(value, regex);
     if parsed.is_empty() {
         return Ok(None);

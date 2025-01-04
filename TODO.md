@@ -1,6 +1,5 @@
 #### short-term
 
-- remove "owned" python format string...
 - make async
 - implement pretty verbose mode
 - proper error types
@@ -18,6 +17,7 @@
 - more imperative, functional approach
 - make serde-ini-spanend a separate crate
 
+- DONE: remove "owned" python format string...
 - DONE: group file changes together
 - DONE: get rid of configured file
 - DONE: move do_bump to lib

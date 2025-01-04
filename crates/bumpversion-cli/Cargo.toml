@@ -46,9 +46,4 @@ codespan-reporting = "0"
 tokio.workspace = true
 futures.workspace = true
 
-# TODO: remove
-# indexmap = { version = "2", features = ["serde"] }
-# shlex = "1"
-# regex = "1"
-
 bumpversion.workspace = true

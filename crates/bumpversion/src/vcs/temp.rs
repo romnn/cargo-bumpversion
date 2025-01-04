@@ -1,4 +1,4 @@
-use crate::{command::run_command, utils, vcs::VersionControlSystem};
+use crate::{command::run_command, vcs::VersionControlSystem};
 use async_process::Command;
 use color_eyre::eyre;
 use std::io::Write;
@@ -35,7 +35,7 @@ where
     }
 
     async fn init(path: &Path) -> eyre::Result<()> {
-        std::fs::create_dir_all(path)?;
+        tokio::fs::create_dir_all(path).await?;
         let mut cmd = Command::new("git");
         cmd.args(["init"]);
         cmd.current_dir(path);

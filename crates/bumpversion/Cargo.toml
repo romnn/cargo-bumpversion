@@ -48,7 +48,7 @@ async-process = "2"
 winnow = "0.6"
 
 # regex
-regex = "1"
+regex = "^1.11"
 
 # parse config files
 serde = { version = "1", features = ["derive"] }
@@ -64,16 +64,6 @@ unindent = "0"
 # async runtime 
 tokio.workspace = true
 futures.workspace = true
-
-# removed
-# configparser = "3"
-# serde_ini = { path = "../crates/serde-ini" }
-# serde-ini-spanned = { path = "../crates/serde-ini-spanned" }
-# aho-corasick = "1"
-# fancy-regex = "0"
-# lazy-regex = "3"
-# parking_lot = "0"
-
 
 [dev-dependencies]
 color-eyre.workspace = true

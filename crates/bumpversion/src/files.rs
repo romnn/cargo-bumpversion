@@ -41,6 +41,12 @@ where
 {
     let mut after = before.to_string();
     for change in changes {
+        tracing::debug!(
+            search = ?change.search,
+            replace = ?change.replace,
+            "update",
+        );
+
         // we need to update the version because each file may serialize versions differently
         let current_version_serialized =
             current_version.serialize(&change.serialize_version_patterns, ctx)?;
@@ -100,7 +106,7 @@ where
 }
 
 /// Replace version in file
-pub fn replace_version_in_file<K, V>(
+pub async fn replace_version_in_file<K, V>(
     path: &Path,
     changes: &[FileChange],
     current_version: &Version,
@@ -112,13 +118,6 @@ where
     K: std::borrow::Borrow<str> + std::hash::Hash + Eq + std::fmt::Debug,
     V: AsRef<str> + std::fmt::Debug,
 {
-    // tracing::info!(
-    //     file = ?path,
-    //     search = ?file_change.search,
-    //     replace = ?file_change.replace,
-    //     "update file",
-    // );
-
     if !path.is_file() {
         if changes.iter().all(|change| change.ignore_missing_file) {
             tracing::info!(?path, "file not found");
@@ -127,7 +126,7 @@ where
         eyre::bail!("file not found {:?}", path);
     }
 
-    let before = std::fs::read_to_string(path)?;
+    let before = tokio::fs::read_to_string(path).await?;
     let after = replace_version(&before, changes, current_version, new_version, ctx)?;
     if before == after {
         tracing::warn!(?path, "no change after version replacement");
@@ -140,8 +139,6 @@ where
         // return Ok(());
     };
 
-    // log_changes(self.file_change.filename, file_content_before, file_content_after, dry_run)
-
     let label_existing = format!("{path:?} (before)");
     let label_new = format!("{path:?} (after)");
     let diff = similar_asserts::SimpleDiff::from_str(&before, &after, &label_existing, &label_new);
@@ -150,43 +147,18 @@ where
         println!("{diff}");
     } else {
         todo!("write");
-        use std::io::Write;
-        let file = std::fs::OpenOptions::new()
+        use tokio::io::AsyncWriteExt;
+        let file = tokio::fs::OpenOptions::new()
             .write(true)
             .create(false)
             .truncate(true)
-            .open(path)?;
-        let mut writer = std::io::BufWriter::new(file);
-        writer.write_all(after.as_bytes())?;
-        writer.flush()?;
+            .open(path)
+            .await?;
+        let mut writer = tokio::io::BufWriter::new(file);
+        writer.write_all(after.as_bytes()).await?;
+        writer.flush().await?;
     }
     Ok(())
-}
-
-// /// Resolve the files, searching and replacing values according to the FileConfig
-// pub fn resolve<'a>(
-//     files: &'a [(PathBuf, &'a FileChange)],
-//     // version_config: &VersionConfig,
-//     search: Option<&str>,
-//     replace: Option<&str>,
-// ) -> Vec<ConfiguredFile> {
-//     files
-//         .into_iter()
-//         .map(|(file, config)| {
-//             ConfiguredFile::new(
-//                 file.to_path_buf(),
-//                 (*config).clone(),
-//                 // version_config,
-//                 search,
-//                 replace,
-//             )
-//         })
-//         .collect()
-// }
-
-pub struct InputPath {
-    path: PathBuf,
-    is_glob: bool,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -292,9 +264,9 @@ pub fn resolve_files_from_config<'a>(
 /// Return a list of files to modify
 pub fn files_to_modify<'a>(
     config: &'a Config,
-    file_map: &'a FileMap,
-) -> impl Iterator<Item = (&'a PathBuf, &'a Vec<FileChange>)> {
-    let excluded_paths_from_config: HashSet<&'a PathBuf> = config
+    mut file_map: FileMap,
+) -> impl Iterator<Item = (PathBuf, Vec<FileChange>)> + use<'_> {
+    let excluded_paths_from_config: HashSet<&PathBuf> = config
         .global
         .excluded_paths
         .as_deref()
@@ -310,19 +282,20 @@ pub fn files_to_modify<'a>(
         .iter()
         .collect();
 
-    let included_files: HashSet<&'a PathBuf> = file_map
+    let included_files: HashSet<&PathBuf> = file_map
         .keys()
-        .collect::<HashSet<&'a PathBuf>>()
+        .collect::<HashSet<&PathBuf>>()
         .difference(&excluded_paths_from_config)
         .copied()
         .collect();
 
-    let included_files: HashSet<&'a PathBuf> = included_paths_from_config
+    let included_files: HashSet<PathBuf> = included_paths_from_config
         .union(&included_files)
         .copied()
+        .cloned()
         .collect();
 
-    included_files
+    file_map
         .into_iter()
-        .filter_map(|file| file_map.get_key_value(file))
+        .filter(move |(file, _)| included_files.contains(file))
 }
