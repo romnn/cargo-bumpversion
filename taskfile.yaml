@@ -51,6 +51,12 @@ tasks:
     cmds:
       - cargo outdated --workspace --ignore-external-rel --exit-code 1 -v {{.CLI_ARGS}}
 
+  unused:
+    desc: "check for unused cargo workspace dependencies"
+    aliases: [unused-dependencies]
+    cmds:
+      - cargo +nightly udeps {{.CLI_ARGS}}
+
   audit:
     desc: "audit cargo workspace dependencies"
     cmds:

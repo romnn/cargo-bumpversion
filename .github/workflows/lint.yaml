@@ -4,8 +4,8 @@ on:
   push: {}
   pull_request: {}
   schedule:
-    # run every first friday of the month
-    - cron: "0 0 12 ? 1/1 FRI#1 *"
+    # 8AM first day of the month
+    - cron: "0 8 1 * *"
 
 jobs:
   feature-matrix:
@@ -35,10 +35,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit
       - name: Audit
-        run: |
-          cargo install cargo-audit
-          cargo audit
+        run: cargo audit
 
   outdated:
     runs-on: ubuntu-latest
@@ -46,5 +45,28 @@ jobs:
       - uses: actions/checkout@v4
       - uses: arduino/setup-task@v2
       - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-outdated
       - name: Check for outdated dependencies
         run: task outdated
+
+  unused-dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-task@v2
+      - uses: Homebrew/actions/setup-homebrew@master
+      - uses: dtolnay/rust-toolchain@stable
+      - run: brew install cargo-udeps
+      - name: Check for outdated dependencies
+        run: task unused-dependencies
+
+  spellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-task@v2
+      - uses: Homebrew/actions/setup-homebrew@master
+      - uses: dtolnay/rust-toolchain@stable
+      - run: brew install typos
+      - name: Spellcheck
+        run: task spellcheck

@@ -28,6 +28,8 @@ denylist = ["default"]
 
 [dependencies]
 color-eyre.workspace = true
+
+# cli
 clap = { version = "4", features = ["derive", "env", "color"] }
 clap-verbosity-flag = "3"
 
@@ -36,14 +38,18 @@ tracing.workspace = true
 tracing-subscriber = { version = "0", features = ["json", "env-filter"] }
 
 # colors and diagnostics
+colored = "2"
 atty = "0"
 termcolor = "1"
 codespan-reporting = "0"
 
+# async runtime 
+tokio.workspace = true
+futures.workspace = true
 
 # TODO: remove
 # indexmap = { version = "2", features = ["serde"] }
-shlex = "1"
-regex = "1"
+# shlex = "1"
+# regex = "1"
 
 bumpversion.workspace = true

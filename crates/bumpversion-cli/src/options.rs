@@ -22,12 +22,12 @@ pub enum BumpCommand {
     Patch,
 }
 
-impl From<BumpCommand> for bumpversion::Bump {
-    fn from(value: BumpCommand) -> Self {
-        match value {
-            BumpCommand::Major => Self::Major,
-            BumpCommand::Minor => Self::Minor,
-            BumpCommand::Patch => Self::Patch,
+impl AsRef<str> for BumpCommand {
+    fn as_ref(&self) -> &str {
+        match self {
+            BumpCommand::Major => "major",
+            BumpCommand::Minor => "minor",
+            BumpCommand::Patch => "patch",
         }
     }
 }

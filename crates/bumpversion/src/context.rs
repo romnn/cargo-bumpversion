@@ -1,4 +1,4 @@
-use crate::{config, vcs::TagAndRevision, version::compat::Version};
+use crate::{config, vcs::TagAndRevision, version::Version};
 use std::collections::HashMap;
 
 pub type Env = HashMap<String, String>;
@@ -11,7 +11,6 @@ fn prefixed_env() -> impl Iterator<Item = (String, String)> {
 /// The default context for rendering messages and tags
 fn base_context(
     tag_and_revision: Option<&TagAndRevision>,
-    // tag_and_revision: &TagAndRevision,
 ) -> impl Iterator<Item = (String, String)> {
     let tag = tag_and_revision
         .as_ref()
@@ -21,8 +20,6 @@ fn base_context(
         .as_ref()
         .and_then(|v| v.revision.clone())
         .unwrap_or_default();
-    // let tag = tag_and_revision.tag.clone().unwrap_or_default();
-    // let revision = tag_and_revision.revision.clone().unwrap_or_default();
 
     [
         ("now".to_string(), chrono::Local::now().to_rfc3339()),

@@ -2,7 +2,7 @@ use crate::command::{Error as CommandError, Output};
 use crate::{
     config::{self, Config},
     vcs::{RevisionInfo, TagAndRevision},
-    version::compat::Version,
+    version::Version,
 };
 use color_eyre::eyre;
 use std::collections::HashMap;

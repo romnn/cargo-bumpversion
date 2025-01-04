@@ -21,9 +21,6 @@ denylist = ["default", "full"]
 
 [features]
 default = []
-# full = ["git2", "git-repository"]
-# git2 = ["dep:git2"]
-# git-repository = ["dep:git-repository"]
 
 [dependencies]
 color-eyre.workspace = true
@@ -40,34 +37,21 @@ glob = "0"
 # show diffs of file changes
 similar-asserts = "1"
 
-# parse format strings for version serialization
-# parse-format = "0"
-
-# time
+# time for env context
 chrono.workspace = true
 
 # commands
 shlex = "1"
-# add async-command
+async-process = "2"
 
 # parse python f-strings
 winnow = "0.6"
 
-# rustpython-parser = "0"
-# python-fstring = { path = "../crates/python-fstring" }
-
 # regex
 regex = "1"
-# aho-corasick = "1"
-# fancy-regex = "0"
-# lazy-regex = "3"
-# parking_lot = "0"
 
 # parse config files
 serde = { version = "1", features = ["derive"] }
-# configparser = "3"
-# serde_ini = { path = "../crates/serde-ini" }
-# serde-ini-spanned = { path = "../crates/serde-ini-spanned" }
 serde-ini-spanned.workspace = true
 toml-span = { version = "0", features = ["reporting", "serde"] }
 toml_edit = "0"
@@ -77,9 +61,19 @@ indexmap = { version = "2", features = ["serde"] }
 codespan-reporting = "0"
 unindent = "0"
 
-# optional: git bindings
-# git-repository = { version = "0", optional = true }
-# git2 = { version = "0", optional = true }
+# async runtime 
+tokio.workspace = true
+futures.workspace = true
+
+# removed
+# configparser = "3"
+# serde_ini = { path = "../crates/serde-ini" }
+# serde-ini-spanned = { path = "../crates/serde-ini-spanned" }
+# aho-corasick = "1"
+# fancy-regex = "0"
+# lazy-regex = "3"
+# parking_lot = "0"
+
 
 [dev-dependencies]
 color-eyre.workspace = true
