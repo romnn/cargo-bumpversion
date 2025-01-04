@@ -5,9 +5,10 @@ use crate::{
     utils,
     vcs::{RevisionInfo, TagAndRevision, TagInfo, VersionControlSystem},
 };
+use async_process::{Command, Output, Stdio};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+// use std::process::{Command, Output, Stdio};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -140,12 +141,12 @@ pub static BRANCH_NAME_REGEX: once_cell::sync::Lazy<regex::Regex> =
 
 impl GitRepository {
     /// Returns a dictionary containing revision information.
-    fn revision_info(&self) -> Result<Option<RevisionInfo>, Error> {
+    async fn revision_info(&self) -> Result<Option<RevisionInfo>, Error> {
         let mut cmd = Command::new("git");
         cmd.args(["rev-parse", "--show-toplevel", "--abbrev-ref", "HEAD"])
             .current_dir(&self.path);
 
-        let res = run_command(&mut cmd)?;
+        let res = run_command(&mut cmd).await?;
         let mut lines = res.stdout.lines().map(str::trim);
         let Some(repository_root) = lines.next().map(PathBuf::from) else {
             return Ok(None);
@@ -171,7 +172,7 @@ impl GitRepository {
     ///
     /// The `tag_name` is the tag name format used to locate the latest tag.
     /// The `parse_pattern` is a regular expression pattern used to parse the version from the tag.
-    fn latest_tag_info(
+    async fn latest_tag_info(
         &self,
         tag_name: &OwnedPythonFormatString,
         parse_pattern: &str,
@@ -197,7 +198,7 @@ impl GitRepository {
         ])
         .current_dir(&self.path);
 
-        match run_command(&mut cmd) {
+        match run_command(&mut cmd).await {
             Ok(tag_info) => {
                 let raw_tag = tag_info.stdout;
                 let mut tag_parts: Vec<&str> = raw_tag.split('-').collect();
@@ -264,6 +265,7 @@ impl GitRepository {
     }
 }
 
+// #[async_trait::async_trait]
 impl VersionControlSystem for GitRepository {
     type Error = Error;
 
@@ -275,20 +277,11 @@ impl VersionControlSystem for GitRepository {
         &self.path
     }
 
-    // envs<I, K, V>(&mut self, vars: I) -> &mut Command
-    // where
-    //     I: IntoIterator<Item = (K, V)>,
-    //     K: AsRef<OsStr>,
-    //     V: AsRef<OsStr>,
-
-    fn commit<A, E, AS, EK, EV>(
+    async fn commit<A, E, AS, EK, EV>(
         &self,
         message: &str,
         extra_args: A,
-        // extra_args: Option<impl IntoIterator<Item = S>>,
-        // env: &HashMap<&str, &str>,
         env: E,
-        // env: &HashMap<&str, &str>,
     ) -> Result<(), Error>
     where
         A: IntoIterator<Item = AS>,
@@ -313,12 +306,12 @@ impl VersionControlSystem for GitRepository {
         cmd.envs(env);
         // }
         cmd.current_dir(&self.path);
-        let commit_output = run_command(&mut cmd)?;
+        let commit_output = run_command(&mut cmd).await?;
         dbg!(&commit_output);
         Ok(())
     }
 
-    fn add(&self, files: &[impl AsRef<Path>]) -> Result<(), Error> {
+    async fn add(&self, files: &[impl AsRef<Path>]) -> Result<(), Error> {
         let files = files
             .iter()
             .map(|f| f.as_ref().to_string_lossy().to_string());
@@ -327,17 +320,17 @@ impl VersionControlSystem for GitRepository {
             .arg("--update")
             .args(files)
             .current_dir(&self.path);
-        let add_output = run_command(&mut cmd)?;
+        let add_output = run_command(&mut cmd).await?;
         dbg!(&add_output);
         Ok(())
     }
 
-    fn dirty_files(&self) -> Result<Vec<PathBuf>, Error> {
+    async fn dirty_files(&self) -> Result<Vec<PathBuf>, Error> {
         let mut cmd = Command::new("git");
         cmd.args(["status", "-u", "--porcelain"])
             .current_dir(&self.path);
 
-        let status_output = run_command(&mut cmd)?;
+        let status_output = run_command(&mut cmd).await?;
         let dirty = status_output
             .stdout
             .lines()
@@ -350,7 +343,7 @@ impl VersionControlSystem for GitRepository {
         Ok(dirty)
     }
 
-    fn tag(&self, name: &str, message: Option<&str>, sign: bool) -> Result<(), Error> {
+    async fn tag(&self, name: &str, message: Option<&str>, sign: bool) -> Result<(), Error> {
         let mut cmd = Command::new("git");
         cmd.current_dir(&self.path);
         cmd.args(["tag", name]);
@@ -360,16 +353,16 @@ impl VersionControlSystem for GitRepository {
         if let Some(message) = message {
             cmd.args(["--message", message]);
         }
-        let tag_output = run_command(&mut cmd)?;
+        let tag_output = run_command(&mut cmd).await?;
         dbg!(&tag_output);
         Ok(())
     }
 
-    fn tags(&self) -> Result<Vec<String>, Error> {
+    async fn tags(&self) -> Result<Vec<String>, Error> {
         let mut cmd = Command::new("git");
         cmd.current_dir(&self.path);
         cmd.args(["tag", "--list"]);
-        let output = run_command(&mut cmd)?;
+        let output = run_command(&mut cmd).await?;
         Ok(output
             .stdout
             .lines()
@@ -377,7 +370,7 @@ impl VersionControlSystem for GitRepository {
             .collect())
     }
 
-    fn latest_tag_and_revision(
+    async fn latest_tag_and_revision(
         &self,
         tag_name: &OwnedPythonFormatString,
         parse_pattern: &str,
@@ -385,12 +378,12 @@ impl VersionControlSystem for GitRepository {
         let mut cmd = Command::new("git");
         cmd.args(["update-index", "--refresh", "-q"])
             .current_dir(&self.path);
-        if let Err(err) = run_command(&mut cmd) {
+        if let Err(err) = run_command(&mut cmd).await {
             tracing::debug!("failed to update git index: {err}");
         }
 
-        let tag = self.latest_tag_info(tag_name, parse_pattern)?;
-        let revision = self.revision_info().ok().flatten();
+        let tag = self.latest_tag_info(tag_name, parse_pattern).await?;
+        let revision = self.revision_info().await.ok().flatten();
 
         Ok(TagAndRevision { tag, revision })
     }
@@ -404,31 +397,32 @@ mod tests {
         utils,
         vcs::{git, temp, VersionControlSystem},
     };
+    use async_process::Command;
     use color_eyre::eyre;
     use regex::Regex;
     use std::collections::HashMap;
     use std::io::Write;
     use std::path::{Path, PathBuf};
-    use std::process::Command;
     use tempfile::TempDir;
 
     #[ignore = "wip"]
-    #[test]
-    fn test_create_empty_git_repo() -> eyre::Result<()> {
-        let repo: temp::GitRepository<git::GitRepository> = temp::GitRepository::new()?;
+    #[tokio::test]
+    async fn test_create_empty_git_repo() -> eyre::Result<()> {
+        let repo: temp::GitRepository<git::GitRepository> = temp::GitRepository::new().await?;
         let status = run_command(
             Command::new("git")
                 .args(["status"])
                 .current_dir(repo.path()),
-        )?;
+        )
+        .await?;
         assert!(utils::contains(&status.stdout, "No commits yet")?.is_some());
         Ok(())
     }
 
     #[ignore = "wip"]
-    #[test]
-    fn test_tag() -> eyre::Result<()> {
-        let repo: temp::GitRepository<git::GitRepository> = temp::GitRepository::new()?;
+    #[tokio::test]
+    async fn test_tag() -> eyre::Result<()> {
+        let repo: temp::GitRepository<git::GitRepository> = temp::GitRepository::new().await?;
         let tags = vec![
             None,
             Some(("tag1", Some("tag1 message"))),
@@ -438,9 +432,10 @@ mod tests {
         let initial_file = repo.path().join("README.md");
         std::fs::File::create(&initial_file)?.write_all(b"Hello, world!")?;
 
-        repo.add(&[initial_file])?;
-        repo.commit::<_, _, &str, &str, &str>("initial commit", [], [])?;
-        similar_asserts::assert_eq!(repo.dirty_files()?.len(), 0);
+        repo.add(&[initial_file]).await?;
+        repo.commit::<_, _, &str, &str, &str>("initial commit", [], [])
+            .await?;
+        similar_asserts::assert_eq!(repo.dirty_files().await?.len(), 0);
 
         for (tag, previous) in tags[1..].iter().zip(&tags) {
             dbg!(previous);
@@ -456,10 +451,10 @@ mod tests {
     }
 
     #[ignore = "wip"]
-    #[test]
-    fn test_dirty_tree() -> eyre::Result<()> {
-        let repo: temp::GitRepository<git::GitRepository> = temp::GitRepository::new()?;
-        similar_asserts::assert_eq!(repo.dirty_files()?.len(), 0);
+    #[tokio::test]
+    async fn test_dirty_tree() -> eyre::Result<()> {
+        let repo: temp::GitRepository<git::GitRepository> = temp::GitRepository::new().await?;
+        similar_asserts::assert_eq!(repo.dirty_files().await?.len(), 0);
 
         // add some dirty files
         let mut dirty_files: Vec<PathBuf> = ["foo.txt", "dir/bar.txt"]
@@ -472,15 +467,15 @@ mod tests {
             let mut file = std::fs::File::create(dirty_file)?;
             file.write_all(b"Hello, world!")?;
         }
-        similar_asserts::assert_eq!(repo.dirty_files()?.len(), 0);
+        similar_asserts::assert_eq!(repo.dirty_files().await?.len(), 0);
 
         // track first file
         repo.add(&dirty_files[0..1]);
-        sim_assert_eq_sorted!(repo.dirty_files()?, dirty_files[0..1]);
+        sim_assert_eq_sorted!(repo.dirty_files().await?, dirty_files[0..1]);
 
         // track all files
         repo.add(&dirty_files);
-        sim_assert_eq_sorted!(repo.dirty_files()?, dirty_files);
+        sim_assert_eq_sorted!(repo.dirty_files().await?, dirty_files);
         Ok(())
     }
 }

@@ -36,7 +36,8 @@ fn fix_options(options: &mut options::Options) {
     }
 }
 
-fn main() -> eyre::Result<()> {
+#[tokio::main]
+async fn main() -> eyre::Result<()> {
     if std::env::var("RUST_SPANTRACE").is_err() {
         std::env::set_var("RUST_SPANTRACE", "0");
     }
@@ -60,100 +61,15 @@ fn main() -> eyre::Result<()> {
     let dir = options.dir.unwrap_or(cwd).canonicalize()?;
     let repo = GitRepository::open(&dir)?;
 
-    // find config file
-    let config_files = config::config_file_locations(&dir);
-    // dbg!(config::config_file_locations(&dir).collect::<Vec<_>>());
+    let printer = bumpversion::diagnostics::Printer::stderr(color_choice);
 
-    let mut config_files = config_files
-        .map(|config_file| {
-            let path = config_file.path();
-            if !path.is_file() {
-                return Ok(None);
-            };
-            let Ok(path) = path.canonicalize() else {
-                return Ok(None);
-            };
-            let config = std::fs::read_to_string(&path)?;
-
-            let mut diagnostics = vec![];
-            let printer = Printer::stderr(color_choice);
-            let file_id = printer.add_source_file(&path, config.to_string());
-            let strict = true;
-
-            let config_res = match &config_file {
-                config::ConfigFile::BumpversionToml(path) | config::ConfigFile::PyProject(path) => {
-                    let res = config::Config::from_pyproject_toml(
-                        &config,
-                        file_id,
-                        strict,
-                        &mut diagnostics,
-                    );
-                    if let Err(ref err) = res {
-                        diagnostics.extend(err.to_diagnostics(file_id));
-                    }
-                    res.map_err(eyre::Report::from)
-                }
-                config::ConfigFile::BumpversionCfg(path) => {
-                    let options = config::ini::Options::default();
-                    let res = config::Config::from_ini(
-                        &config,
-                        options,
-                        file_id,
-                        strict,
-                        &mut diagnostics,
-                    );
-                    if let Err(ref err) = res {
-                        diagnostics.extend(err.to_diagnostics(file_id));
-                    }
-                    res.map_err(eyre::Report::from)
-                }
-                config::ConfigFile::SetupCfg(path) => {
-                    let options = config::ini::Options::default();
-                    let res = config::Config::from_setup_cfg_ini(
-                        &config,
-                        options,
-                        file_id,
-                        strict,
-                        &mut diagnostics,
-                    );
-                    if let Err(ref err) = res {
-                        diagnostics.extend(err.to_diagnostics(file_id));
-                    }
-                    res.map_err(eyre::Report::from)
-                }
-                config::ConfigFile::CargoToml(_) => {
-                    // TODO: cargo
-                    Ok(None)
-                }
-            };
-            // emit diagnostics
-            for diagnostic in &diagnostics {
-                printer.emit(diagnostic);
-            }
-            config_res.map(|c| c.map(|c| (path.clone(), c)))
-            // let config = config_res?;
-            // Ok::<Option<config::Config>, eyre::Report>(config)
-        })
-        .filter_map(std::result::Result::transpose);
-
-    let config_files: Vec<_> = config_files.collect();
-    dbg!(&config_files);
-
-    let (config_file_path, mut config) = config_files
-        .into_iter()
-        .next()
-        .transpose()?
+    // TODO: parse config concurently with other stuff
+    let (config_file_path, mut config) = bumpversion::find_config(&dir, &printer)
+        .await?
         .ok_or(eyre::eyre!("missing config file"))?;
 
-    // the order is important here
-    config.merge_global_config();
-
-    let defaults = config::GlobalConfig::default();
-    config.apply_defaults(&defaults);
-
     // build list of parts
-    let components = config::version_component_configs(&config)?;
-    // dbg!(&parts);
+    let components = crate::config::version_component_configs(&config)?;
 
     let mut cli_files = vec![];
     let mut bump: Option<String> = options
@@ -182,10 +98,6 @@ fn main() -> eyre::Result<()> {
         }
     }
 
-    let bump = bump.ok_or_else(|| eyre::eyre!("missing version component to bump"))?;
-    dbg!(&bump);
-    dbg!(&cli_files);
-
     let tag_name = config
         .global
         .tag_name
@@ -198,25 +110,21 @@ fn main() -> eyre::Result<()> {
         .as_deref()
         .unwrap_or(config::DEFAULT_PARSE_VERSION_PATTERN);
 
-    let TagAndRevision { tag, revision } =
-        repo.latest_tag_and_revision(tag_name, parse_version_pattern)?;
+    // TODO: make async
+    let TagAndRevision { tag, revision } = repo
+        .latest_tag_and_revision(tag_name, parse_version_pattern)
+        .await?;
+
     tracing::debug!(?tag, "current");
     tracing::debug!(?revision, "current");
 
-    dbg!(
-        &options.allow_dirty,
-        &options.no_allow_dirty.invert(),
-        &config.global.allow_dirty
-    );
     let allow_dirty = options
         .allow_dirty
         .or(options.no_allow_dirty.invert())
         .or(config.global.allow_dirty)
         .unwrap_or(false);
-    dbg!(allow_dirty);
 
     let dry_run = options.dry_run.or(config.global.dry_run).unwrap_or(false);
-    dbg!(dry_run);
 
     let configured_version = options
         .current_version
@@ -241,7 +149,7 @@ fn main() -> eyre::Result<()> {
         .ok_or(eyre::eyre!("Unable to determine the current version."))?;
     // dbg!(&current_version);
 
-    let dirty_files = repo.dirty_files()?;
+    let dirty_files = repo.dirty_files().await?;
     // dbg!(&dirty_files);
     if !allow_dirty && !dirty_files.is_empty() {
         eyre::bail!(
@@ -260,7 +168,7 @@ fn main() -> eyre::Result<()> {
     // build resolved file map
     let file_map =
         bumpversion::files::resolve_files_from_config(&mut config, &components, Some(repo.path()))?;
-    dbg!(&file_map);
+    // dbg!(&file_map);
 
     if options.no_configured_files == Some(true) {
         config.global.excluded_paths = Some(file_map.keys().cloned().collect());
@@ -274,7 +182,12 @@ fn main() -> eyre::Result<()> {
 
     let bump = match options.new_version.as_deref() {
         Some(new_version) => bumpversion::Bump::NewVersion(new_version),
-        None => bumpversion::Bump::Component(&bump),
+        None => {
+            let bump = bump
+                .as_deref()
+                .ok_or_else(|| eyre::eyre!("missing version component to bump"))?;
+            bumpversion::Bump::Component(&bump)
+        }
     };
 
     bumpversion::bump(
@@ -286,7 +199,8 @@ fn main() -> eyre::Result<()> {
         components,
         Some(config_file_path.as_path()),
         dry_run,
-    )?;
+    )
+    .await?;
 
     tracing::info!(elapsed = ?start.elapsed(), "done");
     Ok(())

@@ -18,6 +18,7 @@ use crate::{
     vcs::{git::GitRepository, TagAndRevision, VersionControlSystem},
 };
 use color_eyre::eyre;
+use futures::stream::{StreamExt, TryStreamExt};
 use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -27,11 +28,119 @@ pub enum Bump<'a> {
     NewVersion(&'a str),
 }
 
+/// Find config file in one of the default config file locations.
+///
+/// # Errors
+/// When the config file cannot be read or parsed.
+pub async fn find_config<W>(
+    dir: &Path,
+    printer: &diagnostics::Printer<W>,
+) -> eyre::Result<Option<(PathBuf, config::Config)>>
+where
+    W: codespan_reporting::term::termcolor::WriteColor + Send + Sync + 'static,
+{
+    use diagnostics::ToDiagnostics;
+    let config_files = config::config_file_locations(&dir);
+
+    // let test: Vec<_> = futures::stream::iter(config_files).collect().await;
+
+    // let mut config_files = futures::stream::iter(config_files.collect::<Vec<_>>())
+    let mut config_files = futures::stream::iter(config_files)
+        .then(|config_file| async move {
+            let path = config_file.path();
+            if !path.is_file() {
+                return Ok(None);
+            };
+            let Ok(path) = path.canonicalize() else {
+                return Ok(None);
+            };
+            let config = tokio::fs::read_to_string(&path).await?;
+            let file_id = printer.add_source_file(&path, config.to_string());
+
+            let test = tokio::task::spawn_blocking(move || {
+                let mut diagnostics = vec![];
+                let strict = true;
+
+                let config_res = match &config_file {
+                    config::ConfigFile::BumpversionToml(path)
+                    | config::ConfigFile::PyProject(path) => {
+                        let res = config::Config::from_pyproject_toml(
+                            &config,
+                            file_id,
+                            strict,
+                            &mut diagnostics,
+                        );
+                        if let Err(ref err) = res {
+                            diagnostics.extend(err.to_diagnostics(file_id));
+                        }
+                        res.map_err(eyre::Report::from)
+                    }
+                    config::ConfigFile::BumpversionCfg(path) => {
+                        let options = config::ini::Options::default();
+                        let res = config::Config::from_ini(
+                            &config,
+                            options,
+                            file_id,
+                            strict,
+                            &mut diagnostics,
+                        );
+                        if let Err(ref err) = res {
+                            diagnostics.extend(err.to_diagnostics(file_id));
+                        }
+                        res.map_err(eyre::Report::from)
+                    }
+                    config::ConfigFile::SetupCfg(path) => {
+                        let options = config::ini::Options::default();
+                        let res = config::Config::from_setup_cfg_ini(
+                            &config,
+                            options,
+                            file_id,
+                            strict,
+                            &mut diagnostics,
+                        );
+                        if let Err(ref err) = res {
+                            diagnostics.extend(err.to_diagnostics(file_id));
+                        }
+                        res.map_err(eyre::Report::from)
+                    }
+                    config::ConfigFile::CargoToml(_) => {
+                        // TODO: cargo
+                        Ok(None)
+                    }
+                };
+
+                config_res.map(|c| c.map(|c| (path.clone(), c, diagnostics)))
+            });
+
+            test.await?
+        })
+        .filter_map(|res| async move { res.transpose() });
+
+    futures::pin_mut!(config_files);
+
+    Ok(config_files
+        .next()
+        .await
+        .transpose()?
+        .map(|(config_file_path, mut config, diagnostics)| {
+            // emit diagnostics
+            for diagnostic in &diagnostics {
+                printer.emit(diagnostic);
+            }
+
+            // the order is important here
+            config.merge_global_config();
+
+            let defaults = config::GlobalConfig::default();
+            config.apply_defaults(&defaults);
+
+            (config_file_path, config)
+        }))
+}
+
 /// Bump the desired version component to the next value or set the version to `new_version`.
-pub fn bump(
+pub async fn bump(
     bump: Bump<'_>,
-    // version_component_to_bump: &str,
-    // new_version_override: Option<&str>,
     repo: &GitRepository,
     config: &config::Config,
     tag_and_revision: &TagAndRevision,
@@ -76,7 +185,8 @@ pub fn bump(
         tag_and_revision,
         Some(&current_version),
         dry_run,
-    )?;
+    )
+    .await?;
 
     let next_version = match bump {
         Bump::Component(component) => {
@@ -234,7 +344,8 @@ pub fn bump(
         Some(&next_version),
         &next_version_serialized,
         dry_run,
-    )?;
+    )
+    .await?;
 
     let extra_args = config
         .global
@@ -279,20 +390,19 @@ pub fn bump(
         tracing::info!(msg = commit_message, "commit");
 
         if !dry_run {
-            let env = std::env::vars().chain(
-                [
-                    ("HGENCODING".to_string(), "utf-8".to_string()),
-                    (
-                        "BUMPVERSION_CURRENT_VERSION".to_string(),
-                        current_version_serialized.clone(),
-                    ),
-                    (
-                        "BUMPVERSION_NEW_VERSION".to_string(),
-                        next_version_serialized.clone(),
-                    ),
-                ],
-            );
-            repo.commit(commit_message.as_str(), extra_args.as_slice(), env)?;
+            let env = std::env::vars().chain([
+                ("HGENCODING".to_string(), "utf-8".to_string()),
+                (
+                    "BUMPVERSION_CURRENT_VERSION".to_string(),
+                    current_version_serialized.clone(),
+                ),
+                (
+                    "BUMPVERSION_NEW_VERSION".to_string(),
+                    next_version_serialized.clone(),
+                ),
+            ]);
+            repo.commit(commit_message.as_str(), extra_args.as_slice(), env)
+                .await?;
         }
     }
 
@@ -316,14 +426,15 @@ pub fn bump(
 
         tracing::info!(msg = tag_message, name = tag_name, "tag");
 
-        let existing_tags = repo.tags()?;
+        let existing_tags = repo.tags().await?;
 
         if existing_tags.contains(&tag_name) {
             tracing::warn!("tag {tag_name:?} already exists and will not be created");
         } else if dry_run {
             tracing::info!(msg = tag_message, sign = sign_tag, "would tag {tag_name:?}",);
         } else {
-            repo.tag(tag_name.as_str(), Some(&tag_message), sign_tag)?;
+            repo.tag(tag_name.as_str(), Some(&tag_message), sign_tag)
+                .await?;
         }
     }
 
@@ -335,7 +446,8 @@ pub fn bump(
         Some(&next_version),
         &next_version_serialized,
         dry_run,
-    )?;
+    )
+    .await?;
 
     Ok(())
 }

@@ -1,9 +1,8 @@
 use crate::{command::run_command, utils, vcs::VersionControlSystem};
+use async_process::Command;
 use color_eyre::eyre;
-use regex::Regex;
 use std::io::Write;
 use std::path::Path;
-use std::process::Command;
 use tempfile::TempDir;
 
 fn random_string_of_length(length: usize) -> String {
@@ -24,33 +23,35 @@ impl<VCS> GitRepository<VCS>
 where
     VCS: VersionControlSystem,
 {
-    pub fn new() -> eyre::Result<Self> {
-        Self::with_name(&random_string_of_length(10))
+    pub async fn new() -> eyre::Result<Self> {
+        Self::with_name(&random_string_of_length(10)).await
     }
 
-    pub fn with_name(name: &str) -> eyre::Result<Self> {
+    pub async fn with_name(name: &str) -> eyre::Result<Self> {
         let dir = TempDir::with_prefix(name)?;
-        Self::init(dir.path())?;
+        Self::init(dir.path()).await?;
         let inner = VCS::open(dir.path())?;
         Ok(Self { inner, dir })
     }
 
-    fn init(path: &Path) -> eyre::Result<()> {
+    async fn init(path: &Path) -> eyre::Result<()> {
         std::fs::create_dir_all(path)?;
-        let _ = run_command(Command::new("git").args(["init"]).current_dir(path))?;
+        let mut cmd = Command::new("git");
+        cmd.args(["init"]);
+        cmd.current_dir(path);
+        let _ = run_command(&mut cmd).await?;
         Ok(())
     }
 
-    fn add(&self, files: &[impl AsRef<Path>]) -> eyre::Result<()> {
+    async fn add(&self, files: &[impl AsRef<Path>]) -> eyre::Result<()> {
         let files = files
             .iter()
             .map(|f| f.as_ref().to_string_lossy().to_string());
-        let _ = run_command(
-            Command::new("git")
-                .arg("add")
-                .args(files)
-                .current_dir(self.path()),
-        )?;
+        let mut cmd = Command::new("git");
+        cmd.arg("add");
+        cmd.args(files);
+        cmd.current_dir(self.path());
+        let _ = run_command(&mut cmd).await?;
         Ok(())
     }
 }

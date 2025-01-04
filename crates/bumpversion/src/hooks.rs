@@ -1,13 +1,13 @@
-use crate::command::{Error as CommandError, Output};
+use crate::command::{self, Error as CommandError, Output};
 use crate::{
     config::{self, Config},
     vcs::{RevisionInfo, TagAndRevision},
     version::Version,
 };
+use async_process::{Command, Stdio};
 use color_eyre::eyre;
 use std::collections::HashMap;
 use std::path::Path;
-use std::process::{Command, Stdio};
 
 // type Env = HashMap<String, String>;
 
@@ -160,7 +160,7 @@ fn pre_and_post_commit_hook_env<'a>(
 }
 
 /// Run the pre-commit hooks
-pub fn run_pre_commit_hooks(
+pub async fn run_pre_commit_hooks(
     config: &Config,
     working_dir: &Path,
     tag_and_revision: &TagAndRevision,
@@ -198,11 +198,11 @@ pub fn run_pre_commit_hooks(
         tracing::info!("running pre commit hooks");
     }
 
-    run_hooks(pre_commit_hooks, working_dir, env, dry_run)
+    run_hooks(pre_commit_hooks, working_dir, env, dry_run).await
 }
 
 /// Run the post-commit hooks
-pub fn run_post_commit_hooks(
+pub async fn run_post_commit_hooks(
     config: &Config,
     working_dir: &Path,
     tag_and_revision: &TagAndRevision,
@@ -235,7 +235,7 @@ pub fn run_post_commit_hooks(
         tracing::info!("running post commit hooks");
     }
 
-    run_hooks(post_commit_hooks, working_dir, env, dry_run)
+    run_hooks(post_commit_hooks, working_dir, env, dry_run).await
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -247,37 +247,27 @@ pub enum Error {
 }
 
 /// Runs command-line programs using the shell
-// fn run_hook(script: &str, ) -> Result<Output, Error> {
-fn run_hook(
+async fn run_hook(
     script: &str,
     working_dir: &Path,
-    // env: &Env,
     env: &HashMap<String, String>,
-    // env: &impl Iterator<Item = (String, String)>,
 ) -> Result<Output, Error> {
-    // return subprocess.run(
-    //     script, env=environment, encoding="utf-8", shell=True, text=True, capture_output=True, check=False
-    // )
-
     let args = shlex::split(script).ok_or_else(|| Error::Shell(script.to_string()))?;
     let mut cmd = Command::new("sh");
     cmd.args(["-c".to_string()].into_iter().chain(args));
     cmd.envs(env);
     cmd.current_dir(working_dir);
-    let output = crate::command::run_command(&mut cmd)?;
+    let output = command::run_command(&mut cmd).await?;
     Ok(output)
 }
 
 /// Run a list of command-line programs using the shell.
-fn run_hooks(
+async fn run_hooks(
     hooks: &[String],
     working_dir: &Path,
     env: impl Iterator<Item = (String, String)>,
-    // env: impl Iterator<Item = (String, String)>,
-    // env: &Env,
     dry_run: bool,
 ) -> eyre::Result<()> {
-    // let env: Env = env.collect();
     let env = env.collect();
     for script in hooks {
         if dry_run {
@@ -285,7 +275,7 @@ fn run_hooks(
             continue;
         }
         tracing::info!(?script, "running");
-        match run_hook(script, working_dir, &env) {
+        match run_hook(script, working_dir, &env).await {
             Ok(output) => {
                 tracing::debug!(code = output.status.code(), "hook completed");
                 tracing::debug!(output.stdout);
@@ -304,11 +294,10 @@ fn run_hooks(
 }
 
 /// Run the setup hooks
-pub fn run_setup_hooks(
+pub async fn run_setup_hooks(
     config: &Config,
     working_dir: &Path,
     tag_and_revision: &TagAndRevision,
-    // current_version: &Version,
     current_version: Option<&Version>,
     dry_run: bool,
 ) -> eyre::Result<()> {
@@ -322,7 +311,7 @@ pub fn run_setup_hooks(
     } else {
         tracing::info!("running setup hooks");
     }
-    run_hooks(setup_hooks, working_dir, env, dry_run)
+    run_hooks(setup_hooks, working_dir, env, dry_run).await
 }
 
 #[cfg(test)]

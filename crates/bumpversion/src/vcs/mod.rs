@@ -35,6 +35,7 @@ pub struct TagAndRevision {
     pub revision: Option<RevisionInfo>,
 }
 
+// #[async_trait::async_trait]
 pub trait VersionControlSystem {
     type Error: std::error::Error + Send + Sync + 'static;
 
@@ -47,10 +48,10 @@ pub trait VersionControlSystem {
     fn path(&self) -> &Path;
 
     /// Add files to the staging area of the VCS.
-    fn add(&self, files: &[impl AsRef<Path>]) -> Result<(), Self::Error>;
+    async fn add(&self, files: &[impl AsRef<Path>]) -> Result<(), Self::Error>;
 
     /// Commit current changes to the VCS.
-    fn commit<A, E, AS, EK, EV>(
+    async fn commit<A, E, AS, EK, EV>(
         &self,
         message: &str,
         // extra_args: Option<impl IntoIterator<Item = S>>,
@@ -66,16 +67,16 @@ pub trait VersionControlSystem {
         EV: AsRef<std::ffi::OsStr>;
 
     /// Create a new tag for the VCS.
-    fn tag(&self, name: &str, message: Option<&str>, sign: bool) -> Result<(), Self::Error>;
+    async fn tag(&self, name: &str, message: Option<&str>, sign: bool) -> Result<(), Self::Error>;
 
     /// Get all tags for the VCS
-    fn tags(&self) -> Result<Vec<String>, Self::Error>;
+    async fn tags(&self) -> Result<Vec<String>, Self::Error>;
 
     /// Get the list of dirty files in the VCS.
-    fn dirty_files(&self) -> Result<Vec<PathBuf>, Self::Error>;
+    async fn dirty_files(&self) -> Result<Vec<PathBuf>, Self::Error>;
 
     /// Get the information on the latest tag and revision for the VCS.
-    fn latest_tag_and_revision(
+    async fn latest_tag_and_revision(
         &self,
         tag_name: &OwnedPythonFormatString,
         parse_pattern: &str,

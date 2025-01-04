@@ -1,12 +1,14 @@
+use async_process::{Command, ExitStatus};
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Output {
     pub stdout: String,
     pub stderr: String,
-    pub status: std::process::ExitStatus,
+    pub status: ExitStatus,
 }
 
-impl From<std::process::Output> for Output {
-    fn from(output: std::process::Output) -> Self {
+impl From<async_process::Output> for Output {
+    fn from(output: async_process::Output) -> Self {
         Self {
             stdout: String::from_utf8_lossy(&output.stdout).into(),
             stderr: String::from_utf8_lossy(&output.stderr).into(),
@@ -31,10 +33,7 @@ pub enum Error {
     Failed { command: String, output: Output },
 }
 
-pub fn check_exit_status(
-    cmd: &std::process::Command,
-    output: &std::process::Output,
-) -> Result<(), Error> {
+pub fn check_exit_status(cmd: &Command, output: &async_process::Output) -> Result<(), Error> {
     if output.status.success() {
         Ok(())
     } else {
@@ -45,8 +44,8 @@ pub fn check_exit_status(
     }
 }
 
-pub fn run_command(cmd: &mut std::process::Command) -> Result<Output, Error> {
-    let output = cmd.output()?;
+pub async fn run_command(cmd: &mut Command) -> Result<Output, Error> {
+    let output = cmd.output().await?;
     check_exit_status(cmd, &output)?;
     Ok(output.into())
 }
