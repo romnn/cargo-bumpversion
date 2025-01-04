@@ -1,7 +1,7 @@
 use crate::{
     config::{self, VersionComponentConfigs, VersionComponentSpec},
     context,
-    f_string::OwnedPythonFormatString,
+    f_string::PythonFormatString,
 };
 use color_eyre::eyre::{self, WrapErr};
 use indexmap::IndexMap;
@@ -46,7 +46,8 @@ pub struct NumericFunction<'a> {
 }
 
 impl<'a> NumericFunction<'a> {
-    #[must_use] pub fn new(first_value: Option<&'a str>, optional_value: Option<&'a str>) -> Self {
+    #[must_use]
+    pub fn new(first_value: Option<&'a str>, optional_value: Option<&'a str>) -> Self {
         let first_value = first_value.unwrap_or("0"); // .to_string();
         let optional_value = optional_value.unwrap_or(first_value); // .to_string();
         Self {
@@ -130,7 +131,8 @@ impl AsRef<str> for VersionComponent {
 }
 
 impl VersionComponent {
-    #[must_use] pub fn new(value: Option<&str>, spec: VersionComponentSpec) -> Self {
+    #[must_use]
+    pub fn new(value: Option<&str>, spec: VersionComponentSpec) -> Self {
         // let func = ValuesFunction {
         //     values: spec.values.clone(),
         // };
@@ -150,12 +152,14 @@ impl VersionComponent {
         }
     }
 
-    #[must_use] pub fn value(&self) -> Option<&str> {
+    #[must_use]
+    pub fn value(&self) -> Option<&str> {
         self.value.as_deref().or(self.spec.first_value.as_deref())
     }
 
     /// Return the component with with first value
-    #[must_use] pub fn first(&self) -> Self {
+    #[must_use]
+    pub fn first(&self) -> Self {
         Self {
             value: self.spec.first_value.clone(),
             ..self.clone()
@@ -247,12 +251,14 @@ impl Version {
     }
 
     // Return the values of the parts
-    #[must_use] pub fn into_iter(self) -> indexmap::map::IntoIter<String, VersionComponent> {
+    #[must_use]
+    pub fn into_iter(self) -> indexmap::map::IntoIter<String, VersionComponent> {
         self.components.into_iter()
     }
 
     // Return the values of the parts
-    #[must_use] pub fn iter(&self) -> indexmap::map::Iter<String, VersionComponent> {
+    #[must_use]
+    pub fn iter(&self) -> indexmap::map::Iter<String, VersionComponent> {
         self.components.iter()
     }
 
@@ -296,8 +302,7 @@ impl Version {
                 dependents.remove(comp_name);
             }
         }
-        let unique_dependents: HashSet<&str> =
-            dependents.values().flatten().copied().collect();
+        let unique_dependents: HashSet<&str> = dependents.values().flatten().copied().collect();
         Ok((values, unique_dependents))
     }
 
@@ -311,7 +316,7 @@ impl Version {
 
         let mut new_components = self.components.clone();
         let (always_increment_values, mut components_to_reset) = self.always_increment()?;
-        dbg!(&always_increment_values, &components_to_reset);
+        // dbg!(&always_increment_values, &components_to_reset);
 
         new_components.extend(
             always_increment_values
@@ -326,11 +331,11 @@ impl Version {
             components_to_reset.extend(dependants);
         }
 
-        dbg!(&new_components, &components_to_reset);
+        // dbg!(&new_components, &components_to_reset);
 
         for comp_name in components_to_reset {
-            dbg!(&comp_name);
-            dbg!(&self.components);
+            // dbg!(&comp_name);
+            // dbg!(&self.components);
             let is_independent = self.components[comp_name].spec.independent == Some(true);
             if !is_independent {
                 *new_components.get_mut(comp_name).unwrap() = self.components[comp_name].first();
@@ -401,7 +406,8 @@ impl VersionSpec {
     }
 
     /// Return the components that depend on the given component.
-    #[must_use] pub fn dependents(&self, comp_name: &str) -> HashSet<&str> {
+    #[must_use]
+    pub fn dependents(&self, comp_name: &str) -> HashSet<&str> {
         use std::collections::VecDeque;
         let mut stack = VecDeque::from_iter(
             self.dependency_map
@@ -428,7 +434,8 @@ impl VersionSpec {
     }
 
     /// Generate a version from the given values
-    #[must_use] pub fn build(&self, raw_components: &RawVersion) -> Version {
+    #[must_use]
+    pub fn build(&self, raw_components: &RawVersion) -> Version {
         let components = self
             .components
             .iter()
@@ -478,10 +485,10 @@ where
 
     // dbg!(&serialize_patterns);
 
-    let mut patterns: Vec<(usize, OwnedPythonFormatString)> = serialize_patterns
+    let mut patterns: Vec<(usize, PythonFormatString)> = serialize_patterns
         .into_iter()
         .enumerate()
-        .map(|(idx, pattern)| OwnedPythonFormatString::parse(pattern.as_ref()).map(|f| (idx, f)))
+        .map(|(idx, pattern)| PythonFormatString::parse(pattern.as_ref()).map(|f| (idx, f)))
         .collect::<Result<_, _>>()?;
 
     // dbg!(&patterns);
@@ -571,6 +578,9 @@ pub fn parse_version(
     regex: &regex::Regex,
     version_spec: &VersionSpec,
 ) -> eyre::Result<Option<Version>> {
+    // let config::FormatStringOrRegex::Regex(config::Regex(regex)) = regex else {
+    //     todo!();
+    // };
     let parsed = parse_raw_version(value, regex);
     if parsed.is_empty() {
         return Ok(None);

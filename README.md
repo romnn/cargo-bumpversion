@@ -42,12 +42,5 @@ For usage instructions, please refer to [the Python version](https://github.com/
 #### Development
 
 ```bash
-cargo run -- --dir ../cargo-feature-combinations/ --log-level trace patch
+cargo run -- --dir ../dir/to/a/repo/with/.bumpversion.toml --verbose --dry-run patch
 ```
-
-#### TODO
-
-- add a git2 backend and make the tests into macros
-- add the versioning functions
-- add the config file parsing
-- add the main CLI loop

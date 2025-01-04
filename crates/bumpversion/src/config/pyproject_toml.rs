@@ -1,7 +1,10 @@
 use crate::{
-    config::{self, Config, FileChange, FileConfig, GlobalConfig, InputFile, VersionComponentSpec},
+    config::{
+        self, Config, FileChange, FileConfig, GlobalConfig, InputFile, RegexTemplate,
+        VersionComponentSpec,
+    },
     diagnostics::{DiagnosticExt, FileId, Span, Spanned},
-    f_string::{OwnedPythonFormatString, PythonFormatString},
+    f_string::PythonFormatString,
 };
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use color_eyre::eyre;
@@ -40,12 +43,13 @@ pub enum Error {
         message: String,
         span: Span,
     },
-    // #[error("{source}")]
-    // Serde {
-    //     #[source]
-    //     source: serde_json::Error,
-    //     span: Span,
-    // },
+    #[error("{message}")]
+    InvalidRegex {
+        #[source]
+        source: regex::Error,
+        message: String,
+        span: Span,
+    },
     #[error("{source}")]
     Toml {
         #[source]
@@ -71,6 +75,18 @@ mod diagnostics {
                         Label::primary(file_id, span.clone()).with_message(source.to_string()),
                         Label::secondary(file_id, span.clone()).with_message(message),
                     ])],
+                Self::InvalidRegex {
+                    source,
+                    message,
+                    span,
+                    ..
+                } => vec![Diagnostic::error()
+                    .with_message("invalid regular expression".to_string())
+                    .with_labels(vec![
+                        Label::primary(file_id, span.clone()).with_message(source.to_string()),
+                        Label::secondary(file_id, span.clone()).with_message(message),
+                    ])],
+
                 Self::InvalidConfiguration { message, span, .. } => vec![Diagnostic::error()
                     .with_message("invalid configuration".to_string())
                     .with_labels(vec![
@@ -122,11 +138,6 @@ mod diagnostics {
                         ))]);
                     vec![diagnostic]
                 }
-                // Self::Serde { source, span } => vec![Diagnostic::error()
-                //     .with_message(self.to_string())
-                //     .with_labels(vec![
-                //         Label::primary(file_id, span.clone()).with_message(source.to_string())
-                //     ])],
                 Self::Toml { source } => {
                     vec![source.to_diagnostic(file_id)]
                 }
@@ -190,15 +201,28 @@ pub fn as_str_array<'de>(value: &'de toml::Value<'de>) -> Result<Vec<&'de str>, 
 }
 
 #[inline]
-pub fn as_format_string<'de>(
-    value: &'de toml::Value<'de>,
-) -> Result<OwnedPythonFormatString, Error> {
+pub fn as_format_string<'de>(value: &'de toml::Value<'de>) -> Result<PythonFormatString, Error> {
     as_str(value).and_then(|s| {
-        OwnedPythonFormatString::parse(s).map_err(|source| Error::InvalidFormatString {
+        PythonFormatString::parse(s).map_err(|source| Error::InvalidFormatString {
             source,
             message: "invalid format string".to_string(),
             span: value.span.into(),
         })
+    })
+}
+
+#[inline]
+pub fn as_regex<'de>(value: &'de toml::Value<'de>) -> Result<config::Regex, Error> {
+    as_str(value).and_then(|s| {
+        let s = s.replace("\\\\", "\\");
+        let s = crate::f_string::parser::escape_double_curly_braces(&s).unwrap_or(s);
+        regex::Regex::new(&s)
+            .map(Into::into)
+            .map_err(|source| Error::InvalidRegex {
+                source,
+                message: format!("invalid regular expression: {s:?}"),
+                span: value.span.into(),
+            })
     })
 }
 
@@ -229,6 +253,7 @@ pub fn as_bool<'de>(value: &'de toml::Value<'de>) -> Result<bool, Error> {
 
 pub(crate) fn parse_file<'de>(
     value: &'de toml::Value<'de>,
+    search_is_regex: Option<bool>,
 ) -> Result<(InputFile, FileConfig), Error> {
     let table = value.as_table().ok_or_else(|| Error::UnexpectedType {
         message: "file config must be a table".to_string(),
@@ -237,17 +262,7 @@ pub(crate) fn parse_file<'de>(
         span: value.span.into(),
     })?;
     let file_name = table.get("filename").map(as_string).transpose()?;
-    // .ok_or_else(|| Error::MissingKey {
-    //     key: "filename".to_string(),
-    //     message: "file config is missing required key `filename`".to_string(),
-    //     span: value.span.into(),
-    // })?;
     let glob_pattern = table.get("glob").map(as_string).transpose()?;
-    // .ok_or_else(|| Error::MissingKey {
-    //     key: "filename".to_string(),
-    //     message: "file config is missing required key `filename`".to_string(),
-    //     span: value.span.into(),
-    // })?;
 
     let input_file = match (file_name, glob_pattern) {
         (Some(_), Some(_)) => Err(Error::InvalidConfiguration {
@@ -269,7 +284,7 @@ pub(crate) fn parse_file<'de>(
         }
     }?;
 
-    let file_config = parse_file_config(table)?;
+    let file_config = parse_file_config(table, search_is_regex)?;
     Ok((input_file, file_config))
 }
 
@@ -298,17 +313,37 @@ pub(crate) fn parse_part_config<'de>(
     })
 }
 
+fn parse_search_pattern<'de>(
+    table: &'de toml::value::Table<'de>,
+    is_regex: Option<bool>,
+) -> Result<(Option<bool>, Option<RegexTemplate>), Error> {
+    let search_is_regex_compat = table.get("regex").map(as_bool).transpose()?.or(is_regex);
+    let search = table
+        .get("search")
+        .map(|search| {
+            if search_is_regex_compat == Some(true) {
+                let format_string = as_format_string(search)?;
+                Ok(RegexTemplate::Regex(format_string))
+            } else {
+                let format_string = as_format_string(search)?;
+                Ok(RegexTemplate::Escaped(format_string))
+            }
+        })
+        .transpose()?;
+    Ok((search_is_regex_compat, search))
+}
+
 pub(crate) fn parse_global_config<'de>(
     table: &'de toml::value::Table<'de>,
-) -> Result<GlobalConfig, Error> {
+) -> Result<(Option<bool>, GlobalConfig), Error> {
     let current_version = table.get("current_version").map(as_string).transpose()?;
 
+    let (is_regex, search) = parse_search_pattern(table, None)?;
+
     let allow_dirty = table.get("allow_dirty").map(as_bool).transpose()?;
-    let parse_version_pattern = table.get("parse").map(as_string).transpose()?;
+    let parse_version_pattern = table.get("parse").map(as_regex).transpose()?;
     let serialize_version_patterns = table.get("serialize").map(as_string_array).transpose()?;
-    let search = table.get("search").map(as_string).transpose()?;
     let replace = table.get("replace").map(as_string).transpose()?;
-    let regex = table.get("regex").map(as_bool).transpose()?;
     let no_configured_files = table.get("no_configured_files").map(as_bool).transpose()?;
     let ignore_missing_files = table.get("ignore_missing_files").map(as_bool).transpose()?;
     let ignore_missing_version = table
@@ -353,46 +388,44 @@ pub(crate) fn parse_global_config<'de>(
         .transpose()?
         .map(|values| values.into_iter().map(PathBuf::from).collect());
 
-    Ok(GlobalConfig {
-        allow_dirty,
-        current_version,
-        parse_version_pattern,
-        serialize_version_patterns,
-        search,
-        replace,
-        regex,
-        no_configured_files,
-        ignore_missing_files,
-        ignore_missing_version,
-        dry_run,
-        commit,
-        tag,
-        sign_tags,
-        tag_name,
-        tag_message,
-        commit_message,
-        commit_args,
-        // extra stuff
-        setup_hooks,
-        pre_commit_hooks,
-        post_commit_hooks,
-        included_paths,
-        excluded_paths,
-    })
+    Ok((
+        is_regex,
+        GlobalConfig {
+            allow_dirty,
+            current_version,
+            parse_version_pattern,
+            serialize_version_patterns,
+            search,
+            replace,
+            no_configured_files,
+            ignore_missing_files,
+            ignore_missing_version,
+            dry_run,
+            commit,
+            tag,
+            sign_tags,
+            tag_name,
+            tag_message,
+            commit_message,
+            commit_args,
+            // extra stuff
+            setup_hooks,
+            pre_commit_hooks,
+            post_commit_hooks,
+            included_paths,
+            excluded_paths,
+        },
+    ))
 }
 
 pub(crate) fn parse_file_config<'de>(
     table: &'de toml::value::Table<'de>,
+    search_is_regex: Option<bool>,
 ) -> Result<FileConfig, Error> {
-    // let current_version = table.get("current_version").map(as_string).transpose()?;
-
-    // let allow_dirty = table.get("allow_dirty").map(as_bool).transpose()?;
-    let parse_version_pattern = table.get("parse").map(as_string).transpose()?;
+    let (_, search) = parse_search_pattern(table, search_is_regex)?;
+    let parse_version_pattern = table.get("parse").map(as_regex).transpose()?;
     let serialize_version_patterns = table.get("serialize").map(as_string_array).transpose()?;
-    let search = table.get("search").map(as_string).transpose()?;
     let replace = table.get("replace").map(as_string).transpose()?;
-    let regex = table.get("regex").map(as_bool).transpose()?;
-    // let no_configured_files = table.get("no_configured_files").map(as_bool).transpose()?;
     let ignore_missing_file = table
         .get("ignore_missing_files")
         .or(table.get("ignore_missing_file"))
@@ -402,69 +435,14 @@ pub(crate) fn parse_file_config<'de>(
         .get("ignore_missing_version")
         .map(as_bool)
         .transpose()?;
-    // let dry_run = table.get("dry_run").map(as_bool).transpose()?;
-    // let commit = table.get("commit").map(as_bool).transpose()?;
-    // let tag = table.get("tag").map(as_bool).transpose()?;
-    // let sign_tags = table
-    //     .get("sign_tag")
-    //     .or(table.get("sign_tags"))
-    //     .map(as_bool)
-    //     .transpose()?;
-    // let tag_name = table.get("tag_name").map(as_string).transpose()?;
-    // let tag_message = table.get("tag_message").map(as_string).transpose()?;
-    // let commit_message = table
-    //     .get("commit_message")
-    //     .or(table.get("message"))
-    //     .map(as_format_string)
-    //     .transpose()?;
-    // let commit_args = table.get("commit_args").map(as_string).transpose()?;
-    //
-    // // extra stuff
-    // let setup_hooks = table.get("setup_hooks").map(as_string_array).transpose()?;
-    // let pre_commit_hooks = table
-    //     .get("pre_commit_hooks")
-    //     .map(as_string_array)
-    //     .transpose()?;
-    // let post_commit_hooks = table
-    //     .get("post_commit_hooks")
-    //     .map(as_string_array)
-    //     .transpose()?;
-    // let included_paths = table
-    //     .get("included_paths")
-    //     .map(as_string_array)
-    //     .transpose()?
-    //     .map(|values| values.into_iter().map(PathBuf::from).collect());
-    // let excluded_paths = table
-    //     .get("excluded_paths")
-    //     .map(as_string_array)
-    //     .transpose()?
-    //     .map(|values| values.into_iter().map(PathBuf::from).collect());
 
     Ok(FileConfig {
-        // allow_dirty,
-        // current_version,
         parse_version_pattern,
         serialize_version_patterns,
         search,
         replace,
-        regex,
-        // no_configured_files,
         ignore_missing_file,
         ignore_missing_version,
-        // dry_run,
-        // commit,
-        // tag,
-        // sign_tags,
-        // tag_name,
-        // tag_message,
-        // commit_message,
-        // commit_args,
-        // // extra stuff
-        // setup_hooks,
-        // pre_commit_hooks,
-        // post_commit_hooks,
-        // included_paths,
-        // excluded_paths,
     })
 }
 
@@ -495,14 +473,14 @@ impl Config {
             return Ok(None);
         }
 
-        let global_file_config = parse_global_config(table)?;
+        let (is_regex_compat, global_file_config) = parse_global_config(table)?;
 
         let files = match table.get("files") {
             None => vec![],
             Some(value) => match value.as_ref() {
                 toml::value::ValueInner::Array(array) => array
                     .iter()
-                    .map(|value| parse_file(value))
+                    .map(|value| parse_file(value, is_regex_compat))
                     .collect::<Result<Vec<(InputFile, FileConfig)>, _>>()?,
                 other => {
                     return Err(Error::UnexpectedType {
@@ -802,7 +780,7 @@ pub fn replace_version(
     // parse the document
     let raw_config = std::fs::read_to_string(path)?;
     let mut document = raw_config.parse::<toml_edit::Document>()?;
-    let search = &config::DEFAULT_PARSE_VERSION_REGEX; // TODO: change
+    let search = &config::defaults::PARSE_VERSION_REGEX; // TODO: change
     let replacement = "<new-version>";
 
     let updated = replace_version_of_document(
@@ -811,7 +789,7 @@ pub fn replace_version(
         search,
         replacement,
     );
-    dbg!(updated);
+    // dbg!(updated);
     let new_config = document.to_string();
 
     let label_existing = format!("{path:?} (before)");
@@ -845,10 +823,10 @@ pub mod tests {
     use crate::{
         config::{
             self, pyproject_toml, Config, FileChange, FileConfig, GlobalConfig, InputFile,
-            VersionComponentSpec,
+            RegexTemplate, VersionComponentSpec,
         },
         diagnostics::{BufferedPrinter, ToDiagnostics},
-        f_string::{OwnedPythonFormatString, OwnedValue},
+        f_string::{PythonFormatString, Value},
         tests::sim_assert_eq_sorted,
     };
     use codespan_reporting::diagnostic::Diagnostic;
@@ -873,6 +851,7 @@ pub mod tests {
         if let Err(ref err) = config {
             diagnostics.extend(err.to_diagnostics(file_id));
         }
+        dbg!(&diagnostics);
         for diagnostic in &diagnostics {
             printer.emit(diagnostic);
         }
@@ -902,7 +881,7 @@ pub mod tests {
 
         let mut document = pyproject_toml.parse::<toml_edit::Document>()?;
         dbg!(&document);
-        let search = &config::DEFAULT_PARSE_VERSION_REGEX;
+        let search = &config::defaults::PARSE_VERSION_REGEX;
         let replacement = "<new-version>";
         super::replace_version_of_document(
             &mut document,
@@ -978,12 +957,14 @@ pub mod tests {
             files: [(
                 InputFile::Path("config.ini".into()),
                 FileConfig {
-                    search: Some(
-                        indoc::indoc! {r"
-                        [myproject]
-                        version={current_version}"}
-                        .to_string(),
-                    ),
+                    search: Some(RegexTemplate::Escaped(
+                        [
+                            Value::String("[myproject]\nversion=".to_string()),
+                            Value::Argument("current_version".to_string()),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    )),
                     replace: Some(
                         indoc::indoc! {r"
                         [myproject]
@@ -1325,18 +1306,18 @@ pub mod tests {
                 commit: Some(true),
                 commit_args: Some("--no-verify".to_string()),
                 tag: Some(true),
-                tag_name: Some(OwnedPythonFormatString(vec![OwnedValue::Argument("new_version".to_string())])),
+                tag_name: Some(PythonFormatString(vec![Value::Argument("new_version".to_string())])),
                 allow_dirty: Some(true),
-                parse_version_pattern: Some("(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)(\\.(?P<dev>post)\\d+\\.dev\\d+)?".to_string()),
+                parse_version_pattern: Some(regex::Regex::new("(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)(\\.(?P<dev>post)\\d+\\.dev\\d+)?")?.into()),
                 serialize_version_patterns: Some(vec![
                     "{major}.{minor}.{patch}.{dev}{$PR_NUMBER}.dev{distance_to_latest_tag}".to_string(),
                     "{major}.{minor}.{patch}".to_string(),
                 ]),
-                commit_message: Some(OwnedPythonFormatString(vec![
-                    OwnedValue::String("Version updated from ".to_string()),
-                    OwnedValue::Argument("current_version".to_string()),
-                    OwnedValue::String(" to ".to_string()),
-                    OwnedValue::Argument("new_version".to_string()),
+                commit_message: Some(PythonFormatString(vec![
+                    Value::String("Version updated from ".to_string()),
+                    Value::Argument("current_version".to_string()),
+                    Value::String(" to ".to_string()),
+                    Value::Argument("new_version".to_string()),
                 ])),
                 ..GlobalConfig::empty()
             },
@@ -1348,14 +1329,19 @@ pub mod tests {
                 (
                     InputFile::Path("CHANGELOG.md".into()),
                     FileConfig {
-                        search: Some("Unreleased".to_string()),
+                        search: Some(RegexTemplate::Escaped([
+                            Value::String("Unreleased".to_string()),
+                        ].into_iter().collect())),
                         ..FileConfig::empty()
                     },
                 ),
                 (
                     InputFile::Path("CHANGELOG.md".into()),
                     FileConfig {
-                        search: Some("{current_version}...HEAD".to_string()),
+                        search: Some(RegexTemplate::Escaped([
+                            Value::Argument("current_version".to_string()),
+                            Value::String("...HEAD".to_string()),
+                        ].into_iter().collect())),
                         replace: Some("{current_version}...{new_version}".to_string()),
                         ..FileConfig::empty()
                     },
@@ -1363,7 +1349,10 @@ pub mod tests {
                 (
                     InputFile::Path("action.yml".into()),
                     FileConfig {
-                        search: Some("bump-my-version=={current_version}".to_string()),
+                        search: Some(RegexTemplate::Escaped([
+                            Value::String("bump-my-version==".to_string()),
+                            Value::Argument("current_version".to_string()),
+                        ].into_iter().collect())),
                         replace: Some("bump-my-version=={new_version}".to_string()),
                         ..FileConfig::empty()
                     },
@@ -1371,9 +1360,11 @@ pub mod tests {
                 (
                     InputFile::Path("Dockerfile".into()),
                     FileConfig {
-                        search: Some("created=\\d{{4}}-\\d{{2}}-\\d{{2}}T\\d{{2}}:\\d{{2}}:\\d{{2}}Z".to_string()),
+                        search: Some(RegexTemplate::Regex([
+                            Value::String(r#"created=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"#.to_string())
+                        ].into_iter().collect())),
                         replace: Some("created={utcnow:%Y-%m-%dT%H:%M:%SZ}".to_string()),
-                        regex: Some(true),
+                        // is_regex: Some(true),
                         ..FileConfig::empty()
                     },
                 ),
@@ -1415,8 +1406,10 @@ pub mod tests {
             global: GlobalConfig {
                 current_version: Some("0.10.5".to_string()),
                 parse_version_pattern: Some(
-                    r"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\-(?P<release>[a-z]+))?"
-                        .to_string(),
+                    regex::Regex::new(
+                        r"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\-(?P<release>[a-z]+))?",
+                    )?
+                    .into(),
                 ),
                 serialize_version_patterns: Some(vec![
                     "{major}.{minor}.{patch}-{release}".to_string(),
@@ -1489,8 +1482,10 @@ pub mod tests {
                 commit: Some(true),
                 tag: Some(true),
                 parse_version_pattern: Some(
-                    r"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\-(?P<release>[a-z]+))?"
-                        .to_string(),
+                    regex::Regex::new(
+                        r"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\-(?P<release>[a-z]+))?",
+                    )?
+                    .into(),
                 ),
                 serialize_version_patterns: Some(vec![
                     "{major}.{minor}.{patch}-{release}".to_string(),
@@ -1517,7 +1512,11 @@ pub mod tests {
                 (
                     InputFile::Path("CHANGELOG.md".into()),
                     FileConfig {
-                        search: Some(r"**unreleased**".to_string()),
+                        search: Some(RegexTemplate::Escaped(
+                            [Value::String(r"**unreleased**".to_string())]
+                                .into_iter()
+                                .collect(),
+                        )),
                         replace: Some(
                             indoc::indoc! {
                             r"
@@ -1718,7 +1717,7 @@ pub mod tests {
             global: GlobalConfig {
                 current_version: Some("1.0.0".to_string()),
                 parse_version_pattern: Some(
-                    indoc::indoc! {r"
+                    regex::Regex::new(indoc::indoc! {r"
                         (?x)
                             (?P<major>[0-9]+)
                             \.(?P<minor>[0-9]+)
@@ -1727,8 +1726,8 @@ pub mod tests {
                                 -(?P<pre_label>alpha|beta|stable)
                                 (?:-(?P<pre_n>[0-9]+))?
                             )?
-                    "}
-                    .to_string(),
+                    "})?
+                    .into(),
                 ),
                 serialize_version_patterns: Some(vec![
                     "{major}.{minor}.{patch}-{pre_label}-{pre_n}".to_string(),
@@ -1764,9 +1763,10 @@ pub mod tests {
             .0?
             .unwrap();
 
-        let parse =
-            r"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\.(?P<dev>post)\d+\.dev\d+)?"
-                .to_string();
+        let parse_regex: config::Regex = regex::Regex::new(
+            r"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\.(?P<dev>post)\d+\.dev\d+)?",
+        )?
+        .into();
         let serialize = vec![
             "{major}.{minor}.{patch}.{dev}{$PR_NUMBER}.dev{distance_to_latest_tag}".to_string(),
             "{major}.{minor}.{patch}".to_string(),
@@ -1777,17 +1777,17 @@ pub mod tests {
                 commit: Some(true),
                 commit_args: Some("--no-verify".to_string()),
                 tag: Some(true),
-                tag_name: Some(OwnedPythonFormatString(vec![OwnedValue::Argument(
+                tag_name: Some(PythonFormatString(vec![Value::Argument(
                     "new_version".to_string(),
                 )])),
                 allow_dirty: Some(true),
-                parse_version_pattern: Some(parse.clone()),
+                parse_version_pattern: Some(parse_regex.clone()),
                 serialize_version_patterns: Some(serialize.clone()),
-                commit_message: Some(OwnedPythonFormatString(vec![
-                    OwnedValue::String("Version updated from ".to_string()),
-                    OwnedValue::Argument("current_version".to_string()),
-                    OwnedValue::String(" to ".to_string()),
-                    OwnedValue::Argument("new_version".to_string()),
+                commit_message: Some(PythonFormatString(vec![
+                    Value::String("Version updated from ".to_string()),
+                    Value::Argument("current_version".to_string()),
+                    Value::String(" to ".to_string()),
+                    Value::Argument("new_version".to_string()),
                 ])),
                 pre_commit_hooks: Some(vec![
                     "uv sync --upgrade".to_string(),
@@ -1803,14 +1803,25 @@ pub mod tests {
                 (
                     InputFile::Path("CHANGELOG.md".into()),
                     FileConfig {
-                        search: Some("Unreleased".to_string()),
+                        search: Some(RegexTemplate::Escaped(
+                            [Value::String("Unreleased".to_string())]
+                                .into_iter()
+                                .collect(),
+                        )),
                         ..FileConfig::empty()
                     },
                 ),
                 (
                     InputFile::Path("CHANGELOG.md".into()),
                     FileConfig {
-                        search: Some("{current_version}...HEAD".to_string()),
+                        search: Some(RegexTemplate::Escaped(
+                            [
+                                Value::Argument("current_version".to_string()),
+                                Value::String("...HEAD".to_string()),
+                            ]
+                            .into_iter()
+                            .collect(),
+                        )),
                         replace: Some("{current_version}...{new_version}".to_string()),
                         ..FileConfig::empty()
                     },
@@ -1818,7 +1829,14 @@ pub mod tests {
                 (
                     InputFile::Path("action.yml".into()),
                     FileConfig {
-                        search: Some("bump-my-version=={current_version}".to_string()),
+                        search: Some(RegexTemplate::Escaped(
+                            [
+                                Value::String("bump-my-version==".to_string()),
+                                Value::Argument("current_version".to_string()),
+                            ]
+                            .into_iter()
+                            .collect(),
+                        )),
                         replace: Some("bump-my-version=={new_version}".to_string()),
                         ..FileConfig::empty()
                     },
@@ -1826,12 +1844,15 @@ pub mod tests {
                 (
                     InputFile::Path("Dockerfile".into()),
                     FileConfig {
-                        search: Some(
-                            r"created=\d{{4}}-\d{{2}}-\d{{2}}T\d{{2}}:\d{{2}}:\d{{2}}Z"
-                                .to_string(),
-                        ),
+                        search: Some(RegexTemplate::Regex(
+                            [Value::String(
+                                r#"created=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"#.to_string(),
+                            )]
+                            .into_iter()
+                            .collect(),
+                        )),
                         replace: Some(r"created={utcnow:%Y-%m-%dT%H:%M:%SZ}".to_string()),
-                        regex: Some(true),
+                        // regex: Some(true),
                         ..FileConfig::empty()
                     },
                 ),
@@ -1861,10 +1882,14 @@ pub mod tests {
                 allow_dirty: Some(true),
                 tag: Some(true),
                 sign_tags: Some(false),
-                regex: Some(false),
-                search: Some("{current_version}".to_string()),
+                // regex: Some(false),
+                search: Some(RegexTemplate::Escaped(
+                    [Value::Argument("current_version".to_string()),]
+                        .into_iter()
+                        .collect()
+                )),
                 replace: Some("{new_version}".to_string()),
-                tag_name: Some(OwnedPythonFormatString(vec![OwnedValue::Argument(
+                tag_name: Some(PythonFormatString(vec![Value::Argument(
                     "new_version".to_string()
                 )])),
                 commit: Some(true),
@@ -1872,19 +1897,19 @@ pub mod tests {
                 current_version: Some("0.29.0".to_string()),
                 ignore_missing_files: Some(false),
                 ignore_missing_version: Some(false),
-                commit_message: Some(OwnedPythonFormatString(vec![
-                    OwnedValue::String("Version updated from ".to_string()),
-                    OwnedValue::Argument("current_version".to_string()),
-                    OwnedValue::String(" to ".to_string()),
-                    OwnedValue::Argument("new_version".to_string()),
+                commit_message: Some(PythonFormatString(vec![
+                    Value::String("Version updated from ".to_string()),
+                    Value::Argument("current_version".to_string()),
+                    Value::String(" to ".to_string()),
+                    Value::Argument("new_version".to_string()),
                 ])),
-                tag_message: Some(OwnedPythonFormatString(vec![
-                    OwnedValue::String("Bump version: ".to_string()),
-                    OwnedValue::Argument("current_version".to_string()),
-                    OwnedValue::String(" → ".to_string()),
-                    OwnedValue::Argument("new_version".to_string()),
+                tag_message: Some(PythonFormatString(vec![
+                    Value::String("Bump version: ".to_string()),
+                    Value::Argument("current_version".to_string()),
+                    Value::String(" → ".to_string()),
+                    Value::Argument("new_version".to_string()),
                 ])),
-                parse_version_pattern: Some(parse.clone()),
+                parse_version_pattern: Some(parse_regex.clone()),
                 serialize_version_patterns: Some(serialize.clone()),
                 pre_commit_hooks: Some(vec![
                     "uv sync --upgrade".to_string(),
@@ -1953,83 +1978,108 @@ pub mod tests {
                 (
                     PathBuf::from("bumpversion/__init__.py"),
                     vec![FileChange {
-                        parse_version_pattern: parse.clone(),
+                        parse_version_pattern: parse_regex.clone(),
                         serialize_version_patterns: serialize.clone(),
-                        search: "{current_version}".to_string(),
+                        search: RegexTemplate::Escaped(
+                            [Value::Argument("current_version".to_string()),]
+                                .into_iter()
+                                .collect()
+                        ),
                         replace: "{new_version}".to_string(),
-                        regex: false,
                         ignore_missing_version: false,
                         ignore_missing_file: false,
                         include_bumps: Some(include_bumps.clone()),
-                        ..FileChange::default()
+                        exclude_bumps: None,
                     }]
                 ),
                 (
                     PathBuf::from("CHANGELOG.md"),
                     vec![
                         FileChange {
-                            parse_version_pattern: parse.clone(),
+                            parse_version_pattern: parse_regex.clone(),
                             serialize_version_patterns: serialize.clone(),
-                            search: "Unreleased".to_string(),
+                            search: RegexTemplate::Escaped(
+                                [Value::String("Unreleased".to_string()),]
+                                    .into_iter()
+                                    .collect()
+                            ),
                             replace: "{new_version}".to_string(),
-                            regex: false,
                             ignore_missing_version: false,
                             ignore_missing_file: false,
                             include_bumps: Some(include_bumps.clone()),
-                            ..FileChange::default()
+                            exclude_bumps: None,
                         },
                         FileChange {
-                            parse_version_pattern: parse.clone(),
+                            parse_version_pattern: parse_regex.clone(),
                             serialize_version_patterns: serialize.clone(),
-                            search: "{current_version}...HEAD".to_string(),
+                            search: RegexTemplate::Escaped(
+                                [
+                                    Value::Argument("current_version".to_string()),
+                                    Value::String("...HEAD".to_string())
+                                ]
+                                .into_iter()
+                                .collect()
+                            ),
                             replace: "{current_version}...{new_version}".to_string(),
-                            regex: false,
                             ignore_missing_version: false,
                             ignore_missing_file: false,
                             include_bumps: Some(include_bumps.clone()),
-                            ..FileChange::default()
+                            exclude_bumps: None,
                         },
                     ],
                 ),
                 (
                     PathBuf::from("action.yml"),
                     vec![FileChange {
-                        parse_version_pattern: parse.clone(),
+                        parse_version_pattern: parse_regex.clone(),
                         serialize_version_patterns: serialize.clone(),
-                        search: "bump-my-version=={current_version}".to_string(),
+                        search: RegexTemplate::Escaped(
+                            [
+                                Value::String("bump-my-version==".to_string()),
+                                Value::Argument("current_version".to_string())
+                            ]
+                            .into_iter()
+                            .collect()
+                        ),
                         replace: "bump-my-version=={new_version}".to_string(),
-                        regex: false,
                         ignore_missing_version: false,
                         ignore_missing_file: false,
                         include_bumps: Some(include_bumps.clone()),
-                        ..FileChange::default()
+                        exclude_bumps: None,
                     },],
                 ),
                 (
                     PathBuf::from("Dockerfile"),
                     vec![
                         FileChange {
-                            parse_version_pattern: parse.clone(),
+                            parse_version_pattern: parse_regex.clone(),
                             serialize_version_patterns: serialize.clone(),
-                            search: r"created=\d{{4}}-\d{{2}}-\d{{2}}T\d{{2}}:\d{{2}}:\d{{2}}Z"
-                                .to_string(),
+                            search: RegexTemplate::Regex(
+                                [Value::String(
+                                    r#"created=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"#.to_string()
+                                ),]
+                                .into_iter()
+                                .collect()
+                            ),
                             replace: r"created={utcnow:%Y-%m-%dT%H:%M:%SZ}".to_string(),
-                            regex: true,
                             ignore_missing_version: false,
                             ignore_missing_file: false,
                             include_bumps: Some(include_bumps.clone()),
-                            ..FileChange::default()
+                            exclude_bumps: None,
                         },
                         FileChange {
-                            parse_version_pattern: parse.clone(),
+                            parse_version_pattern: parse_regex.clone(),
                             serialize_version_patterns: serialize.clone(),
-                            search: "{current_version}".to_string(),
+                            search: RegexTemplate::Escaped(
+                                [Value::Argument("current_version".to_string()),]
+                                    .into_iter()
+                                    .collect()
+                            ),
                             replace: "{new_version}".to_string(),
-                            regex: false,
                             ignore_missing_version: false,
                             ignore_missing_file: false,
                             include_bumps: Some(include_bumps.clone()),
-                            ..FileChange::default()
+                            exclude_bumps: None,
                         },
                     ]
                 ),

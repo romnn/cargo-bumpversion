@@ -3,10 +3,9 @@ pub mod git;
 #[cfg(test)]
 pub mod temp;
 
-use crate::f_string::OwnedPythonFormatString;
+use crate::f_string::PythonFormatString;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Output, Stdio};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TagInfo {
@@ -78,7 +77,8 @@ pub trait VersionControlSystem {
     /// Get the information on the latest tag and revision for the VCS.
     async fn latest_tag_and_revision(
         &self,
-        tag_name: &OwnedPythonFormatString,
-        parse_pattern: &str,
+        tag_name: &PythonFormatString,
+        parse_version_regex: &regex::Regex,
+        // parse_pattern: &str,
     ) -> Result<TagAndRevision, Self::Error>;
 }

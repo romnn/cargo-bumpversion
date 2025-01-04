@@ -6,8 +6,7 @@ mod options;
 mod verbose;
 
 use bumpversion::{
-    config::{self, DEFAULT_COMMIT_MESSAGE},
-    context,
+    config, context,
     diagnostics::{Printer, ToDiagnostics},
     files::FileMap,
     hooks,
@@ -63,7 +62,6 @@ async fn main() -> eyre::Result<()> {
 
     let printer = bumpversion::diagnostics::Printer::stderr(color_choice);
 
-    // TODO: parse config concurently with other stuff
     let (config_file_path, mut config) = bumpversion::find_config(&dir, &printer)
         .await?
         .ok_or(eyre::eyre!("missing config file"))?;
@@ -102,15 +100,14 @@ async fn main() -> eyre::Result<()> {
         .global
         .tag_name
         .as_ref()
-        .unwrap_or(&config::DEFAULT_TAG_NAME);
+        .unwrap_or(&config::defaults::TAG_NAME);
 
     let parse_version_pattern = config
         .global
         .parse_version_pattern
         .as_deref()
-        .unwrap_or(config::DEFAULT_PARSE_VERSION_PATTERN);
+        .unwrap_or(&config::defaults::PARSE_VERSION_REGEX);
 
-    // TODO: make async
     let TagAndRevision { tag, revision } = repo
         .latest_tag_and_revision(tag_name, parse_version_pattern)
         .await?;
@@ -146,11 +143,9 @@ async fn main() -> eyre::Result<()> {
     };
     let current_version: String = configured_version
         .or(actual_version)
-        .ok_or(eyre::eyre!("Unable to determine the current version."))?;
-    // dbg!(&current_version);
+        .ok_or(eyre::eyre!("Unable to determine the current version"))?;
 
     let dirty_files = repo.dirty_files().await?;
-    // dbg!(&dirty_files);
     if !allow_dirty && !dirty_files.is_empty() {
         eyre::bail!(
             "Working directory is not clean:\n\n{}",
@@ -162,13 +157,9 @@ async fn main() -> eyre::Result<()> {
         );
     }
 
-    // let files = config::get_all_file_configs(&config, &parts);
-    // dbg!(&files);
-
     // build resolved file map
     let file_map =
         bumpversion::files::resolve_files_from_config(&mut config, &components, Some(repo.path()))?;
-    // dbg!(&file_map);
 
     if options.no_configured_files == Some(true) {
         config.global.excluded_paths = Some(file_map.keys().cloned().collect());

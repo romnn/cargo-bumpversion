@@ -137,7 +137,8 @@ pub fn trim_trailing_whitespace(value: &mut String, span: &mut Span) {
     *value = value.split_at(value.len() - count).0.to_string();
 }
 
-#[must_use] pub fn compact_span(line: &str, span: Span) -> Span {
+#[must_use]
+pub fn compact_span(line: &str, span: Span) -> Span {
     let Span { mut start, mut end } = span;
     assert!(start <= end);
 
@@ -183,14 +184,12 @@ impl AddOffset for Span {
     }
 }
 
-#[derive(Debug)]
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct ParseState {
     current_section: HashMap<String, Vec<String>>,
     option_name: Option<String>,
     indent_level: usize,
 }
-
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Config {
@@ -698,8 +697,7 @@ mod tests {
         sim_assert_eq!(&*section["foo"], "bar3");
         sim_assert_eq!(&*section["baz"], "qwe");
         sim_assert_eq!(
-            have
-                .section("Commented Bar")
+            have.section("Commented Bar")
                 .unwrap()
                 .get("foo")
                 .unwrap()
@@ -707,8 +705,7 @@ mod tests {
             "bar4"
         );
         sim_assert_eq!(
-            have
-                .section("Commented Bar")
+            have.section("Commented Bar")
                 .unwrap()
                 .get("baz")
                 .unwrap()
@@ -716,8 +713,7 @@ mod tests {
             "qwe"
         );
         sim_assert_eq!(
-            have
-                .section("Spaces")
+            have.section("Spaces")
                 .unwrap()
                 .get("key with spaces")
                 .unwrap()
@@ -725,8 +721,7 @@ mod tests {
             "value"
         );
         sim_assert_eq!(
-            have
-                .section("Spaces")
+            have.section("Spaces")
                 .unwrap()
                 .get("another with spaces")
                 .unwrap()
@@ -1540,7 +1535,9 @@ mod tests {
 
         sim_assert_eq!(config.section_names().collect::<Vec<_>>(), vec!["zing"]);
         sim_assert_eq!(
-            config.section("zing").map(super::super::tests::SectionProxyExt::keys_vec),
+            config
+                .section("zing")
+                .map(super::super::tests::SectionProxyExt::keys_vec),
             Some(vec!["option1", "option2", "foo"]),
         );
 

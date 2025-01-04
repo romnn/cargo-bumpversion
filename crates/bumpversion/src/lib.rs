@@ -5,7 +5,6 @@ pub mod command;
 pub mod config;
 pub mod context;
 pub mod diagnostics;
-pub mod error;
 pub mod f_string;
 pub mod files;
 pub mod hooks;
@@ -165,8 +164,8 @@ pub async fn bump(
         .global
         .parse_version_pattern
         .as_deref()
-        .unwrap_or(config::DEFAULT_PARSE_VERSION_PATTERN);
-    let parse_version_pattern = regex::RegexBuilder::new(parse_version_pattern).build()?;
+        .unwrap_or(&config::defaults::PARSE_VERSION_REGEX);
+    // let parse_version_pattern = regex::RegexBuilder::new(parse_version_pattern).build()?;
 
     let version_spec = version::VersionSpec::from_components(components)?;
 
@@ -176,7 +175,7 @@ pub async fn bump(
         &version_spec,
     )?;
     let current_version = current_version.ok_or_else(|| eyre::eyre!("current version is empty"))?;
-    dbg!(&current_version);
+    // dbg!(&current_version);
 
     let working_dir = repo.path();
     hooks::run_setup_hooks(
@@ -270,7 +269,7 @@ pub async fn bump(
         // configured_files
         //     .retain(|_, change| !change.will_not_bump_component(version_component_to_bump));
     }
-    dbg!(&configured_files);
+    // dbg!(&configured_files);
 
     let ctx_with_new_version: HashMap<String, String> = context::get_context(
         Some(tag_and_revision),
@@ -384,7 +383,7 @@ pub async fn bump(
             .global
             .commit_message
             .as_ref()
-            .unwrap_or(&config::DEFAULT_COMMIT_MESSAGE);
+            .unwrap_or(&config::defaults::COMMIT_MESSAGE);
 
         let commit_message = commit_message.format(&ctx_with_new_version, true)?;
         tracing::info!(msg = commit_message, "commit");
@@ -406,22 +405,25 @@ pub async fn bump(
         }
     }
 
-    let tag = config.global.tag.unwrap_or(config::DEFAULT_CREATE_TAG);
+    let tag = config.global.tag.unwrap_or(config::defaults::CREATE_TAG);
     if tag {
-        let sign_tag = config.global.sign_tags.unwrap_or(config::DEFAULT_SIGN_TAGS);
+        let sign_tag = config
+            .global
+            .sign_tags
+            .unwrap_or(config::defaults::SIGN_TAGS);
 
         let tag_name = config
             .global
             .tag_name
             .as_ref()
-            .unwrap_or(&config::DEFAULT_TAG_NAME)
+            .unwrap_or(&config::defaults::TAG_NAME)
             .format(&ctx_with_new_version, true)?;
 
         let tag_message = config
             .global
             .tag_message
             .as_ref()
-            .unwrap_or(&config::DEFAULT_TAG_MESSAGE)
+            .unwrap_or(&config::defaults::TAG_MESSAGE)
             .format(&ctx_with_new_version, true)?;
 
         tracing::info!(msg = tag_message, name = tag_name, "tag");

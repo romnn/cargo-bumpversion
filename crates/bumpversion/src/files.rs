@@ -1,80 +1,12 @@
 use crate::{
     config::{Config, FileChange, FileConfig, InputFile, VersionComponentConfigs},
-    f_string::OwnedPythonFormatString,
+    f_string::PythonFormatString,
     version::Version,
 };
 use color_eyre::eyre::{self, Context};
 use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-
-// /// A file to modify in a configured way
-// #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-// pub struct ConfiguredFile {
-//     pub path: PathBuf,
-//     pub file_change: FileChange,
-//     // pub version_config: VersionConfig,
-// }
-
-// impl ConfiguredFile {
-//     pub fn new(
-//         path: PathBuf,
-//         file_change: FileChange,
-//         // version_config: &VersionConfig,
-//         search: Option<&str>,
-//         replace: Option<&str>,
-//     ) -> Self {
-//         // let replacement: Option<&str> = [
-//         //     replace,
-//         //     file_change.replace.as_deref(),
-//         //     version_config.replace.as_deref(),
-//         // ]
-//         // .into_iter()
-//         // .filter_map(|v| v)
-//         // .next();
-//
-//         // let mut merged_file_change = FileChange {
-//         //     search: search.map(ToString::to_string),
-//         //     replace: replace.map(ToString::to_string),
-//         //     ..FileChange::default()
-//         // };
-//         // merged_file_change.merge_with(&file_change);
-//         // merged_file_change.merge_with(&FileChange {
-//         //     // TODO: should file change also store a regex?
-//         //     parse_pattern: Some(version_config.parse_version_regex.as_str().to_string()),
-//         //     serialize_patterns: version_config.serialize_version_patterns.clone(),
-//         //     search: version_config.search.clone(),
-//         //     replace: version_config.replace.clone(),
-//         //     ..FileChange::default() // TODO: empty?
-//         // });
-//         // merged_file_change.merge_with(&FileChange::defaults());
-//
-//         let search = search.unwrap_or(file_change.search.as_str());
-//         let replace = replace.unwrap_or(file_change.replace.as_str());
-//
-//         // let file_change = FileChange{
-//         //     parse_pattern: file_change.parse_pattern.or(version_config.parse_regex),
-//         //     serialize_patterns: file_change.serialize_patterns.or(version_config.serialize_patterns),
-//         //     search: search.or(file_change.search).or(version_config.search),
-//         //     replace: replacement,
-//         //     regex: file_change.regex.or(Some(false)),
-//         //     ignore_missing_version: file_change.ignore_missing_version.unwrap_or(false),
-//         //     ignore_missing_file: file_change.ignore_missing_file.unwrap_or(false),
-//         //     filename: file_change.filename,
-//         //     glob: file_change.glob,
-//         //     key_path: file_change.key_path,
-//         //     // include_bumps=file_change.include_bumps,
-//         //     // exclude_bumps=file_change.exclude_bumps,
-//         //     ..FileChange::default()
-//         // };
-//
-//         Self {
-//             path,
-//             file_change,
-//             // version_config: version_config.clone(),
-//         }
-//     }
-// }
 
 /// Does the search pattern match any part of the contents?
 fn contains_pattern(contents: &str, search_pattern: &regex::Regex) -> bool {
@@ -102,13 +34,11 @@ pub fn replace_version<'a, K, V>(
     current_version: &'a Version,
     new_version: &'a Version,
     ctx: &'a HashMap<K, V>,
-    // ) -> eyre::Result<std::borrow::Cow<'a, str>>
 ) -> eyre::Result<String>
 where
     K: std::borrow::Borrow<str> + std::hash::Hash + Eq + std::fmt::Debug,
     V: AsRef<str> + std::fmt::Debug,
 {
-    // let mut after = std::borrow::Cow::Borrowed(before);
     let mut after = before.to_string();
     for change in changes {
         // we need to update the version because each file may serialize versions differently
@@ -126,8 +56,8 @@ where
             ])
             .collect();
 
-        let search_regex = change.search_pattern(&ctx)?;
-        let replace = OwnedPythonFormatString::parse(&change.replace)?;
+        let search_regex = change.search.format(&ctx, true)?;
+        let replace = PythonFormatString::parse(&change.replace)?;
         let replacement = replace
             .format(&ctx, true)
             .wrap_err_with(|| eyre::eyre!("invalid replace format string"))?;
@@ -172,7 +102,6 @@ where
 /// Replace version in file
 pub fn replace_version_in_file<K, V>(
     path: &Path,
-    // changes: &FileChange,
     changes: &[FileChange],
     current_version: &Version,
     new_version: &Version,
@@ -349,17 +278,14 @@ pub fn resolve_files_from_config<'a>(
         })
         .collect::<Result<_, Error>>()?;
 
-    let new_files = new_files
-        .into_iter()
-        .flatten()
-        .try_fold(
-            IndexMap::<PathBuf, Vec<FileChange>>::new(),
-            |mut acc, res| {
-                let (file, config) = res?;
-                acc.entry(file).or_default().push(config);
-                Ok::<_, Error>(acc)
-            },
-        )?;
+    let new_files = new_files.into_iter().flatten().try_fold(
+        IndexMap::<PathBuf, Vec<FileChange>>::new(),
+        |mut acc, res| {
+            let (file, config) = res?;
+            acc.entry(file).or_default().push(config);
+            Ok::<_, Error>(acc)
+        },
+    )?;
     Ok(new_files)
 }
 

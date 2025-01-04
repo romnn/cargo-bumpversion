@@ -1,14 +1,12 @@
 use crate::{
     command::run_command,
-    config::DEFAULT_TAG_NAME,
-    f_string::{OwnedPythonFormatString, OwnedValue},
+    f_string::{PythonFormatString, Value},
     utils,
     vcs::{RevisionInfo, TagAndRevision, TagInfo, VersionControlSystem},
 };
 use async_process::{Command, Output, Stdio};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-// use std::process::{Command, Output, Stdio};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -31,7 +29,7 @@ pub enum Error {
     MissingArgument {
         #[source]
         source: crate::f_string::MissingArgumentError,
-        format_string: OwnedPythonFormatString,
+        format_string: PythonFormatString,
     },
 }
 
@@ -70,7 +68,7 @@ static FLAG_PATTERN: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy
 /// The tuple `(pattern_without flags, flags)`.
 fn extract_regex_flags(pattern: &str) -> (&str, &str) {
     let bits: Vec<_> = FLAG_PATTERN.split(pattern).collect();
-    dbg!(&bits);
+    // dbg!(&bits);
     if bits.len() < 2 {
         (pattern, "")
     } else {
@@ -78,36 +76,25 @@ fn extract_regex_flags(pattern: &str) -> (&str, &str) {
     }
 }
 
-// pub static NEW_VERSION_PATTERN: once_cell::sync::Lazy<aho_corasick::AhoCorasick> =
-//     once_cell::sync::Lazy::new(|| aho_corasick::AhoCorasick::new(["{new_version}"]).unwrap());
-
 /// Return the version from a tag
 pub fn get_version_from_tag<'a>(
     tag: &'a str,
-    tag_name: &OwnedPythonFormatString,
-    // tag_name: &str,
-    parse_pattern: &str,
+    tag_name: &PythonFormatString,
+    parse_version_regex: &regex::Regex,
 ) -> Result<Option<&'a str>, Error> {
+    let parse_pattern = parse_version_regex.as_str();
     let version_pattern = parse_pattern.replace("\\\\", "\\");
     let (version_pattern, regex_flags) = extract_regex_flags(&version_pattern);
-    let OwnedPythonFormatString(values) = tag_name;
+    let PythonFormatString(values) = tag_name;
     let (prefix, suffix) = values
         .iter()
-        .position(|value| value == &OwnedValue::Argument("new_version".to_string()))
+        .position(|value| value == &Value::Argument("new_version".to_string()))
         .map(|idx| {
             let prefix = &values[..idx];
             let suffix = &values[idx..];
             (prefix, suffix)
         })
         .unwrap_or_default();
-    // let (prefix, suffix) = NEW_VERSION_PATTERN
-    //     .find(tag_name)
-    //     .map(|m| {
-    //         let prefix = &tag_name[..m.start()];
-    //         let suffix = &tag_name[m.end()..];
-    //         (prefix, suffix)
-    //     })
-    //     .unwrap_or_default();
 
     let prefix = prefix.iter().fold(String::new(), |mut acc, value| {
         acc.push_str(&value.to_string());
@@ -174,8 +161,9 @@ impl GitRepository {
     /// The `parse_pattern` is a regular expression pattern used to parse the version from the tag.
     async fn latest_tag_info(
         &self,
-        tag_name: &OwnedPythonFormatString,
-        parse_pattern: &str,
+        tag_name: &PythonFormatString,
+        parse_version_regex: &regex::Regex,
+        // parse_pattern: &str,
     ) -> Result<Option<TagInfo>, Error> {
         let tag_pattern = tag_name
             .format(&[("new_version", "*")].into_iter().collect(), true)
@@ -202,7 +190,7 @@ impl GitRepository {
             Ok(tag_info) => {
                 let raw_tag = tag_info.stdout;
                 let mut tag_parts: Vec<&str> = raw_tag.split('-').collect();
-                dbg!(&tag_parts);
+                // dbg!(&tag_parts);
 
                 let dirty = tag_parts
                     .last()
@@ -226,7 +214,7 @@ impl GitRepository {
                         tag: raw_tag.clone(),
                     })?;
                 let current_tag = tag_parts.join("-");
-                let version = get_version_from_tag(&current_tag, tag_name, parse_pattern)?;
+                let version = get_version_from_tag(&current_tag, tag_name, parse_version_regex)?;
                 let current_numeric_version = current_tag.trim_left_matches("v").to_string();
                 let current_version = version
                     .unwrap_or(current_numeric_version.as_str())
@@ -372,8 +360,9 @@ impl VersionControlSystem for GitRepository {
 
     async fn latest_tag_and_revision(
         &self,
-        tag_name: &OwnedPythonFormatString,
-        parse_pattern: &str,
+        tag_name: &PythonFormatString,
+        // parse_pattern: &str,
+        parse_version_regex: &regex::Regex,
     ) -> Result<TagAndRevision, Error> {
         let mut cmd = Command::new("git");
         cmd.args(["update-index", "--refresh", "-q"])
@@ -382,7 +371,7 @@ impl VersionControlSystem for GitRepository {
             tracing::debug!("failed to update git index: {err}");
         }
 
-        let tag = self.latest_tag_info(tag_name, parse_pattern).await?;
+        let tag = self.latest_tag_info(tag_name, parse_version_regex).await?;
         let revision = self.revision_info().await.ok().flatten();
 
         Ok(TagAndRevision { tag, revision })

@@ -32,12 +32,10 @@ aho-corasick = "1"
 
 # diagnostics
 codespan-reporting = "0"
-unindent = "0"
 
 # # optional: pest parser
 # pest = "2"
 # pest_derive = "2"
-
 # # optional: nom parser
 # nom = "7"
 
@@ -45,6 +43,7 @@ unindent = "0"
 color-eyre = "0"
 similar-asserts = "1"
 indoc = "2"
+unindent = "0"
 lazy_static = "1"
 
 # pest-test = "0"

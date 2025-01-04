@@ -1,5 +1,6 @@
 #### short-term
 
+- remove "owned" python format string...
 - make async
 - implement pretty verbose mode
 - proper error types

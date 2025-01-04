@@ -3,10 +3,10 @@ mod tests {
     use crate::{
         config::{
             pyproject_toml::tests::parse_toml, Config, FileConfig, GlobalConfig, InputFile,
-            VersionComponentSpec,
+            RegexTemplate, VersionComponentSpec,
         },
         diagnostics::{Printer, ToDiagnostics},
-        f_string::{OwnedPythonFormatString, OwnedValue},
+        f_string::{PythonFormatString, Value},
     };
     use codespan_reporting::diagnostic;
     use color_eyre::eyre;
@@ -64,7 +64,7 @@ mod tests {
                 commit: Some(true),
                 tag: Some(true),
                 // commit_message: Some("DO NOT BUMP VERSIONS WITH THIS FILE".to_string()),
-                commit_message: Some(OwnedPythonFormatString(vec![OwnedValue::String(
+                commit_message: Some(PythonFormatString(vec![Value::String(
                     "DO NOT BUMP VERSIONS WITH THIS FILE".to_string(),
                 )])),
                 ..GlobalConfig::empty()
@@ -144,8 +144,10 @@ mod tests {
                 tag: Some(true),
                 current_version: Some("1.0.0".to_string()),
                 parse_version_pattern: Some(
-                    r"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\-(?P<release>[a-z]+))?"
-                        .to_string(),
+                    regex::Regex::new(
+                        r"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\-(?P<release>[a-z]+))?",
+                    )?
+                    .into(),
                 ),
                 serialize_version_patterns: Some(vec![
                     r"{major}.{minor}.{patch}-{release}".to_string(),
@@ -162,7 +164,11 @@ mod tests {
                 (
                     InputFile::Path("CHANGELOG.md".into()),
                     FileConfig {
-                        search: Some("**unreleased**".to_string()),
+                        search: Some(RegexTemplate::Escaped(
+                            [Value::String("**unreleased**".to_string())]
+                                .into_iter()
+                                .collect(),
+                        )),
                         replace: Some(
                             indoc::indoc! {
                                 r"
@@ -227,6 +233,7 @@ mod tests {
 
             [[tool.bumpversion.files]]
             filename = "should_override_regex.txt"
+            search = "not a regex"
             regex = false
         "#};
 
@@ -235,7 +242,7 @@ mod tests {
         let expected = Config {
             global: GlobalConfig {
                 ignore_missing_version: Some(true),
-                regex: Some(true),
+                // regex: Some(true),
                 current_version: Some("0.0.1".to_string()),
                 ..GlobalConfig::empty()
             },
@@ -247,7 +254,11 @@ mod tests {
                 (
                     InputFile::Path("should_override_search.txt".into()),
                     FileConfig {
-                        search: Some("**unreleased**".to_string()),
+                        search: Some(RegexTemplate::Regex(
+                            [Value::String("**unreleased**".to_string())]
+                                .into_iter()
+                                .collect(),
+                        )),
                         ..FileConfig::empty()
                     },
                 ),
@@ -261,7 +272,9 @@ mod tests {
                 (
                     InputFile::Path("should_override_parse.txt".into()),
                     FileConfig {
-                        parse_version_pattern: Some("version(?P<major>\\d+)".to_string()),
+                        parse_version_pattern: Some(
+                            regex::Regex::new("version(?P<major>\\d+)")?.into(),
+                        ),
                         ..FileConfig::empty()
                     },
                 ),
@@ -282,7 +295,12 @@ mod tests {
                 (
                     InputFile::Path("should_override_regex.txt".into()),
                     FileConfig {
-                        regex: Some(false),
+                        // regex: Some(false),
+                        search: Some(RegexTemplate::Escaped(
+                            vec![Value::String("not a regex".to_string())]
+                                .into_iter()
+                                .collect(),
+                        )),
                         ..FileConfig::empty()
                     },
                 ),
@@ -436,27 +454,27 @@ mod tests {
             global: GlobalConfig {
                 allow_dirty: Some(false),
                 commit: Some(false),
-                commit_message: Some(OwnedPythonFormatString(vec![
-                    OwnedValue::String("Bump version: ".to_string()),
-                    OwnedValue::Argument("current_version".to_string()),
-                    OwnedValue::String(" → ".to_string()),
-                    OwnedValue::Argument("new_version".to_string()),
+                commit_message: Some(PythonFormatString(vec![
+                    Value::String("Bump version: ".to_string()),
+                    Value::Argument("current_version".to_string()),
+                    Value::String(" → ".to_string()),
+                    Value::Argument("new_version".to_string()),
                 ])),
                 commit_args: Some(String::new()),
                 tag: Some(false),
                 sign_tags: Some(false),
-                tag_name: Some(OwnedPythonFormatString(vec![
-                    OwnedValue::String("v".to_string()),
-                    OwnedValue::Argument("new_version".to_string()),
+                tag_name: Some(PythonFormatString(vec![
+                    Value::String("v".to_string()),
+                    Value::Argument("new_version".to_string()),
                 ])),
-                tag_message: Some(OwnedPythonFormatString(vec![
-                    OwnedValue::String("Bump version: ".to_string()),
-                    OwnedValue::Argument("current_version".to_string()),
-                    OwnedValue::String(" → ".to_string()),
-                    OwnedValue::Argument("new_version".to_string()),
+                tag_message: Some(PythonFormatString(vec![
+                    Value::String("Bump version: ".to_string()),
+                    Value::Argument("current_version".to_string()),
+                    Value::String(" → ".to_string()),
+                    Value::Argument("new_version".to_string()),
                 ])),
                 current_version: Some("1.0.0".to_string()),
-                parse_version_pattern: Some(
+                parse_version_pattern: Some(regex::Regex::new(
                     indoc::indoc! {r"(?x)
                     (?:
                         (?P<major>[0-9]+)
@@ -490,13 +508,15 @@ mod tests {
                     (?:\+(?P<local>[a-z0-9]+(?:[-_\.][a-z0-9]+)*))?
                     ",
                     }
-                    .to_string(),
+                )?.into()
                 ),
                 serialize_version_patterns: Some(vec![
                     "{major}.{minor}.{patch}.{dev_label}{distance_to_latest_tag}+{short_branch_name}".to_string(),
                     "{major}.{minor}.{patch}".to_string(),
                 ]),
-                search: Some("{current_version}".to_string()),
+                search: Some(RegexTemplate::Escaped([
+                    Value::Argument("current_version".to_string()),
+                ].into_iter().collect())),
                 replace: Some("{new_version}".to_string()),
                 ..GlobalConfig::empty()
             },
@@ -558,14 +578,20 @@ mod tests {
 
         let expected = Config {
             global: GlobalConfig {
-                regex: Some(true),
+                // regex: Some(true),
                 current_version: Some("4.7.1".to_string()),
                 ..GlobalConfig::empty()
             },
             files: vec![(
                 InputFile::Path("./citation.cff".into()),
                 FileConfig {
-                    search: Some(r"date-released: \d{{4}}-\d{{2}}-\d{{2}}".to_string()),
+                    search: Some(RegexTemplate::Regex(
+                        [Value::String(
+                            r#"date-released: \d{4}-\d{2}-\d{2}"#.to_string(),
+                        )]
+                        .into_iter()
+                        .collect(),
+                    )),
                     replace: Some("date-released: {utcnow:%Y-%m-%d}".to_string()),
                     ..FileConfig::empty()
                 },
@@ -596,14 +622,21 @@ mod tests {
 
         let expected = Config {
             global: GlobalConfig {
-                regex: Some(true),
+                // regex: Some(true),
                 current_version: Some("1.0.0".to_string()),
                 ..GlobalConfig::empty()
             },
             files: vec![(
                 InputFile::Path("thingy.yaml".into()),
                 FileConfig {
-                    search: Some(r"^version: {current_version}".to_string()),
+                    search: Some(RegexTemplate::Regex(
+                        [
+                            Value::String("^version: ".to_string()),
+                            Value::Argument("current_version".to_string()),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    )),
                     replace: Some("version: {new_version}".to_string()),
                     ..FileConfig::empty()
                 },
@@ -644,9 +677,13 @@ mod tests {
                 (
                     InputFile::Path("VERSION".into()),
                     FileConfig {
-                        search: Some(r"__date__ = '\d{{4}}-\d{{2}}-\d{{2}}'".to_string()),
+                        search: Some(RegexTemplate::Regex(
+                            [Value::String(r"__date__ = '\d{4}-\d{2}-\d{2}'".to_string())]
+                                .into_iter()
+                                .collect(),
+                        )),
                         replace: Some("__date__ = '{now:%Y-%m-%d}'".to_string()),
-                        regex: Some(true),
+                        // regex: Some(true),
                         ..FileConfig::empty()
                     },
                 ),
