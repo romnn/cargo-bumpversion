@@ -1,22 +1,17 @@
 [package]
 name = "bumpversion"
-version = "0.1.0"
-edition = "2021"
+license-file = "../../LICENSE"
+readme = "../../README.md"
 publish = true
-authors = ["romnn <contact@romnn.com>"]
-description = "bump semver version in your project"
-license-file = "LICENSE"
-readme = "README.md"
-homepage = "https://github.com/romnn/bumpversion"
-repository = "https://github.com/romnn/bumpversion"
-categories = [
-  "command-line-utilities",
-]
-keywords = [
-  "semver",
-  "bumpversion",
-  "bump2version",
-]
+
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+homepage.workspace = true
+repository.workspace = true
+categories.workspace = true
+keywords.workspace = true
 
 [lib]
 crate-type = ["cdylib", "lib"]
@@ -72,7 +67,8 @@ regex = "1"
 serde = { version = "1", features = ["derive"] }
 # configparser = "3"
 # serde_ini = { path = "../crates/serde-ini" }
-serde-ini-spanned = { path = "../crates/serde-ini-spanned" }
+# serde-ini-spanned = { path = "../crates/serde-ini-spanned" }
+serde-ini-spanned.workspace = true
 toml-span = { version = "0", features = ["reporting", "serde"] }
 toml_edit = "0"
 indexmap = { version = "2", features = ["serde"] }
