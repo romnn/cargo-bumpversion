@@ -69,7 +69,6 @@ pub fn get_context(
             [
                 (
                     "current_version".to_string(),
-                    // config.global.current_version.clone().unwrap_or_default(),
                     current_version_serialized.unwrap_or_default().to_string(),
                 ),
                 (

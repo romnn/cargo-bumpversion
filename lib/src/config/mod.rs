@@ -525,17 +525,17 @@ impl InputFile {
     }
 }
 
-pub type Files = Vec<(InputFile, FileConfig)>;
-pub type Parts = IndexMap<String, VersionComponentSpec>;
-// pub type Parts = IndexMap<String, PartConfig>;
+pub type FileConfigs = Vec<(InputFile, FileConfig)>;
+pub type VersionComponentConfigs = IndexMap<String, VersionComponentSpec>;
+// pub type Parts = IndexMap<String, VersionComponentSpec>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     pub global: GlobalConfig,
     // pub global: FileConfig,
     // pub files: IndexMap<PathBuf, FileConfig>,
-    pub files: Files,
-    pub parts: Parts,
+    pub files: FileConfigs,
+    pub components: VersionComponentConfigs,
     // pub path: Option<PathBuf>,
     // pub parts: Vec<String, PartConfig>,
 }
@@ -544,8 +544,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             global: GlobalConfig::empty(),
-            files: Files::default(),
-            parts: Parts::default(),
+            files: FileConfigs::default(),
+            components: VersionComponentConfigs::default(),
         }
     }
 }
@@ -593,7 +593,7 @@ pub struct FileChange {
 }
 
 impl FileChange {
-    pub fn new(file_config: FileConfig, parts: &Parts) -> Self {
+    pub fn new(file_config: FileConfig, components: &VersionComponentConfigs) -> Self {
         Self {
             parse_version_pattern: file_config
                 .parse_version_pattern
@@ -601,7 +601,7 @@ impl FileChange {
             serialize_version_patterns: file_config
                 .serialize_version_patterns
                 .unwrap_or(DEFAULT_SERIALIZE_VERSION_PATTERNS.clone()),
-            // TODO: make this an enum that is either regex or string
+            // TODO: make this an enum that is either regex or string?
             search: file_config.search.unwrap_or(DEFAULT_SEARCH.to_string()),
             replace: file_config.replace.unwrap_or(DEFAULT_REPLACE.to_string()),
             regex: file_config.regex.unwrap_or(DEFAULT_SEARCH_IS_REGEX),
@@ -611,11 +611,55 @@ impl FileChange {
             ignore_missing_file: file_config
                 .ignore_missing_file
                 .unwrap_or(DEFAULT_IGNORE_MISSING_FILES),
-            include_bumps: Some(parts.keys().cloned().collect()),
+            include_bumps: Some(components.keys().cloned().collect()),
             key_path: None,
             exclude_bumps: None,
         }
     }
+
+    // /// Render the search pattern and return the compiled regex pattern and
+    // /// the raw pattern.
+    // ///
+    // /// # Returns
+    // /// A tuple of the compiled regex pattern and the raw pattern as a string.
+    // fn get_search_pattern(
+    //     search: &OwnedPythonFormatString,
+    //     ctx: &HashMap<&str, &str>,
+    // ) -> eyre::Result<(regex::Regex, String)> {
+    //     // tracing::debug!("rendering search pattern with context");
+    //
+    //     // the default search pattern is escaped,
+    //     // so we can still use it in a regex
+    //     let strict = true;
+    //     let raw_pattern = search.format(ctx, strict)?;
+    //     let default = regex::RegexBuilder::new(&regex::escape(&raw_pattern))
+    //         .multi_line(true)
+    //         .build()?;
+    //     // , re.MULTILINE | re.DOTALL)
+    //     // if not self.regex:
+    //     //     logger.debug("No RegEx flag detected. Searching for the default pattern: '%s'", default.pattern)
+    //     //     return default, raw_pattern
+    //
+    //     let regex_context = ctx.iter().map(|(k, v)| (*k, regex::escape(v))).collect();
+    //     let regex_pattern = search.format(&regex_context, strict)?;
+    //
+    //     match regex::RegexBuilder::new(&regex_pattern)
+    //         .multi_line(true)
+    //         .build()
+    //     {
+    //         Ok(regex_pattern) => {
+    //             tracing::debug!("searching for regex {}", regex_pattern.as_str());
+    //             return Ok((regex_pattern, raw_pattern));
+    //         }
+    //         Err(err) => {
+    //             tracing::error!("invalid regex {:?}: {:?}", default, err);
+    //         }
+    //     }
+    //
+    //     tracing::debug!(pattern = ?raw_pattern, "invalid regex, searching for default pattern");
+    //
+    //     Ok((default, raw_pattern))
+    // }
 
     /// Render the search pattern and return the compiled regex pattern and the raw pattern
     pub fn search_pattern<K, V>(&self, ctx: &HashMap<K, V>) -> eyre::Result<regex::Regex>
@@ -626,8 +670,9 @@ impl FileChange {
     {
         tracing::debug!("rendering search pattern with context");
         // the default search pattern is escaped, so we can still use it in a regex
+        let strict = true;
         let search = OwnedPythonFormatString::parse(&self.search)?;
-        let raw_pattern = search.format(ctx, true)?;
+        let raw_pattern = search.format(ctx, strict)?;
         let default_regex = regex::RegexBuilder::new(&regex::escape(raw_pattern.as_str()))
             .multi_line(true)
             .build()?;
@@ -638,19 +683,17 @@ impl FileChange {
                 "searching for default pattern"
             );
             return Ok(default_regex);
-            // return (default, raw_pattern);
         }
 
         let ctx: HashMap<&str, String> = ctx
             .into_iter()
             .map(|(k, v)| (k.borrow(), regex::escape(v.as_ref())))
             .collect();
-        let regex_pattern = search.format(&ctx, true)?;
+        let regex_pattern = search.format(&ctx, strict)?;
         let search_regex = regex::RegexBuilder::new(&regex_pattern)
             .multi_line(true)
             .build()?;
         tracing::debug!(pattern = search_regex.as_str(), "searching for the regex");
-        // return (search_regex, raw_pattern);
 
         Ok(search_regex)
     }
@@ -748,8 +791,9 @@ impl FileChange {
 pub struct VersionComponentSpec {
     /// Is the component independent of the other components?
     pub independent: Option<bool>,
-    /// """The value that is optional to include in the version.
 
+    /// The value that is optional to include in the version.
+    ///
     /// - Defaults to first value in values or 0 in the case of numeric.
     /// - Empty string means nothing is optional.
     /// - CalVer components ignore this."""
@@ -759,6 +803,7 @@ pub struct VersionComponentSpec {
     ///
     /// If it and `calver_format` is None, the component is numeric.
     pub values: Vec<String>,
+
     /// The first value to increment from
     pub first_value: Option<String>,
 
@@ -772,21 +817,8 @@ pub struct VersionComponentSpec {
     pub depends_on: Option<String>,
 }
 
-// impl VersionComponentSpec {
-//     pub fn from_part(part: &VersionComponentSpec) -> Self {
-//         Self {
-//             independent: part.independent,
-//             optional_value: part.optional_value.clone(),
-//             values: part.values.clone(),
-//         }
-//     }
-// }
-
 /// Make sure all version components are included
-pub fn get_all_part_configs(
-    config: &Config,
-    // ) -> eyre::Result<IndexMap<String, VersionComponentSpec>> {
-) -> eyre::Result<Parts> {
+pub fn version_component_configs(config: &Config) -> eyre::Result<VersionComponentConfigs> {
     let parsing_groups: Vec<String> = match &config.global.parse_version_pattern {
         Some(parse) => {
             let re = regex::Regex::new(parse)?;
@@ -797,21 +829,13 @@ pub fn get_all_part_configs(
         }
         None => vec![],
     };
-    // let part_configs: IndexMap<String, > = parsing_groups
-    let part_configs: Parts = parsing_groups
+    let part_configs: VersionComponentConfigs = parsing_groups
         .into_iter()
         .map(|label| {
             let is_independent = label.starts_with("$");
-            let mut spec = match config.parts.get(&label) {
-                // Some(part) => VersionComponentSpec{..VersionComponentSpec::from_part(part)},
-                // Some(part) => VersionComponentSpec::from_part(part),
+            let mut spec = match config.components.get(&label) {
                 Some(part) => part.clone(),
                 None => VersionComponentSpec::default(),
-                // None => VersionComponentSpec::default(),
-                // None => VersionComponentSpec {
-                //     independent: Some(is_independent),
-                //     ..VersionComponentSpec::default()
-                // },
             };
             spec.independent.merge_with(Some(&is_independent));
             (label, spec)
@@ -822,7 +846,7 @@ pub fn get_all_part_configs(
 
 #[cfg(test)]
 mod tests {
-    use super::{Config, FileConfig, GlobalConfig, Parts, VersionComponentSpec};
+    use super::{Config, FileConfig, GlobalConfig, VersionComponentConfigs, VersionComponentSpec};
     use color_eyre::eyre;
     use indexmap::IndexMap;
     use similar_asserts::assert_eq as sim_assert_eq;
@@ -838,9 +862,9 @@ mod tests {
                 ..GlobalConfig::empty()
             },
             files: vec![],
-            parts: [].into_iter().collect(),
+            components: [].into_iter().collect(),
         };
-        let part_configs = super::get_all_part_configs(&config)?;
+        let part_configs = super::version_component_configs(&config)?;
         sim_assert_eq!(
             part_configs,
             [
@@ -884,7 +908,7 @@ mod tests {
                 ..GlobalConfig::empty()
             },
             files: vec![],
-            parts: [
+            components: [
                 (
                     "major".to_string(),
                     VersionComponentSpec {
@@ -905,7 +929,7 @@ mod tests {
             .into_iter()
             .collect(),
         };
-        let part_configs = super::get_all_part_configs(&config)?;
+        let part_configs = super::version_component_configs(&config)?;
         sim_assert_eq!(
             part_configs,
             [
@@ -934,7 +958,7 @@ mod tests {
                 ),
             ]
             .into_iter()
-            .collect::<Parts>()
+            .collect::<VersionComponentConfigs>()
         );
 
         Ok(())

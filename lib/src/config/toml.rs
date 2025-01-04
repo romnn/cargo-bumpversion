@@ -70,7 +70,7 @@ mod tests {
                 ..GlobalConfig::empty()
             },
             files: vec![],
-            parts: [].into_iter().collect(),
+            components: [].into_iter().collect(),
         };
         let config = parse_toml(bumpversion_toml, &Printer::default()).0?;
         similar_asserts::assert_eq!(config, Some(expected));
@@ -176,7 +176,7 @@ mod tests {
                     },
                 ),
             ],
-            parts: [(
+            components: [(
                 "release".to_string(),
                 VersionComponentSpec {
                     optional_value: Some("gamma".to_string()),
@@ -287,7 +287,7 @@ mod tests {
                     },
                 ),
             ],
-            parts: [].into_iter().collect(),
+            components: [].into_iter().collect(),
         };
         similar_asserts::assert_eq!(config, Some(expected));
         Ok(())
@@ -343,7 +343,7 @@ mod tests {
                 ..GlobalConfig::empty()
             },
             files: vec![].into_iter().collect(),
-            parts: [].into_iter().collect(),
+            components: [].into_iter().collect(),
         };
         similar_asserts::assert_eq!(config, Some(expected));
         Ok(())
@@ -501,7 +501,7 @@ mod tests {
                 ..GlobalConfig::empty()
             },
             files: vec![].into_iter().collect(),
-            parts: [
+            components: [
                 ("pre_label".to_string(), VersionComponentSpec{
             values: vec!["final".to_string(), "a".to_string(), "b".to_string(), "rc".to_string()],
                     ..VersionComponentSpec::default()
@@ -570,7 +570,7 @@ mod tests {
                     ..FileConfig::empty()
                 },
             )],
-            parts: [].into_iter().collect(),
+            components: [].into_iter().collect(),
         };
         similar_asserts::assert_eq!(config, Some(expected));
         Ok(())
@@ -608,7 +608,7 @@ mod tests {
                     ..FileConfig::empty()
                 },
             )],
-            parts: [].into_iter().collect(),
+            components: [].into_iter().collect(),
         };
         similar_asserts::assert_eq!(config, Some(expected));
         Ok(())
@@ -652,7 +652,7 @@ mod tests {
                 ),
                 (InputFile::Path("VERSION".into()), FileConfig::empty()),
             ],
-            parts: [].into_iter().collect(),
+            components: [].into_iter().collect(),
         };
         similar_asserts::assert_eq!(config, Some(expected));
         Ok(())

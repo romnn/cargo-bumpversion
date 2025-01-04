@@ -40,9 +40,10 @@ atty = "0"
 termcolor = "1"
 codespan-reporting = "0"
 
-shlex = "1"
 
 # TODO: remove
 # indexmap = { version = "2", features = ["serde"] }
+shlex = "1"
+regex = "1"
 
 bumpversion.workspace = true

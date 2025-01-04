@@ -1,9 +1,9 @@
 use crate::{
-    config::{Config, FileChange, FileConfig, InputFile, Parts},
+    config::{Config, FileChange, FileConfig, InputFile, VersionComponentConfigs},
     f_string::OwnedPythonFormatString,
-    version::compat::{Version, VersionConfig},
+    version::compat::Version,
 };
-use color_eyre::eyre;
+use color_eyre::eyre::{self, Context};
 use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -20,7 +20,7 @@ impl ConfiguredFile {
     pub fn new(
         path: PathBuf,
         file_change: FileChange,
-        version_config: &VersionConfig,
+        // version_config: &VersionConfig,
         search: Option<&str>,
         replace: Option<&str>,
     ) -> Self {
@@ -105,22 +105,107 @@ impl ConfiguredFile {
     //     self._newlines: Optional[str] = None
 }
 
-/// Make the change to the file
-pub fn replace_version<K, V>(
+/// Does the search pattern match any part of the contents?
+fn contains_pattern(contents: &str, search_pattern: &regex::Regex) -> bool {
+    let matches = search_pattern.captures_iter(contents);
+    let Some(m) = matches.into_iter().next() else {
+        return false;
+    };
+    let Some(m) = m.iter().next().flatten() else {
+        return false;
+    };
+    let line_num = contents[..m.start()].chars().filter(|c| *c == '\n').count() + 1;
+    tracing::info!(
+        "found {:?} at line {}: {:?}",
+        search_pattern.as_str(),
+        line_num,
+        m.as_str(),
+    );
+    true
+}
+
+/// Replace version in file
+pub fn replace_version<'a, K, V>(
+    before: &'a str,
+    file_change: &'a FileChange,
+    current_version: &'a Version,
+    new_version: &'a Version,
+    ctx: &'a HashMap<K, V>,
+    // dry_run: bool,
+) -> eyre::Result<std::borrow::Cow<'a, str>>
+where
+    K: std::borrow::Borrow<str> + std::hash::Hash + Eq + std::fmt::Debug,
+    V: AsRef<str> + std::fmt::Debug,
+{
+    // we need to update the version because each file may serialize versions differently
+    let current_version_serialized =
+        current_version.serialize(&file_change.serialize_version_patterns, &ctx)?;
+    let new_version_serialized =
+        new_version.serialize(&file_change.serialize_version_patterns, &ctx)?;
+
+    let ctx: HashMap<&str, &str> = ctx
+        .into_iter()
+        .map(|(k, v)| (k.borrow(), v.as_ref()))
+        .chain([
+            ("current_version", current_version_serialized.as_str()),
+            ("new_version", new_version_serialized.as_str()),
+        ])
+        .collect();
+
+    let search_regex = file_change.search_pattern(&ctx)?;
+    let replace = OwnedPythonFormatString::parse(&file_change.replace)?;
+    let replacement = replace
+        .format(&ctx, true)
+        .wrap_err_with(|| eyre::eyre!("invalid replace format string"))?;
+
+    // TODO(roman): i don't think we need to check if the change pattern is present?
+    // // does the file contain the change pattern?
+    // let contains_change_pattern: bool = {
+    //     if contains_pattern(&before, &search_regex) {
+    //         return Ok(true);
+    //     }
+    //
+    //     // The `search` pattern did not match, but the original supplied
+    //     // version number (representing the same version component values) might
+    //     // match instead. This is probably the case if environment variables are used.
+    //     let file_uses_global_search_pattern = file_change.search == version_config.search;
+    //
+    //     let pattern = regex::RegexBuilder::new(regex::escape(version.original)).build()?;
+    //
+    //     if file_uses_global_search_pattern && contains_pattern(&before, &pattern) {
+    //         // The original version is present, and we're not looking for something
+    //         // more specific -> this is accepted as a match
+    //         return Ok(true);
+    //     }
+    //
+    //     Ok(false)
+    // }?;
+    //
+    // if !contains_change_pattern {
+    //     if file_change.ignore_missing_version {
+    //         tracing::warn!("did not find {:?} in file {path:?}", search_regex.as_str());
+    //     } else {
+    //         eyre::bail!("did not find {:?} in file {path:?}", search_regex.as_str());
+    //     }
+    //     return Ok(());
+    // }
+
+    let after = search_regex.replace_all(&before, replacement);
+    Ok(after)
+}
+
+/// Replace version in file
+pub fn replace_version_in_file<K, V>(
     path: &Path,
     file_change: &FileChange,
     current_version: &Version,
     new_version: &Version,
-    current_version_serialized: &str,
-    new_version_serialized: &str,
-    // ctx: &HashMap<&str, &str>,
     ctx: &HashMap<K, V>,
     dry_run: bool,
 ) -> eyre::Result<()>
 where
-    K: std::borrow::Borrow<str>,
-    K: std::hash::Hash + Eq,
-    V: AsRef<str>,
+    K: std::borrow::Borrow<str> + std::hash::Hash + Eq + std::fmt::Debug,
+    V: AsRef<str> + std::fmt::Debug,
 {
     tracing::info!(
         file = ?path,
@@ -137,46 +222,46 @@ where
         eyre::bail!("file not found {:?}", path);
     }
 
-    // context["current_version"] = self._get_serialized_version("current_version", current_version, context)
-    // if new_version:
-    //     context["new_version"] = self._get_serialized_version("new_version", new_version, context)
-    // else:
-    //     logger.debug("No new version, using current version as new version")
-    //     context["new_version"] = context["current_version"]
-    //
-    let search_regex = file_change.search_pattern(ctx);
-    let replace = OwnedPythonFormatString::parse(&file_change.replace)?;
-    let replace_with = replace.format(ctx, true)?;
+    let before = std::fs::read_to_string(path)?;
+    let after = replace_version(&before, file_change, current_version, new_version, ctx)?;
+    if before == after {
+        tracing::warn!(?path, "no change after version replacement");
+        // TODO(roman): can we also not do this?
+        // && current_version.original {
+        // og_context = deepcopy(context)
+        // og_context["current_version"] = current_version.original
+        // search_for_og, _ = self.file_change.get_search_pattern(og_context)
+        // file_content_after = search_for_og.sub(replace_with, file_content_before)
+        // return Ok(());
+    };
 
-    dbg!(search_regex);
-    dbg!(replace);
-    dbg!(replace_with);
-    //
-    // if not self._contains_change_pattern(search_for, raw_search_pattern, current_version, context):
-    //     logger.dedent()
-    //     return
-    //
-    // file_content_before = self.get_file_contents()
-    //
-    // file_content_after = search_for.sub(replace_with, file_content_before)
-    //
-    // if file_content_before == file_content_after and current_version.original:
-    //     og_context = deepcopy(context)
-    //     og_context["current_version"] = current_version.original
-    //     search_for_og, _ = self.file_change.get_search_pattern(og_context)
-    //     file_content_after = search_for_og.sub(replace_with, file_content_before)
-    //
     // log_changes(self.file_change.filename, file_content_before, file_content_after, dry_run)
-    // logger.dedent()
-    // if not dry_run:  # pragma: no-coverage
-    //     self.write_file_contents(file_content_after)
+
+    let label_existing = format!("{path:?} (before)");
+    let label_new = format!("{path:?} (after)");
+    let diff = similar_asserts::SimpleDiff::from_str(&before, &after, &label_existing, &label_new);
+
+    if dry_run {
+        println!("{diff}");
+    } else {
+        todo!("write");
+        use std::io::Write;
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(false)
+            .truncate(true)
+            .open(path)?;
+        let mut writer = std::io::BufWriter::new(file);
+        writer.write_all(after.as_bytes())?;
+        writer.flush()?;
+    }
     Ok(())
 }
 
 /// Resolve the files, searching and replacing values according to the FileConfig
 pub fn resolve<'a>(
     files: &'a [(PathBuf, &'a FileChange)],
-    version_config: &VersionConfig,
+    // version_config: &VersionConfig,
     search: Option<&str>,
     replace: Option<&str>,
 ) -> Vec<ConfiguredFile> {
@@ -186,7 +271,7 @@ pub fn resolve<'a>(
             ConfiguredFile::new(
                 file.to_path_buf(),
                 (*config).clone(),
-                version_config,
+                // version_config,
                 search,
                 replace,
             )
@@ -254,7 +339,7 @@ pub type FileMap = IndexMap<PathBuf, Vec<FileChange>>;
 /// Return a map of filenames to file configs, expanding any globs
 pub fn resolve_files_from_config<'a>(
     config: &mut Config,
-    parts: &Parts,
+    parts: &VersionComponentConfigs,
     base_dir: Option<&Path>,
 ) -> Result<FileMap, Error> {
     let files = config.files.drain(..);

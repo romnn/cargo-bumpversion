@@ -67,16 +67,6 @@ mod parser {
         }
     }
 
-    // impl<'a> ToOwned for Value<'a> {
-    //     type Owned = OwnedValue;
-    //     fn to_owned(&self) -> Self::Owned {
-    //         match self {
-    //             Self::String(s) => OwnedValue::String(s.to_string()),
-    //             Self::Argument(s) => OwnedValue::Argument(s.to_string()),
-    //         }
-    //     }
-    // }
-
     fn any_except_curly_bracket0<'a>(s: &mut &'a str) -> PResult<&'a str, InputError<&'a str>> {
         take_while(0.., |c| c != '{' && c != '}').parse_next(s)
     }
@@ -260,12 +250,14 @@ impl std::fmt::Display for OwnedPythonFormatString {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for value in self.0.iter() {
             write!(f, "{value}")?
-            // match value {
-            //     parser::OwnedValue::String(s) => write!(f, "{s}")?,
-            //     parser::OwnedValue::Argument(arg) => write!(f, r#"{{arg}}"#)?,
-            // }
         }
         Ok(())
+    }
+}
+
+impl AsRef<Vec<parser::OwnedValue>> for OwnedPythonFormatString {
+    fn as_ref(&self) -> &Vec<parser::OwnedValue> {
+        &self.0
     }
 }
 
@@ -281,12 +273,6 @@ impl<'a> IntoIterator for PythonFormatString<'a> {
     }
 }
 
-impl<'a> AsRef<Vec<parser::Value<'a>>> for PythonFormatString<'a> {
-    fn as_ref(&self) -> &Vec<parser::Value<'a>> {
-        &self.0
-    }
-}
-
 impl<'a> TryFrom<&'a str> for PythonFormatString<'a> {
     type Error = parser::Error;
     fn try_from(value: &'a str) -> Result<Self, Self::Error> {
@@ -299,58 +285,26 @@ impl<'a> TryFrom<&'a str> for PythonFormatString<'a> {
 #[error("missing argument {0:?}")]
 pub struct MissingArgumentError(String);
 
-impl<'a> PythonFormatString<'a> {
-    pub fn parse(value: &'a str) -> Result<Self, parser::Error> {
-        Self::try_from(value)
-    }
-
-    pub fn iter(&'a self) -> std::slice::Iter<'a, parser::Value<'a>> {
-        self.0.iter()
-    }
-
-    pub fn format<K, V>(
-        &self,
-        values: &HashMap<K, V>,
-        strict: bool,
-    ) -> Result<String, MissingArgumentError>
-    where
-        K: std::borrow::Borrow<str>,
-        K: std::hash::Hash + Eq,
-        V: AsRef<str>,
-    {
-        self.0.iter().try_fold(String::new(), |mut acc, value| {
-            let value = match value {
-                parser::Value::Argument(arg) => match values.get(*arg).map(|s| s.as_ref()) {
-                    Some(value) => Ok(value),
-                    None if strict => Err(MissingArgumentError(arg.to_string())),
-                    None => Ok(""),
-                },
-                parser::Value::String(s) => Ok(s.as_str()),
-            }?;
-            acc.push_str(value);
-            Ok(acc)
-        })
-    }
-
-    pub fn named_arguments(&self) -> impl Iterator<Item = &str> {
-        self.0.iter().filter_map(|value| value.as_argument())
-    }
-}
+// impl<'a> PythonFormatString<'a> {
+//     pub fn parse(value: &'a str) -> Result<Self, parser::Error> {
+//         Self::try_from(value)
+//     }
+//
+//     pub fn iter(&'a self) -> std::slice::Iter<'a, parser::Value<'a>> {
+//         self.0.iter()
+//     }
+// }
 
 impl OwnedPythonFormatString {
     pub fn parse(value: &str) -> Result<Self, parser::Error> {
         Ok(Self(
-            PythonFormatString::parse(value)?
+            PythonFormatString::try_from(value)?
                 .into_iter()
                 .map(Into::into)
                 .collect(),
         ))
     }
 
-    pub fn iter(&self) -> std::slice::Iter<'_, parser::OwnedValue> {
-        self.0.iter()
-    }
-
     pub fn format<K, V>(
         &self,
         values: &HashMap<K, V>,
@@ -363,14 +317,31 @@ impl OwnedPythonFormatString {
     {
         self.0.iter().try_fold(String::new(), |mut acc, value| {
             let value = match value {
-                parser::OwnedValue::Argument(arg) => match values.get(&arg).map(|s| s.as_ref()) {
-                    Some(value) => Ok(value),
-                    None if strict => Err(MissingArgumentError(arg.to_string())),
-                    None => Ok(""),
-                },
-                parser::OwnedValue::String(s) => Ok(s.as_str()),
+                parser::OwnedValue::Argument(arg) => {
+                    let as_timestamp = || {
+                        // try to parse as timestamp of format "utcnow:%Y-%m-%dT%H:%M:%SZ"
+                        arg.split_once(":").and_then(|(arg, format)| {
+                            values.get(arg).and_then(|value| {
+                                let timestamp =
+                                    chrono::DateTime::parse_from_rfc3339(value.as_ref()).ok()?;
+                                Some(timestamp.format(format).to_string())
+                            })
+                        })
+                    };
+                    let value = values
+                        .get(&arg)
+                        .map(|value| value.as_ref().to_string())
+                        .or_else(as_timestamp);
+
+                    match value {
+                        Some(value) => Ok(value),
+                        None if strict => Err(MissingArgumentError(arg.to_string())),
+                        None => Ok("".to_string()),
+                    }
+                }
+                parser::OwnedValue::String(s) => Ok(s.clone()),
             }?;
-            acc.push_str(value);
+            acc.push_str(&value);
             Ok(acc)
         })
     }
@@ -378,11 +349,43 @@ impl OwnedPythonFormatString {
     pub fn named_arguments(&self) -> impl Iterator<Item = &str> {
         self.0.iter().filter_map(|value| value.as_argument())
     }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, parser::OwnedValue> {
+        self.0.iter()
+    }
+
+    // pub fn format<K, V>(
+    //     &self,
+    //     values: &HashMap<K, V>,
+    //     strict: bool,
+    // ) -> Result<String, MissingArgumentError>
+    // where
+    //     K: std::borrow::Borrow<str>,
+    //     K: std::hash::Hash + Eq,
+    //     V: AsRef<str>,
+    // {
+    //     self.0.iter().try_fold(String::new(), |mut acc, value| {
+    //         let value = match value {
+    //             parser::OwnedValue::Argument(arg) => match values.get(&arg).map(|s| s.as_ref()) {
+    //                 Some(value) => Ok(value),
+    //                 None if strict => Err(MissingArgumentError(arg.to_string())),
+    //                 None => Ok(""),
+    //             },
+    //             parser::OwnedValue::String(s) => Ok(s.as_str()),
+    //         }?;
+    //         acc.push_str(value);
+    //         Ok(acc)
+    //     })
+    // }
+    //
+    // pub fn named_arguments(&self) -> impl Iterator<Item = &str> {
+    //     self.0.iter().filter_map(|value| value.as_argument())
+    // }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{parser::Value, PythonFormatString};
+    use super::{OwnedPythonFormatString, OwnedValue, PythonFormatString, Value};
     use color_eyre::eyre;
     use similar_asserts::assert_eq as sim_assert_eq;
     use std::collections::HashMap;
@@ -390,13 +393,13 @@ mod tests {
     #[test]
     fn parse_f_string_simple() -> eyre::Result<()> {
         crate::tests::init();
-        let fstring = PythonFormatString::parse("this is a formatted {value}!")?;
+        let fstring = OwnedPythonFormatString::parse("this is a formatted {value}!")?;
         sim_assert_eq!(
             fstring.as_ref().as_slice(),
             [
-                Value::String("this is a formatted ".to_string()),
-                Value::Argument("value"),
-                Value::String("!".to_string()),
+                OwnedValue::String("this is a formatted ".to_string()),
+                OwnedValue::Argument("value".to_string()),
+                OwnedValue::String("!".to_string()),
             ]
         );
 
@@ -418,13 +421,13 @@ mod tests {
     #[test]
     fn parse_f_string_iter() -> eyre::Result<()> {
         crate::tests::init();
-        let fstring = PythonFormatString::parse("this is a formatted {value}!")?;
+        let fstring = OwnedPythonFormatString::parse("this is a formatted {value}!")?;
         sim_assert_eq!(
             fstring.iter().collect::<Vec<_>>(),
             vec![
-                &Value::String("this is a formatted ".to_string()),
-                &Value::Argument("value"),
-                &Value::String("!".to_string()),
+                &OwnedValue::String("this is a formatted ".to_string()),
+                &OwnedValue::Argument("value".to_string()),
+                &OwnedValue::String("!".to_string()),
             ]
         );
         Ok(())
@@ -433,15 +436,16 @@ mod tests {
     #[test]
     fn parse_f_string_with_dollar_sign_argument() -> eyre::Result<()> {
         crate::tests::init();
-        let fstring = PythonFormatString::parse("this is a formatted {$value1}, and {another1}!")?;
+        let fstring =
+            OwnedPythonFormatString::parse("this is a formatted {$value1}, and {another1}!")?;
         sim_assert_eq!(
             fstring.as_ref().as_slice(),
             [
-                Value::String("this is a formatted ".to_string()),
-                Value::Argument("$value1"),
-                Value::String(", and ".to_string()),
-                Value::Argument("another1"),
-                Value::String("!".to_string()),
+                OwnedValue::String("this is a formatted ".to_string()),
+                OwnedValue::Argument("$value1".to_string()),
+                OwnedValue::String(", and ".to_string()),
+                OwnedValue::Argument("another1".to_string()),
+                OwnedValue::String("!".to_string()),
             ]
         );
 
@@ -467,15 +471,16 @@ mod tests {
     #[test]
     fn parse_f_string_with_missing_argument() -> eyre::Result<()> {
         crate::tests::init();
-        let fstring = PythonFormatString::parse("this is a formatted {$value1}, and {another1}!")?;
+        let fstring =
+            OwnedPythonFormatString::parse("this is a formatted {$value1}, and {another1}!")?;
         sim_assert_eq!(
             fstring.as_ref().as_slice(),
             [
-                Value::String("this is a formatted ".to_string()),
-                Value::Argument("$value1"),
-                Value::String(", and ".to_string()),
-                Value::Argument("another1"),
-                Value::String("!".to_string()),
+                OwnedValue::String("this is a formatted ".to_string()),
+                OwnedValue::Argument("$value1".to_string()),
+                OwnedValue::String(", and ".to_string()),
+                OwnedValue::Argument("another1".to_string()),
+                OwnedValue::String("!".to_string()),
             ]
         );
 
@@ -501,15 +506,16 @@ mod tests {
     #[test]
     fn parse_f_string_with_missing_argument_strict() -> eyre::Result<()> {
         crate::tests::init();
-        let fstring = PythonFormatString::parse("this is a formatted {$value1}, and {another1}!")?;
+        let fstring =
+            OwnedPythonFormatString::parse("this is a formatted {$value1}, and {another1}!")?;
         sim_assert_eq!(
             fstring.as_ref().as_slice(),
             [
-                Value::String("this is a formatted ".to_string()),
-                Value::Argument("$value1"),
-                Value::String(", and ".to_string()),
-                Value::Argument("another1"),
-                Value::String("!".to_string()),
+                OwnedValue::String("this is a formatted ".to_string()),
+                OwnedValue::Argument("$value1".to_string()),
+                OwnedValue::String(", and ".to_string()),
+                OwnedValue::Argument("another1".to_string()),
+                OwnedValue::String("!".to_string()),
             ]
         );
 

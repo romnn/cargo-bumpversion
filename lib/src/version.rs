@@ -1,101 +1,51 @@
-use crate::{config, context, Bump};
+use crate::{config, context, version, Bump};
 use color_eyre::eyre;
 
-// #[derive(Debug)]
-// struct Parser {
-//     parse_regex: regex::Regex,
-//     serialize_format: String,
+// /// Bump the version_part to the next value.
+// pub fn get_next_version(
+//     current_version: &compat::Version,
+//     // version_config: &compat::VersionConfig,
+//     version_component_to_bump: &Bump,
+//     new_version: Option<&str>,
+// ) -> eyre::Result<Option<compat::Version>> {
+//     let next_version = if let Some(new_version) = new_version {
+//         tracing::info!(new_version, "attempting to set new version");
+//         version::compat::parse_version(new_version).map_err(|err| err)
+//     } else {
+//         tracing::info!(
+//             component = version_component_to_bump.to_string(),
+//             "attempting to increment version component"
+//         );
+//         current_version
+//             .bump(version_component_to_bump)
+//             .map(Some)
+//             .map_err(|err| err.into())
+//     }?;
+//
+//     Ok(next_version)
 // }
-//
-// impl Deser for Parser {
-//     type Error = Error;
-//     // type Version = Version<String, String>;
-//
-//     // fn parse<S: AsRef<str>>(&self, version: S) -> Result<SemVer, Self::Error> {
-//     fn parse(&self, version: impl AsRef<str>) -> Result<SemVer, Self::Error> {
-//         let version = version.as_ref();
-//         let mut inner = HashMap::new();
-//         let caps = self.parse_regex.captures(version).ok_or(Error::BadFormat {
-//             format: self.parse_regex.to_string(),
-//             found: version.to_string(),
-//         })?;
-//         for cap in self.parse_regex.capture_names() {
-//             if let Some(cap) = cap {
-//                 let part: String = parse_component!(caps, cap)?;
-//                 inner.insert(cap.to_string(), part);
-//             }
-//         }
-//         Ok(SemVer { inner })
-//     }
-//
-//     // fn serialize<V: Borrow<SemVer>>(&self, version: V) -> Result<String, Self::Error> {
-//     fn serialize(&self, version: impl Borrow<SemVer>) -> Result<String, Self::Error> {
-//         let v = version.borrow();
-//         let mut serialized = self.serialize_format.clone();
-//         for (param, value) in v.iter() {
-//             serialized = named_format!(&serialized, param = value)?.to_string();
-//         }
-//         Ok(serialized.to_string())
-//     }
-// }
-
-/// Bump the version_part to the next value.
-pub fn get_next_version(
-    current_version: &compat::Version,
-    version_config: &compat::VersionConfig,
-    // config: &config::Config,
-    version_component_to_bump: &Bump,
-    new_version: Option<&str>,
-) -> eyre::Result<Option<compat::Version>> {
-    let next_version = if let Some(new_version) = new_version {
-        tracing::info!(new_version, "attempting to set new version");
-        version_config.parse(new_version).map_err(|err| err)
-    } else {
-        tracing::info!(
-            component = version_component_to_bump.to_string(),
-            "attempting to increment version component"
-        );
-        current_version
-            .bump(version_component_to_bump)
-            .map(Some)
-            .map_err(|err| err.into())
-    }?;
-
-    tracing::info!(?next_version, "next version");
-    Ok(next_version)
-}
 
 pub mod compat {
     use crate::{
-        config::{self, VersionComponentSpec},
-        context, Bump,
+        config::{self, VersionComponentConfigs, VersionComponentSpec},
+        context,
+        f_string::OwnedPythonFormatString,
+        Bump,
     };
     use color_eyre::eyre::{self, WrapErr};
+    use indexmap::IndexMap;
     use std::collections::{HashMap, HashSet};
 
     pub type RawVersion<'a> = HashMap<&'a str, &'a str>;
 
-    // pub trait BumpComponent {
-    //     // type Error: std::error::Error;
-    //     type Error;
-    //
-    //     fn bump(&self, value: Option<&str>) -> Result<String, Self::Error>;
-    // }
-
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct ValuesFunction<'a> {
-        // values: Vec<String>,
         values: &'a [String],
     }
 
-    // impl BumpComponent for ValuesFunction {
     impl<'a> ValuesFunction<'a> {
-        // type Error = eyre::Report;
-
         /// Return the item after ``value`` in the list
-        // fn bump(&self, value: Option<&str>) -> Result<String, Self::Error> {
         fn bump(&self, value: &str) -> eyre::Result<&str> {
-            // let value = value.ok_or_else(|| eyre::eyre!("missing value"))?;
             let current_idx = self.values.iter().position(|v| *v == value);
             let current_idx = current_idx
                 .ok_or_else(|| eyre::eyre!("{value:?} must be one of {:?}", self.values))?;
@@ -106,13 +56,6 @@ pub mod compat {
                 )
             })?;
             Ok(bumped_value.as_str())
-            // .cloned()
-            // try:
-            //     return self._values[self._values.index(value) + 1]
-            // except IndexError as e:
-            //     raise ValueError(
-            //         f"The part has already the maximum value among {self._values} and cannot be bumped."
-            //     ) from e
         }
     }
 
@@ -185,32 +128,6 @@ pub mod compat {
         }
     }
 
-    // def __init__(self, optional_value: Union[str, int, None] = None, first_value: Union[str, int, None] = None):
-    //     if first_value is not None and not self.FIRST_NUMERIC.search(str(first_value)):
-    //         raise ValueError(f"The given first value {first_value} does not contain any digit")
-    //
-    //     self.first_value = str(first_value or 0)
-    //     self.optional_value = str(optional_value or self.first_value)
-    //     self.independent = False
-    //     self.always_increment = False
-    //
-    // def bump(self, value: Union[str, int]) -> str:
-    //     """Increase the first numerical value by one."""
-    //     match = self.FIRST_NUMERIC.search(str(value))
-    //     if not match:
-    //         raise ValueError(f"The given value {value} does not contain any digit")
-    //
-    //     part_prefix, part_numeric, part_suffix = match.groups()
-    //
-    //     if int(part_numeric) < int(self.first_value):
-    //         raise ValueError(
-    //             f"The given value {value} is lower than the first value {self.first_value} and cannot be bumped."
-    //         )
-    //
-    //     bumped_numeric = int(part_numeric) + 1
-    //
-    //     return "".join([part_prefix, str(bumped_numeric), part_suffix])
-
     /// Represent part of a version number.
     ///
     /// Determines how the component behaves when increased or reset
@@ -242,6 +159,7 @@ pub mod compat {
             self.value().unwrap_or_default()
         }
     }
+
     impl VersionComponent {
         pub fn new(value: Option<&str>, spec: VersionComponentSpec) -> Self {
             // let func = ValuesFunction {
@@ -302,19 +220,12 @@ pub mod compat {
         }
     }
 
-    // TODO: rename part config to version component spec
-    impl config::VersionComponentSpec {
-        /// Generate a version component from the configuration
-        pub fn build_component(&self, value: Option<&str>) -> VersionComponent {
-            VersionComponent::new(value, self.clone())
-        }
-    }
-
-    #[derive(Debug, Clone)]
-    pub struct Version {
-        components: HashMap<String, VersionComponent>,
-        spec: VersionSpec,
-    }
+    // impl config::VersionComponentSpec {
+    //     /// Generate a version component from the configuration
+    //     pub fn build_component(&self, value: Option<&str>) -> VersionComponent {
+    //         VersionComponent::new(value, self.clone())
+    //     }
+    // }
 
     #[derive(thiserror::Error, Debug)]
     pub enum BumpError {
@@ -322,21 +233,57 @@ pub mod compat {
         InvalidComponent(String),
     }
 
+    #[derive(Debug, Clone)]
+    pub struct Version {
+        components: IndexMap<String, VersionComponent>,
+        spec: VersionSpec,
+    }
+
+    impl std::fmt::Display for Version {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_map()
+                .entries(self.components.iter().map(|(k, v)| (k, v.value())))
+                .finish()
+        }
+    }
+
     impl Version {
-        // pub fn empty() -> Self {
-        //     Self {
-        //         components: HashMap::default(),
-        //         spec: VersionSpec::default(),
-        //     }
-        // }
+        pub fn from_components(
+            components: impl IntoIterator<Item = (String, VersionComponent)>,
+        ) -> Self {
+            let components = components.into_iter().collect();
+            // let spec = VersionSpec::from_components(&components).expect("TODO");
+            let spec = VersionSpec::default();
+            Self { components, spec }
+        }
+
+        /// Serialize a version to a string.
+        pub fn serialize<'a, S, K, V>(
+            &'a self,
+            serialize_version_patterns: impl IntoIterator<Item = S>,
+            ctx: &HashMap<K, V>,
+        ) -> eyre::Result<String>
+        where
+            K: std::borrow::Borrow<str> + std::hash::Hash + Eq + std::fmt::Debug,
+            V: AsRef<str> + std::fmt::Debug,
+            S: AsRef<str> + std::fmt::Debug,
+        {
+            serialize_version(
+                self,
+                serialize_version_patterns,
+                // .as_deref()
+                // .unwrap_or_default(),
+                ctx,
+            )
+        }
 
         // Return the values of the parts
-        pub fn into_iter(self) -> std::collections::hash_map::IntoIter<String, VersionComponent> {
+        pub fn into_iter(self) -> indexmap::map::IntoIter<String, VersionComponent> {
             self.components.into_iter()
         }
 
         // Return the values of the parts
-        pub fn iter(&self) -> std::collections::hash_map::Iter<String, VersionComponent> {
+        pub fn iter(&self) -> indexmap::map::Iter<String, VersionComponent> {
             self.components.iter()
         }
 
@@ -438,13 +385,13 @@ pub mod compat {
     /// The specification of a version's components and their relationships
     #[derive(Debug, Clone, Default)]
     pub struct VersionSpec {
-        components: config::Parts,
+        components: config::VersionComponentConfigs,
         dependency_map: HashMap<String, Vec<String>>,
         components_to_always_increment: Vec<String>,
     }
 
     impl VersionSpec {
-        pub fn from_parts(components: &config::Parts) -> eyre::Result<Self> {
+        pub fn from_components(components: config::VersionComponentConfigs) -> eyre::Result<Self> {
             let mut dependency_map: HashMap<String, Vec<String>> = HashMap::new();
             let mut previous_component: &String = components
                 .keys()
@@ -462,6 +409,7 @@ pub mod compat {
                 })
                 .cloned()
                 .collect();
+
             for (comp_name, comp_config) in components.iter().skip(1) {
                 if comp_config.independent == Some(true) {
                     continue;
@@ -480,11 +428,11 @@ pub mod compat {
                 previous_component = comp_name;
             }
 
-            dbg!(&components_to_always_increment);
-            dbg!(&dependency_map);
+            // dbg!(&components_to_always_increment);
+            // dbg!(&dependency_map);
 
             Ok(Self {
-                components: components.clone(),
+                components,
                 dependency_map,
                 components_to_always_increment,
             })
@@ -518,21 +466,14 @@ pub mod compat {
         }
 
         /// Generate a version from the given values
-        pub fn build(&self, raw_components: &RawVersion, raw_version: String) -> Version {
-            dbg!(&self.components);
+        pub fn build(&self, raw_components: &RawVersion) -> Version {
             let components = self
                 .components
                 .iter()
-                // .filter_map(|(comp_name, comp_config)| {
                 .map(|(comp_name, comp_config)| {
                     let comp_value = raw_components.get(comp_name.as_str()).copied();
-                    let component = comp_config.build_component(comp_value);
+                    let component = VersionComponent::new(comp_value, comp_config.clone());
                     (comp_name.to_string(), component)
-                    // let comp_value = raw_components.get(comp_name.as_str());
-                    // comp_value.map(|comp_value| {
-                    //     let component = comp_config.build_component(comp_value.to_string());
-                    //     (comp_name.to_string(), component)
-                    // })
                 })
                 .collect();
             Version {
@@ -542,54 +483,26 @@ pub mod compat {
         }
     }
 
-    #[derive(Debug)]
-    pub struct VersionConfig {
-        /// Regex parsing the version string
-        pub parse_version_regex: regex::Regex,
-        /// How to serialize back to a version
-        pub serialize_version_patterns: Option<Vec<String>>,
-        /// Template for complete string to search
-        pub search: Option<String>,
-        /// Template for complete string to replace
-        pub replace: Option<String>,
-        // /// Template for complete string to replace
-        // pub parts: config::Parts,
-        pub version_spec: VersionSpec,
-    }
-
-    pub fn format_string_arguments<'a>(
-        pattern: &'a str,
-    ) -> impl Iterator<Item = &'a str> + use<'a> {
-        // use gobble (https://docs.rs/gobble/latest/gobble/) ?
-        // use fancy-regex with lookaround?
-        // use nom?
-
-        [].into_iter()
-        // todo!("use nom");
-
-        // use parse_format::{Argument, ParseMode, Parser, Piece, Position};
-        // let parser = Parser::new(pattern, None, None, false, ParseMode::Format);
-        // parser.into_iter().filter_map(|piece| match piece {
-        //     Piece::String(s) => {
-        //         dbg!(&s);
-        //         None
-        //     }
-        //     Piece::NextArgument(Argument {
-        //         position: Position::ArgumentNamed(arg),
-        //         ..
-        //     }) => Some(arg),
-        //     Piece::NextArgument(arg) => {
-        //         dbg!(&arg);
-        //         None
-        //     }
-        // })
-    }
-
-    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-    pub struct SerializedVersion {
-        pub version: String,
-        pub tag: Option<String>,
-    }
+    // #[derive(Debug)]
+    // pub struct VersionConfig {
+    //     /// Regex parsing the version string
+    //     pub parse_version_regex: regex::Regex,
+    //     /// How to serialize back to a version
+    //     pub serialize_version_patterns: Option<Vec<String>>,
+    //     /// Template for complete string to search
+    //     pub search: Option<String>,
+    //     /// Template for complete string to replace
+    //     pub replace: Option<String>,
+    //     // /// Template for complete string to replace
+    //     // pub parts: config::Parts,
+    //     pub version_spec: VersionSpec,
+    // }
+    //
+    // #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    // pub struct SerializedVersion {
+    //     pub version: String,
+    //     pub tag: Option<String>,
+    // }
 
     /// Attempts to serialize a version with the given serialization format.
     ///
@@ -598,112 +511,64 @@ pub mod compat {
     /// - the shortest valid serialization pattern is used
     /// - if two patterns are equally short, the first one is used
     /// - if no valid serialization pattern is found, an error is raised
-    fn serialize_version<'a>(
+    fn serialize_version<'a, S, K, V>(
         version: &'a Version,
-        serialize_patterns: &[String],
-        // ctx: &context::Env,
-        ctx: impl Iterator<Item = (&'a str, &'a str)>,
-        // ctx: impl Iterator<Item = (String, String)>,
-        // ctx: &HashMap<&str, &str>,
-    ) -> eyre::Result<String> {
-        use crate::f_string::PythonFormatString;
-
+        // serialize_patterns: &[String],
+        serialize_patterns: impl IntoIterator<Item = S>,
+        // ctx: impl IntoIterator<Item = (&'a str, &'a str)>,
+        // ctx: impl IntoIterator<Item = (&'a str, &'a str)>,
+        ctx: &HashMap<K, V>,
+    ) -> eyre::Result<String>
+    where
+        K: std::borrow::Borrow<str> + std::hash::Hash + Eq + std::fmt::Debug,
+        V: AsRef<str> + std::fmt::Debug,
+        S: AsRef<str> + std::fmt::Debug,
+    {
         tracing::debug!(?version, "serializing");
 
         let ctx: HashMap<&str, &str> = ctx
-            // .iter()
-            // .map(|(k, v)| (*k, *v))
-            // .map(|(k, v)| (k.as_str(), v.as_str()))
+            .into_iter()
+            .map(|(k, v)| (k.borrow(), v.as_ref()))
             .chain(version.iter().map(|(k, v)| (k.as_str(), v.as_ref())))
             .collect();
-        // let ctx: HashMap<&str, &VersionComponent> =
-        //     version.iter().map(|(k, v)| (k.as_str(), v)).collect();
+
         let required_component_names: HashSet<_> = version.required_component_names().collect();
         // local_context_keys = set(local_context.keys())
 
-        // /// Return a list of labels for the given serialize_format
-        // fn labels_for_format(serialize_format: &str) -> Vec<String> {
-        //     // return [item[1] for item in string.Formatter().parse(serialize_format) if item[1]]
-        //     vec![]
-        // }
-        dbg!(&serialize_patterns);
+        // dbg!(&serialize_patterns);
 
-        // #[derive(Debug)]
-        // struct Pattern<'a> {
-        //     idx: usize,
-        //     pattern: &'a str,
-        //     // labels: Vec<String>,
-        //     labels: HashSet<&'a str>,
-        // }
-
-        // let patterns = serialize_patterns.iter().enumerate().map(|(idx, pattern)| {
-
-        let patterns = serialize_patterns
-            .iter()
+        let mut patterns: Vec<(usize, OwnedPythonFormatString)> = serialize_patterns
+            .into_iter()
             .enumerate()
             .map(|(idx, pattern)| {
-                // let labels: HashSet<_> = format_string_arguments(pattern).collect();
-                PythonFormatString::try_from(pattern.as_str()).map(|f| (idx, f))
-                // let fstring
-                // Pattern {
-                //     idx,
-                //     pattern,
-                //     labels,
-                // }
+                OwnedPythonFormatString::parse(pattern.as_ref()).map(|f| (idx, f))
             })
-            .collect::<Result<Vec<(usize, PythonFormatString)>, _>>()?;
+            .collect::<Result<_, _>>()?;
 
-        dbg!(&patterns);
-        // dbg!(patterns.clone().collect::<Vec<_>>());
+        // dbg!(&patterns);
 
-        let mut valid_patterns: Vec<_> = patterns
-            .iter()
-            .filter(|(_, pattern)| ctx.len() >= pattern.named_arguments().count())
-            .collect();
+        // let mut valid_patterns: Vec<_> = patterns
+        //     .iter()
+        //     .filter(|(_, pattern)| ctx.len() >= pattern.named_arguments().count())
+        //     .collect();
 
-        valid_patterns.sort_by_key(|(idx, pattern)| {
-            use std::cmp::Reverse;
+        patterns.sort_by_key(|(idx, pattern)| {
             let labels: HashSet<&str> = pattern.named_arguments().collect();
             let has_required_components = required_component_names.is_subset(&labels);
             let num_labels = labels.len();
-            (Reverse(has_required_components), num_labels, idx)
+            (std::cmp::Reverse(has_required_components), num_labels, *idx)
         });
-        // sorted_patterns = multisort(
-        // list(valid_patterns), (("has_required_components", True), ("num_labels", False), ("order", False))
-        // )
 
-        dbg!(&valid_patterns);
-        // dbg!(valid_patterns.clone().collect::<Vec<_>>());
+        // dbg!(&patterns);
 
-        // for (index, pattern) in serialize_patterns.iter().enumerate() {
-        //     let args: Vec<_> = format_string_arguments(pattern).collect();
-        //     //     let labels = labels_for_format(pattern);
-        //     //     dbg!(&labels);
-        //     //     // patterns.append(
-        //     //     //     {
-        //     //     //         "pattern": pattern,
-        //     //     //         "labels": labels,
-        //     //     //         "order": index,
-        //     //     //         "num_labels": len(labels),
-        //     //     //         "renderable": local_context_keys >= labels,
-        //     //     //         "has_required_components": required_component_labels <= labels,
-        //     //     //     }
-        //     //     // )
-        // }
-
-        let (_, chosen_pattern) = valid_patterns.first().ok_or_else(|| {
+        let (_, chosen_pattern) = patterns.first().ok_or_else(|| {
             eyre::eyre!(
-            "could not find a valid serialization format in {serialize_patterns:?} for {version:?}"
-        )
+                "could not find a valid serialization format in {patterns:?} for {version:?}"
+            )
         })?;
-        // if valid_patterns.is_empty() {
-        //     eyre::bail!(
-        //         "could not find a valid serialization format in {serialize_patterns:?} for {version:?}"
-        //     );
-        // }
 
-        // "test".to_string().as_str()
-        // let test: &str = "test".to_string().as_ref();
+        // dbg!(&ctx);
+
         tracing::debug!(format = ?chosen_pattern, "serialization format");
         let serialized = chosen_pattern.format(&ctx, true)?;
         tracing::debug!(serialized, "serialized");
@@ -715,41 +580,26 @@ pub mod compat {
     ///
     /// # Errors
     /// If the parse_pattern is not a valid regular expression.
-    // fn parse_version<'a>(version: &'a str, parse_pattern: &str) -> eyre::Result<RawVersion<'a>> {
-    fn parse_version<'a>(
+    fn parse_raw_version<'a>(
         version: &'a str,
-        parse_pattern: &'a regex::Regex,
+        pattern: &'a regex::Regex,
     ) -> eyre::Result<RawVersion<'a>> {
-        // A dictionary of version part labels and their values, or an empty dictionary if the version string doesn't match.
-
         if version.is_empty() {
             tracing::warn!("version string is empty");
             return Ok(RawVersion::default());
         }
-        // else if parse_pattern.is_empty() {
-        //     tracing::warn!("parse pattern is empty");
-        //     return Ok(RawVersion::default());
-        // }
 
-        tracing::debug!(version, ?parse_pattern, "parsing version");
+        tracing::debug!(version, ?pattern, "parsing version");
 
-        // let pattern = regex::RegexBuilder::new(parse_pattern).build()?;
-
-        let Some(matches) = parse_pattern.captures(version) else {
-            tracing::debug!(
-                ?parse_pattern,
-                ?version,
-                "pattern does not parse current version",
-            );
+        let Some(matches) = pattern.captures(version) else {
+            tracing::debug!(?pattern, ?version, "pattern does not parse current version",);
             return Ok(RawVersion::default());
         };
 
-        let parsed: RawVersion = parse_pattern
+        let parsed: RawVersion = pattern
             .capture_names()
-            // .cloned()
             .filter_map(|name| name)
             .filter_map(|name| matches.name(name).map(|value| (name, value.as_str())))
-            // .map(|(name, value)| (name.to_string(), value.to_string()))
             .collect();
 
         tracing::debug!(?parsed, "parsed version");
@@ -757,69 +607,42 @@ pub mod compat {
         Ok(parsed)
     }
 
-    impl VersionConfig {
-        pub fn from_config(
-            config: &config::GlobalConfig,
-            parts: &config::Parts,
-            // ) -> Result<Self, regex::Error> {
-        ) -> eyre::Result<Self> {
-            let parse_version_regex = regex::RegexBuilder::new(
-                config
-                    .parse_version_pattern
-                    .as_deref()
-                    .unwrap_or(config::DEFAULT_PARSE_VERSION_PATTERN),
-            )
-            .build()?;
+    // impl VersionConfig {
+    //     pub fn from_config(
+    //         config: &config::GlobalConfig,
+    //         parts: &config::VersionComponentConfigs,
+    //     ) -> eyre::Result<Self> {
+    //         let parse_version_regex = regex::RegexBuilder::new(
+    //             config
+    //                 .parse_version_pattern
+    //                 .as_deref()
+    //                 .unwrap_or(config::DEFAULT_PARSE_VERSION_PATTERN),
+    //         )
+    //         .build()?;
+    //
+    //         let version_spec = VersionSpec::from_components(parts)?;
+    //         Ok(Self {
+    //             // parse_pattern: config.parse_pattern.clone(),
+    //             parse_version_regex,
+    //             serialize_version_patterns: config.serialize_version_patterns.clone(),
+    //             search: config.search.clone(),
+    //             replace: config.replace.clone(),
+    //             version_spec,
+    //         })
+    //     }
 
-            let version_spec = VersionSpec::from_parts(parts)?;
-            Ok(Self {
-                // parse_pattern: config.parse_pattern.clone(),
-                parse_version_regex,
-                serialize_version_patterns: config.serialize_version_patterns.clone(),
-                search: config.search.clone(),
-                replace: config.replace.clone(),
-                version_spec,
-                // parts,
-            })
+    /// Parse a version string into a Version object.
+    pub fn parse_version(
+        value: &str,
+        regex: &regex::Regex,
+        version_spec: &VersionSpec,
+    ) -> eyre::Result<Option<Version>> {
+        let parsed = parse_raw_version(value, &regex)?;
+        if parsed.is_empty() {
+            return Ok(None);
         }
-
-        /// Serialize a version to a string.
-        pub fn serialize<'a>(
-            &self,
-            version: &'a Version,
-            // ctx: &HashMap<&str, &str>,
-            ctx: impl Iterator<Item = (&'a str, &'a str)>,
-            // ctx: impl Iterator<Item = (String, String)>,
-        ) -> eyre::Result<String> {
-            serialize_version(
-                version,
-                self.serialize_version_patterns
-                    .as_deref()
-                    .unwrap_or_default(),
-                ctx,
-            )
-        }
-
-        /// Parse a version string into a Version object.
-        pub fn parse(
-            &self,
-            raw_version: &str,
-            // allow_empty: bool,
-        ) -> eyre::Result<Option<Version>> {
-            let parsed = parse_version(raw_version, &self.parse_version_regex)?;
-            // dbg!(&parsed);
-
-            if parsed.is_empty() {
-                return Ok(None);
-            }
-
-            // if !allow_empty && parsed.is_empty() {
-            //     eyre::bail!("Unable to parse version {version} using {}", self.parse_regex);
-            // } else if
-            //
-            let version = self.version_spec.build(&parsed, raw_version.to_string());
-            Ok(Some(version))
-        }
+        let version = version_spec.build(&parsed);
+        Ok(Some(version))
     }
 }
 

@@ -63,7 +63,7 @@ winnow = "0.6"
 
 # regex
 regex = "1"
-aho-corasick = "1"
+# aho-corasick = "1"
 # fancy-regex = "0"
 # lazy-regex = "3"
 # parking_lot = "0"
@@ -89,4 +89,5 @@ unindent = "0"
 color-eyre.workspace = true
 rand = "0"
 indoc = "2"
+regex = "1"
 similar-asserts = "1"

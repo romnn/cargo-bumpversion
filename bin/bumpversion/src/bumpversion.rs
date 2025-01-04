@@ -11,7 +11,7 @@ use bumpversion::{
     files::FileMap,
     hooks,
     vcs::{git::GitRepository, TagAndRevision, VersionControlSystem},
-    Bump,
+    version, Bump,
 };
 use clap::Parser;
 use color_eyre::eyre::{self, WrapErr};
@@ -151,7 +151,7 @@ fn main() -> eyre::Result<()> {
     config.apply_defaults(&defaults);
 
     // build list of parts
-    let parts = config::get_all_part_configs(&config)?;
+    let components = config::version_component_configs(&config)?;
     // dbg!(&parts);
 
     let mut cli_files = vec![];
@@ -160,7 +160,7 @@ fn main() -> eyre::Result<()> {
         if options.bump.is_none() {
             // first argument must be version component to bump
             let component = options.args.remove(0);
-            if parts.contains_key(&component) {
+            if components.contains_key(&component) {
                 bump = Some(Bump::Other(component.to_string()));
 
                 // remaining arguments are files
@@ -168,7 +168,7 @@ fn main() -> eyre::Result<()> {
             } else {
                 eyre::bail!(
                     "first argument must be one of the version components {:?}",
-                    parts.keys().collect::<Vec<_>>()
+                    components.keys().collect::<Vec<_>>()
                 )
             }
         } else {
@@ -254,7 +254,7 @@ fn main() -> eyre::Result<()> {
 
     // build resolved file map
     let file_map =
-        bumpversion::files::resolve_files_from_config(&mut config, &parts, Some(repo.path()))?;
+        bumpversion::files::resolve_files_from_config(&mut config, &components, Some(repo.path()))?;
     dbg!(&file_map);
 
     if options.no_configured_files == Some(true) {
@@ -276,7 +276,7 @@ fn main() -> eyre::Result<()> {
         &TagAndRevision { tag, revision },
         // &files,
         &file_map,
-        &parts,
+        components,
         Some(config_file_path.as_path()),
         dry_run,
     )?;
@@ -289,17 +289,11 @@ fn main() -> eyre::Result<()> {
 fn do_bump(
     version_component_to_bump: &Bump,
     repo: &GitRepository,
-    // working_dir: &Path,
     new_version: Option<&str>,
     config: &config::Config,
     tag_and_revision: &TagAndRevision,
-    // parts: &indexmap::IndexMap<String, String>,
-    // parts: &indexmap::IndexMap<String, String>,
-    // files: &config::Files,
-    // files: &Vec<(config::InputFile, config::FileChange)>,
-    // file_map: &FileMap<'_>,
     file_map: &FileMap,
-    parts: &config::Parts,
+    components: config::VersionComponentConfigs,
     config_file: Option<&Path>,
     dry_run: bool,
 ) -> eyre::Result<()> {
@@ -314,11 +308,26 @@ fn do_bump(
         "parsing current version"
     );
 
-    let version_config =
-        bumpversion::version::compat::VersionConfig::from_config(&config.global, &parts.clone())?;
+    // TODO: parse this as regex already
+    let parse_version_pattern = config
+        .global
+        .parse_version_pattern
+        .as_deref()
+        .unwrap_or(config::DEFAULT_PARSE_VERSION_PATTERN);
+    let parse_version_pattern = regex::RegexBuilder::new(&parse_version_pattern).build()?;
 
-    let current_version = version_config.parse(&*current_version_serialized)?;
-    let current_version = current_version.ok_or_else(|| eyre::eyre!("empty version"))?;
+    let version_spec = version::compat::VersionSpec::from_components(components)?;
+
+    // let version_config =
+    //     version::compat::VersionConfig::from_config(&config.global, &parts.clone())?;
+
+    let current_version = version::compat::parse_version(
+        current_version_serialized,
+        &parse_version_pattern,
+        &version_spec,
+    )?;
+    // let current_version = version_config.parse(&*current_version_serialized)?;
+    let current_version = current_version.ok_or_else(|| eyre::eyre!("current version is empty"))?;
     dbg!(&current_version);
 
     let working_dir = repo.path();
@@ -330,6 +339,34 @@ fn do_bump(
         dry_run,
     )?;
 
+    // let next_version = bumpversion::version::get_next_version(
+    //     &current_version,
+    //     &version_config,
+    //     // config,
+    //     version_component_to_bump,
+    //     new_version,
+    // )?;
+
+    let next_version = if let Some(new_version) = new_version {
+        tracing::info!(new_version, "parse new version");
+        bumpversion::version::compat::parse_version(
+            new_version,
+            &parse_version_pattern,
+            &version_spec,
+        )
+        // .map_err(|err| err)
+    } else {
+        tracing::info!(
+            component = version_component_to_bump.to_string(),
+            "attempting to increment version component"
+        );
+        current_version.bump(version_component_to_bump).map(Some)
+        // .map_err(|err| err.into())
+    }?;
+    let next_version = next_version.ok_or_else(|| eyre::eyre!("next version is empty"))?;
+    tracing::info!(next_version = next_version.to_string(), "next version");
+    // dbg!(&next_version.to_string());
+
     let ctx_without_new_version: HashMap<String, String> = context::get_context(
         Some(tag_and_revision),
         Some(&current_version),
@@ -339,22 +376,18 @@ fn do_bump(
     )
     .collect();
 
-    let next_version = bumpversion::version::get_next_version(
-        &current_version,
-        &version_config,
-        // config,
-        version_component_to_bump,
-        new_version,
-    )?;
-    // TODO: why can the version be none?
-    let next_version = next_version.ok_or_else(|| eyre::eyre!("next version is None"))?;
-    dbg!(&next_version);
-    let next_version_serialized = version_config.serialize(
-        &next_version,
+    let next_version_serialized = next_version.serialize(
+        // &next_version,
+        // version_config.serialize_version_patterns
+        config
+            .global
+            .serialize_version_patterns
+            .as_deref()
+            .unwrap_or_default(),
         // ctx.iter().map()move |(k, v)| (k.as_str(), v.as_str())),
-        ctx_without_new_version
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str())),
+        &ctx_without_new_version, // ctx_without_new_version
+                                  //     .iter()
+                                  //     .map(|(k, v)| (k.as_str(), v.as_str())),
     )?;
     tracing::info!(version = next_version_serialized, "next version");
 
@@ -382,8 +415,7 @@ fn do_bump(
     files_to_modify.sort();
 
     dbg!(&files_to_modify);
-    let mut configured_files =
-        bumpversion::files::resolve(&files_to_modify, &version_config, None, None);
+    let mut configured_files = bumpversion::files::resolve(&files_to_modify, None, None);
 
     // filter the files that are not valid for this bump
     configured_files.retain(|file| {
@@ -397,16 +429,6 @@ fn do_bump(
     });
     dbg!(&configured_files);
 
-    // let ctx = context::get_context(
-    //     Some(tag_and_revision),
-    //     Some(&current_version),
-    //     Some(&next_version),
-    //     Some(&current_version_serialized),
-    //     Some(&next_version_serialized),
-    // );
-    // .collect();
-    // dbg!(ctx);
-
     let ctx_with_new_version: HashMap<String, String> = context::get_context(
         Some(tag_and_revision),
         Some(&current_version),
@@ -416,15 +438,15 @@ fn do_bump(
     )
     .collect();
 
+    // dbg!(&ctx_with_new_version);
+
     for file in configured_files.iter() {
         assert!(file.path.is_absolute());
-        bumpversion::files::replace_version(
+        bumpversion::files::replace_version_in_file(
             &file.path,
             &file.file_change,
             &current_version,
             &next_version,
-            &current_version_serialized,
-            &next_version_serialized,
             &ctx_with_new_version,
             dry_run,
         )?;
@@ -463,13 +485,13 @@ fn do_bump(
         }
     }
 
-    let new_version_serialized = bumpversion::version::compat::SerializedVersion {
-        version: next_version_serialized.clone(),
-        tag: tag_and_revision
-            .tag
-            .as_ref()
-            .map(|tag| tag.current_tag.clone()),
-    };
+    // let new_version_serialized = bumpversion::version::compat::SerializedVersion {
+    //     version: next_version_serialized.clone(),
+    //     tag: tag_and_revision
+    //         .tag
+    //         .as_ref()
+    //         .map(|tag| tag.current_tag.clone()),
+    // };
 
     hooks::run_pre_commit_hooks(
         config,
@@ -477,7 +499,7 @@ fn do_bump(
         tag_and_revision,
         Some(&current_version),
         Some(&next_version),
-        &new_version_serialized,
+        &next_version_serialized,
         dry_run,
     )?;
 
@@ -580,7 +602,7 @@ fn do_bump(
         tag_and_revision,
         Some(&current_version),
         Some(&next_version),
-        &new_version_serialized,
+        &next_version_serialized,
         dry_run,
     )?;
 

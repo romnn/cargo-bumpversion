@@ -536,7 +536,7 @@ impl Config {
                         ));
                     } else if prefix.starts_with("part") {
                         let config = parse_part_config(section)?;
-                        out.parts.insert(value.into(), config);
+                        out.components.insert(value.into(), config);
                     } else if !allow_unknown {
                         let diagnostic = Diagnostic::warning_or_error(strict)
                             .with_message(format!("unknown config prefix `{prefix}`"))
@@ -758,7 +758,7 @@ mod tests {
                     },
                 ),
             ],
-            parts: [].into_iter().collect(),
+            components: [].into_iter().collect(),
         };
         similar_asserts::assert_eq!(config, Some(expected));
         Ok(())
@@ -871,7 +871,7 @@ mod tests {
                     },
                 ),
             ],
-            parts: [].into_iter().collect(),
+            components: [].into_iter().collect(),
         };
         similar_asserts::assert_eq!(config, Some(expected));
         Ok(())
@@ -962,7 +962,7 @@ mod tests {
                     },
                 ),
             ],
-            parts: [(
+            components: [(
                 "release".to_string(),
                 VersionComponentSpec {
                     optional_value: Some("gamma".to_string()),
@@ -1012,7 +1012,7 @@ mod tests {
                     ..FileConfig::empty()
                 },
             )],
-            parts: [].into_iter().collect(),
+            components: [].into_iter().collect(),
         };
         similar_asserts::assert_eq!(config, Some(expected));
         Ok(())
@@ -1053,7 +1053,7 @@ mod tests {
                     ..FileConfig::empty()
                 },
             )],
-            parts: [].into_iter().collect(),
+            components: [].into_iter().collect(),
         };
         similar_asserts::assert_eq!(config, Some(expected));
         Ok(())

@@ -2,7 +2,7 @@ use crate::command::{Error as CommandError, Output};
 use crate::{
     config::{self, Config},
     vcs::{RevisionInfo, TagAndRevision},
-    version::compat::{SerializedVersion, Version},
+    version::compat::Version,
 };
 use color_eyre::eyre;
 use std::collections::HashMap;
@@ -80,7 +80,9 @@ fn version_env<'a>(
 
 /// Provide the environment dictionary for new_version serialized and tag name.
 fn new_version_env<'a>(
-    new_version: &SerializedVersion,
+    // new_version: &SerializedVersion,
+    new_version_serialized: &str,
+    tag: Option<&str>,
     // version: &'a str,
     // tag: &'a str,
 ) -> impl Iterator<Item = (String, String)> + use<'a> {
@@ -93,11 +95,11 @@ fn new_version_env<'a>(
     vec![
         (
             format!("{ENV_PREFIX}NEW_VERSION"),
-            new_version.version.to_string(),
+            new_version_serialized.to_string(),
         ),
         (
             format!("{ENV_PREFIX}NEW_VERSION_TAG"),
-            new_version.tag.as_deref().unwrap_or_default().to_string(),
+            tag.as_deref().unwrap_or_default().to_string(),
         ),
     ]
     .into_iter()
@@ -142,14 +144,19 @@ fn pre_and_post_commit_hook_env<'a>(
     tag_and_revision: &'a TagAndRevision,
     current_version: Option<&'a Version>,
     new_version: Option<&'a Version>,
-    new_version_serialized: &SerializedVersion,
+    new_version_serialized: &str,
+    // tag: Option<&str>,
 ) -> impl Iterator<Item = (String, String)> + use<'a> {
+    let tag = tag_and_revision
+        .tag
+        .as_ref()
+        .map(|tag| tag.current_tag.as_str());
     std::env::vars()
         .chain(base_env(config))
         .chain(vcs_env(tag_and_revision))
         .chain(version_env(current_version, "CURRENT_"))
         .chain(version_env(new_version, "NEW_"))
-        .chain(new_version_env(new_version_serialized))
+        .chain(new_version_env(new_version_serialized, tag))
 }
 
 /// Run the pre-commit hooks
@@ -159,9 +166,14 @@ pub fn run_pre_commit_hooks(
     tag_and_revision: &TagAndRevision,
     current_version: Option<&Version>,
     new_version: Option<&Version>,
-    new_version_serialized: &SerializedVersion,
+    new_version_serialized: &str,
     dry_run: bool,
 ) -> eyre::Result<()> {
+    let tag = tag_and_revision
+        .tag
+        .as_ref()
+        .map(|tag| tag.current_tag.as_str());
+
     let env = pre_and_post_commit_hook_env(
         config,
         tag_and_revision,
@@ -196,7 +208,7 @@ pub fn run_post_commit_hooks(
     tag_and_revision: &TagAndRevision,
     current_version: Option<&Version>,
     new_version: Option<&Version>,
-    new_version_serialized: &SerializedVersion,
+    new_version_serialized: &str,
     dry_run: bool,
 ) -> eyre::Result<()> {
     let env = pre_and_post_commit_hook_env(
@@ -311,4 +323,149 @@ pub fn run_setup_hooks(
         tracing::info!("running setup hooks");
     }
     run_hooks(setup_hooks, working_dir, env, dry_run)
+}
+
+#[cfg(test)]
+mod tests {
+    // def assert_os_environ_items_included(result_env: dict) -> None:
+    //     """Assert that the OS environment variables are in the result."""
+    //     for var, value in os.environ.items():
+    //         assert var in result_env
+    //         assert result_env[var] == value
+    //
+    //
+    // def assert_scm_info_included(result_env: dict):
+    //     """Assert the SCM information is included in the result."""
+    //     assert f"{PREFIX}COMMIT_SHA" in result_env
+    //     assert f"{PREFIX}DISTANCE_TO_LATEST_TAG" in result_env
+    //     assert f"{PREFIX}IS_DIRTY" in result_env
+    //     assert f"{PREFIX}BRANCH_NAME" in result_env
+    //     assert f"{PREFIX}SHORT_BRANCH_NAME" in result_env
+    //     assert f"{PREFIX}CURRENT_VERSION" in result_env
+    //     assert f"{PREFIX}CURRENT_TAG" in result_env
+    //
+    //
+    // def assert_current_version_info_included(result_env: dict):
+    //     """Assert the current version information is included in the result."""
+    //     assert f"{PREFIX}CURRENT_MAJOR" in result_env
+    //     assert f"{PREFIX}CURRENT_MINOR" in result_env
+    //     assert f"{PREFIX}CURRENT_PATCH" in result_env
+    //
+    //
+    // def assert_new_version_info_included(result_env: dict):
+    //     """Assert the new version information is included in the result."""
+    //     assert f"{PREFIX}NEW_MAJOR" in result_env
+    //     assert f"{PREFIX}NEW_MINOR" in result_env
+    //     assert f"{PREFIX}NEW_PATCH" in result_env
+    //     assert f"{PREFIX}NEW_VERSION" in result_env
+    //     assert f"{PREFIX}NEW_VERSION_TAG" in result_env
+    //
+    //
+    // def test_scm_env_returns_correct_info(git_repo: Path):
+    //     """Should return information about the latest tag."""
+    //     readme = git_repo.joinpath("readme.md")
+    //     readme.touch()
+    //     tag_prefix = "v"
+    //     overrides = {"current_version": "0.1.0", "commit": True, "tag": True, "tag_name": f"{tag_prefix}{{new_version}}"}
+    //
+    //     with inside_dir(git_repo):
+    //         # Add a file and tag
+    //         subprocess.run(["git", "add", "readme.md"])
+    //         subprocess.run(["git", "commit", "-m", "first"])
+    //         subprocess.run(["git", "tag", f"{tag_prefix}0.1.0"])
+    //         conf, _, _ = get_config_data(overrides)
+    //
+    //     result = scm_env(conf)
+    //     assert result[f"{PREFIX}BRANCH_NAME"] == "master"
+    //     assert len(result[f"{PREFIX}COMMIT_SHA"]) == 40
+    //     assert result[f"{PREFIX}CURRENT_TAG"] == "v0.1.0"
+    //     assert result[f"{PREFIX}CURRENT_VERSION"] == "0.1.0"
+    //     assert result[f"{PREFIX}DISTANCE_TO_LATEST_TAG"] == "0"
+    //     assert result[f"{PREFIX}IS_DIRTY"] == "False"
+    //     assert result[f"{PREFIX}SHORT_BRANCH_NAME"] == "master"
+    //
+    //
+    // class MockDatetime(datetime.datetime):
+    //     @classmethod
+    //     def now(cls, tz=None):
+    //         return cls(2022, 2, 1, 17) if tz else cls(2022, 2, 1, 12)
+    //
+    //
+    // class TestBaseEnv:
+    //     """Tests for base_env function."""
+    //
+    //     def test_includes_now_and_utcnow(self, mocker):
+    //         """The output includes NOW and UTCNOW."""
+    //         mocker.patch("datetime.datetime", new=MockDatetime)
+    //         config, _, _ = get_config_data({"current_version": "0.1.0"})
+    //         result_env = base_env(config)
+    //
+    //         assert f"{PREFIX}NOW" in result_env
+    //         assert f"{PREFIX}UTCNOW" in result_env
+    //         assert result_env[f"{PREFIX}NOW"] == "2022-02-01T12:00:00"
+    //         assert result_env[f"{PREFIX}UTCNOW"] == "2022-02-01T17:00:00"
+    //
+    //     def test_includes_os_environ(self):
+    //         """The output includes the current process' environment."""
+    //         config, _, _ = get_config_data({"current_version": "0.1.0"})
+    //         result_env = base_env(config)
+    //
+    //         assert_os_environ_items_included(result_env)
+    //
+    //     def test_includes_scm_info(self):
+    //         """The output includes SCM information."""
+    //         config, _, _ = get_config_data({"current_version": "0.1.0"})
+    //         result_env = base_env(config)
+    //
+    //         assert_scm_info_included(result_env)
+    //
+    //
+
+    /// The version_env for a version should include all its parts"""
+    #[test]
+    fn test_current_version_env_includes_correct_info() {
+        // config, _, current_version = get_config_data(
+        //     {"current_version": "0.1.0", "parse": r"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)"}
+        // )
+        // let current_version = Version::from_components([("")]);
+        // let env = super::version_env(Some(current_version), "CURRENT_")
+
+        // assert result[f"{PREFIX}CURRENT_MAJOR"] == "0"
+        // assert result[f"{PREFIX}CURRENT_MINOR"] == "1"
+        // assert result[f"{PREFIX}CURRENT_PATCH"] == "0"
+    }
+
+    // def test_new_version_env_includes_correct_info():
+    //     """The new_version_env should return the serialized version and tag name."""
+    //
+    //     config, _, current_version = get_config_data(
+    //         {"current_version": "0.1.0", "parse": r"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)"}
+    //     )
+    //     new_version = current_version.bump("minor")
+    //     result = new_version_env(config, current_version, new_version)
+    //
+    //     assert result[f"{PREFIX}NEW_VERSION"] == "0.2.0"
+    //     assert result[f"{PREFIX}NEW_VERSION_TAG"] == "v0.2.0"
+    //
+    //
+    // def test_get_setup_hook_env_includes_correct_info():
+    //     """The setup hook environment should contain specific information."""
+    //     config, _, current_version = get_config_data({"current_version": "0.1.0"})
+    //     result_env = get_setup_hook_env(config, current_version)
+    //
+    //     assert_os_environ_items_included(result_env)
+    //     assert_scm_info_included(result_env)
+    //     assert_current_version_info_included(result_env)
+    //
+    //
+    // def test_get_pre_commit_hook_env_includes_correct_info():
+    //     """The pre-commit hook environment should contain specific information."""
+    //     config, _, current_version = get_config_data({"current_version": "0.1.0"})
+    //     new_version = current_version.bump("minor")
+    //     result_env = get_pre_commit_hook_env(config, current_version, new_version)
+    //
+    //     assert_os_environ_items_included(result_env)
+    //     assert_scm_info_included(result_env)
+    //     assert_current_version_info_included(result_env)
+    //     assert_new_version_info_included(result_env)
 }

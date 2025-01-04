@@ -515,7 +515,7 @@ impl Config {
             },
         };
 
-        let parts = match table.get("parts") {
+        let components = match table.get("parts") {
             None => IndexMap::new(),
             Some(value) => match value.as_ref() {
                 toml::value::ValueInner::Table(table) => table
@@ -541,7 +541,7 @@ impl Config {
         Ok(Some(Self {
             global: global_file_config,
             files,
-            parts,
+            components,
         }))
     }
 
@@ -623,51 +623,6 @@ impl Config {
 //     )
 //     self.path = Path(self.file_change.filename)
 //     self._newlines: Optional[str] = None
-
-/// Render the search pattern and return the compiled regex pattern and
-/// the raw pattern.
-///
-/// # Returns
-/// A tuple of the compiled regex pattern and the raw pattern as a string.
-fn get_search_pattern<'a>(
-    search: &'a PythonFormatString<'a>,
-    ctx: &HashMap<&str, &str>,
-    // context: MutableMapping
-) -> eyre::Result<(regex::Regex, String)> {
-    tracing::debug!("rendering search pattern with context");
-
-    // the default search pattern is escaped,
-    // so we can still use it in a regex
-    let strict = true;
-    let raw_pattern = search.format(ctx, strict)?;
-    let default = regex::RegexBuilder::new(&regex::escape(&raw_pattern))
-        .multi_line(true)
-        .build()?;
-    // , re.MULTILINE | re.DOTALL)
-    // if not self.regex:
-    //     logger.debug("No RegEx flag detected. Searching for the default pattern: '%s'", default.pattern)
-    //     return default, raw_pattern
-
-    let regex_context = ctx.iter().map(|(k, v)| (*k, regex::escape(v))).collect();
-    let regex_pattern = search.format(&regex_context, strict)?;
-
-    match regex::RegexBuilder::new(&regex_pattern)
-        .multi_line(true)
-        .build()
-    {
-        Ok(regex_pattern) => {
-            tracing::debug!("searching for regex {}", regex_pattern.as_str());
-            return Ok((regex_pattern, raw_pattern));
-        }
-        Err(err) => {
-            tracing::error!("invalid regex {:?}: {:?}", default, err);
-        }
-    }
-
-    tracing::debug!(pattern = ?raw_pattern, "invalid regex, searching for default pattern");
-
-    Ok((default, raw_pattern))
-}
 
 /// Does the search pattern match any part of the contents?
 // fn contains_pattern(search: regex::Regex, content: &str) -> bool {
@@ -759,44 +714,45 @@ fn replace_version_of_document(
     Ok(true)
 }
 
-pub fn replace_version_str<'a>(
-    search: &'a PythonFormatString,
-    replace: &'a PythonFormatString,
-    current_version_serialized: &'a str,
-    new_version_serialized: &'a str,
-    // new_version_serialized: &str,
-    env: impl Iterator<Item = (&'a str, &'a str)>,
-) -> eyre::Result<String> {
-    //     self, current_version: Version, new_version: Version, context: MutableMapping, dry_run: bool = False
-    // ) -> None:
-    //     """Update the files."""
-    //     new_context = deepcopy(context)
-    //     new_context["current_version"] = self.version_config.serialize(current_version, context)
-    //     new_context["new_version"] = self.version_config.serialize(new_version, context)
-    let ctx: HashMap<&str, &str> = env
-        .chain(
-            [
-                ("current_version", current_version_serialized),
-                ("next_version", new_version_serialized),
-            ]
-            .into_iter(),
-        )
-        .collect();
-
-    let (search_for_regex, raw_search_pattern) = get_search_pattern(search, &ctx)?;
-    let strict = true;
-    let replace_with = replace.format(&ctx, strict)?;
-    dbg!(replace_with);
-    // if self.path.suffix == ".toml":
-    //     try:
-    //         self._update_toml_file(search_for, raw_search_pattern, replace_with, dry_run)
-    //     except KeyError as e:
-    //         if self.file_change.ignore_missing_file or self.file_change.ignore_missing_version:
-    //             pass
-    //         else:
-    //             raise e
-    Ok("todo".to_string())
-}
+// pub fn replace_version_str<'a>(
+//     search: &'a PythonFormatString,
+//     replace: &'a PythonFormatString,
+//     current_version_serialized: &'a str,
+//     new_version_serialized: &'a str,
+//     // new_version_serialized: &str,
+//     env: impl Iterator<Item = (&'a str, &'a str)>,
+// ) -> eyre::Result<String> {
+//     //     self, current_version: Version, new_version: Version, context: MutableMapping, dry_run: bool = False
+//     // ) -> None:
+//     //     """Update the files."""
+//     //     new_context = deepcopy(context)
+//     //     new_context["current_version"] = self.version_config.serialize(current_version, context)
+//     //     new_context["new_version"] = self.version_config.serialize(new_version, context)
+//     let ctx: HashMap<&str, &str> = env
+//         .chain(
+//             [
+//                 ("current_version", current_version_serialized),
+//                 ("next_version", new_version_serialized),
+//             ]
+//             .into_iter(),
+//         )
+//         .collect();
+//
+//     // TODO
+//     // let (search_for_regex, raw_search_pattern) = get_search_pattern(search, &ctx)?;
+//     // let strict = true;
+//     // let replace_with = replace.format(&ctx, strict)?;
+//     // dbg!(replace_with);
+//     // if self.path.suffix == ".toml":
+//     //     try:
+//     //         self._update_toml_file(search_for, raw_search_pattern, replace_with, dry_run)
+//     //     except KeyError as e:
+//     //         if self.file_change.ignore_missing_file or self.file_change.ignore_missing_version:
+//     //             pass
+//     //         else:
+//     //             raise e
+//     Ok("todo".to_string())
+// }
 
 /// Update the current_version key in the configuration file
 pub fn replace_version(
@@ -1039,7 +995,7 @@ pub mod tests {
             )]
             .into_iter()
             .collect(),
-            parts: [].into_iter().collect(),
+            components: [].into_iter().collect(),
         };
         sim_assert_eq!(config, Some(expected));
         Ok(())
@@ -1428,7 +1384,7 @@ pub mod tests {
             ]
             .into_iter()
             .collect(),
-            parts: [
+            components: [
                 (
                     "dev".to_string(), 
                     VersionComponentSpec{
@@ -1542,7 +1498,7 @@ pub mod tests {
                 ]),
                 ..GlobalConfig::empty()
             },
-            parts: [(
+            components: [(
                 "release".to_string(),
                 VersionComponentSpec {
                     optional_value: Some("gamma".to_string()),
@@ -1781,7 +1737,7 @@ pub mod tests {
                 ..GlobalConfig::empty()
             },
             files: [].into_iter().collect(),
-            parts: [(
+            components: [(
                 "pre_label".to_string(),
                 VersionComponentSpec {
                     optional_value: Some("stable".to_string()),
@@ -1883,7 +1839,7 @@ pub mod tests {
             ]
             .into_iter()
             .collect(),
-            parts: [(
+            components: [(
                 "dev".to_string(),
                 VersionComponentSpec {
                     values: vec!["release".to_string(), "post".to_string()],
@@ -1938,7 +1894,7 @@ pub mod tests {
             },
         );
 
-        let parts = crate::config::get_all_part_configs(&config)?;
+        let parts = crate::config::version_component_configs(&config)?;
         sim_assert_eq!(
             &parts,
             &[
