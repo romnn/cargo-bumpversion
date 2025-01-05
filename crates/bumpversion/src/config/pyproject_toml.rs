@@ -5,16 +5,16 @@ use crate::{
     },
     diagnostics::{DiagnosticExt, FileId, Span, Spanned},
     f_string::PythonFormatString,
+    files::IoError,
 };
 use codespan_reporting::diagnostic::{Diagnostic, Label};
-use color_eyre::eyre;
 use indexmap::IndexMap;
 use std::path::{Path, PathBuf};
 use std::{borrow::BorrowMut, collections::HashMap};
 use toml_span as toml;
 
 #[derive(thiserror::Error, Debug)]
-pub enum Error {
+pub enum ParseError {
     #[error("{message}")]
     InvalidConfiguration { message: String, span: Span },
     #[error("{message}")]
@@ -39,7 +39,7 @@ pub enum Error {
     #[error("{message}")]
     InvalidFormatString {
         #[source]
-        source: crate::f_string::Error,
+        source: crate::f_string::ParseError,
         message: String,
         span: Span,
     },
@@ -61,7 +61,7 @@ mod diagnostics {
     use crate::diagnostics::ToDiagnostics;
     use codespan_reporting::diagnostic::{self, Diagnostic, Label};
 
-    impl ToDiagnostics for super::Error {
+    impl ToDiagnostics for super::ParseError {
         fn to_diagnostics<F: Copy + PartialEq>(&self, file_id: F) -> Vec<Diagnostic<F>> {
             match self {
                 Self::InvalidFormatString {
@@ -177,7 +177,7 @@ impl<'de> From<&toml_span::value::ValueInner<'de>> for ValueKind {
 }
 
 #[inline]
-pub fn as_string_array<'de>(value: &'de toml::Value<'de>) -> Result<Vec<String>, Error> {
+pub fn as_string_array<'de>(value: &'de toml::Value<'de>) -> Result<Vec<String>, ParseError> {
     Ok(as_str_array(value)?
         .into_iter()
         .map(ToString::to_string)
@@ -185,25 +185,50 @@ pub fn as_string_array<'de>(value: &'de toml::Value<'de>) -> Result<Vec<String>,
 }
 
 #[inline]
-pub fn as_str_array<'de>(value: &'de toml::Value<'de>) -> Result<Vec<&'de str>, Error> {
+pub fn as_array<'de>(
+    value: &'de toml::Value<'de>,
+    // ) -> Result<Vec<&'de toml::Value<'de>>, ParseError> {
+) -> Vec<&'de toml::Value<'de>> {
     match value.as_ref() {
-        toml::value::ValueInner::String(value) => Ok(vec![value]),
-        toml::value::ValueInner::Array(array) => {
-            array.iter().map(as_str).collect::<Result<Vec<_>, _>>()
-        }
-        other => Err(Error::UnexpectedType {
-            message: "expected a string or an array of strings".to_string(),
-            expected: vec![ValueKind::Array, ValueKind::String],
-            found: value.into(),
-            span: value.span.into(),
-        }),
+        // toml::value::ValueInner::String(_) => Ok(vec![value]),
+        // toml::value::ValueInner::String(_) => Ok(vec![value]),
+        toml::value::ValueInner::Array(array) => array.iter().collect(),
+        _ => vec![value],
+        // other => Err(ParseError::UnexpectedType {
+        //     message: "expected an array".to_string(),
+        //     expected: vec![ValueKind::Array],
+        //     found: value.into(),
+        //     span: value.span.into(),
+        // }),
     }
 }
 
 #[inline]
-pub fn as_format_string<'de>(value: &'de toml::Value<'de>) -> Result<PythonFormatString, Error> {
+pub fn as_str_array<'de>(value: &'de toml::Value<'de>) -> Result<Vec<&'de str>, ParseError> {
+    as_array(value)
+        .into_iter()
+        .map(|value| as_str(value))
+        .collect::<Result<_, _>>()
+    // match value.as_ref() {
+    //     toml::value::ValueInner::String(value) => Ok(vec![value]),
+    //     toml::value::ValueInner::Array(array) => {
+    //         array.iter().map(as_str).collect::<Result<Vec<_>, _>>()
+    //     }
+    //     other => Err(ParseError::UnexpectedType {
+    //         message: "expected a string or an array of strings".to_string(),
+    //         expected: vec![ValueKind::Array, ValueKind::String],
+    //         found: value.into(),
+    //         span: value.span.into(),
+    //     }),
+    // }
+}
+
+#[inline]
+pub fn as_format_string<'de>(
+    value: &'de toml::Value<'de>,
+) -> Result<PythonFormatString, ParseError> {
     as_str(value).and_then(|s| {
-        PythonFormatString::parse(s).map_err(|source| Error::InvalidFormatString {
+        PythonFormatString::parse(s).map_err(|source| ParseError::InvalidFormatString {
             source,
             message: "invalid format string".to_string(),
             span: value.span.into(),
@@ -212,13 +237,13 @@ pub fn as_format_string<'de>(value: &'de toml::Value<'de>) -> Result<PythonForma
 }
 
 #[inline]
-pub fn as_regex<'de>(value: &'de toml::Value<'de>) -> Result<config::Regex, Error> {
+pub fn as_regex<'de>(value: &'de toml::Value<'de>) -> Result<config::Regex, ParseError> {
     as_str(value).and_then(|s| {
         let s = s.replace("\\\\", "\\");
         let s = crate::f_string::parser::escape_double_curly_braces(&s).unwrap_or(s);
         regex::Regex::new(&s)
             .map(Into::into)
-            .map_err(|source| Error::InvalidRegex {
+            .map_err(|source| ParseError::InvalidRegex {
                 source,
                 message: format!("invalid regular expression: {s:?}"),
                 span: value.span.into(),
@@ -227,13 +252,13 @@ pub fn as_regex<'de>(value: &'de toml::Value<'de>) -> Result<config::Regex, Erro
 }
 
 #[inline]
-pub fn as_string<'de>(value: &'de toml::Value<'de>) -> Result<String, Error> {
+pub fn as_string<'de>(value: &'de toml::Value<'de>) -> Result<String, ParseError> {
     as_str(value).map(ToString::to_string)
 }
 
 #[inline]
-pub fn as_str<'de>(value: &'de toml::Value<'de>) -> Result<&'de str, Error> {
-    value.as_str().ok_or_else(|| Error::UnexpectedType {
+pub fn as_str<'de>(value: &'de toml::Value<'de>) -> Result<&'de str, ParseError> {
+    value.as_str().ok_or_else(|| ParseError::UnexpectedType {
         message: "expected a string".to_string(),
         expected: vec![ValueKind::String],
         found: value.into(),
@@ -242,8 +267,8 @@ pub fn as_str<'de>(value: &'de toml::Value<'de>) -> Result<&'de str, Error> {
 }
 
 #[inline]
-pub fn as_bool<'de>(value: &'de toml::Value<'de>) -> Result<bool, Error> {
-    value.as_bool().ok_or_else(|| Error::UnexpectedType {
+pub fn as_bool<'de>(value: &'de toml::Value<'de>) -> Result<bool, ParseError> {
+    value.as_bool().ok_or_else(|| ParseError::UnexpectedType {
         message: "expected a boolean".to_string(),
         expected: vec![ValueKind::String],
         found: value.into(),
@@ -254,8 +279,8 @@ pub fn as_bool<'de>(value: &'de toml::Value<'de>) -> Result<bool, Error> {
 pub(crate) fn parse_file<'de>(
     value: &'de toml::Value<'de>,
     search_is_regex: Option<bool>,
-) -> Result<(InputFile, FileConfig), Error> {
-    let table = value.as_table().ok_or_else(|| Error::UnexpectedType {
+) -> Result<(InputFile, FileConfig), ParseError> {
+    let table = value.as_table().ok_or_else(|| ParseError::UnexpectedType {
         message: "file config must be a table".to_string(),
         expected: vec![ValueKind::Table],
         found: value.into(),
@@ -265,11 +290,11 @@ pub(crate) fn parse_file<'de>(
     let glob_pattern = table.get("glob").map(as_string).transpose()?;
 
     let input_file = match (file_name, glob_pattern) {
-        (Some(_), Some(_)) => Err(Error::InvalidConfiguration {
+        (Some(_), Some(_)) => Err(ParseError::InvalidConfiguration {
             message: "file config must specify exactly one of `filename` and `glob`".to_string(),
             span: value.span.into(),
         }),
-        (None, None) => Err(Error::MissingOneOf {
+        (None, None) => Err(ParseError::MissingOneOf {
             keys: vec!["filename".to_string(), "glob".to_string()],
             message: "file config must specify either `filename` or `glob`".to_string(),
             span: value.span.into(),
@@ -290,8 +315,8 @@ pub(crate) fn parse_file<'de>(
 
 pub(crate) fn parse_part_config<'de>(
     value: &'de toml::value::Value<'de>,
-) -> Result<VersionComponentSpec, Error> {
-    let table = value.as_table().ok_or_else(|| Error::UnexpectedType {
+) -> Result<VersionComponentSpec, ParseError> {
+    let table = value.as_table().ok_or_else(|| ParseError::UnexpectedType {
         message: "part config must be a table".to_string(),
         expected: vec![ValueKind::Table],
         found: value.into(),
@@ -316,7 +341,7 @@ pub(crate) fn parse_part_config<'de>(
 fn parse_search_pattern<'de>(
     table: &'de toml::value::Table<'de>,
     is_regex: Option<bool>,
-) -> Result<(Option<bool>, Option<RegexTemplate>), Error> {
+) -> Result<(Option<bool>, Option<RegexTemplate>), ParseError> {
     let search_is_regex_compat = table.get("regex").map(as_bool).transpose()?.or(is_regex);
     let search = table
         .get("search")
@@ -335,14 +360,24 @@ fn parse_search_pattern<'de>(
 
 pub(crate) fn parse_global_config<'de>(
     table: &'de toml::value::Table<'de>,
-) -> Result<(Option<bool>, GlobalConfig), Error> {
+) -> Result<(Option<bool>, GlobalConfig), ParseError> {
     let current_version = table.get("current_version").map(as_string).transpose()?;
 
     let (is_regex, search) = parse_search_pattern(table, None)?;
 
     let allow_dirty = table.get("allow_dirty").map(as_bool).transpose()?;
     let parse_version_pattern = table.get("parse").map(as_regex).transpose()?;
-    let serialize_version_patterns = table.get("serialize").map(as_string_array).transpose()?;
+    let serialize_version_patterns = table
+        .get("serialize")
+        .map(as_array)
+        .map(|patterns| {
+            patterns
+                .into_iter()
+                .map(as_format_string)
+                .collect::<Result<_, _>>()
+        })
+        .transpose()?;
+
     let replace = table.get("replace").map(as_string).transpose()?;
     let no_configured_files = table.get("no_configured_files").map(as_bool).transpose()?;
     let ignore_missing_files = table.get("ignore_missing_files").map(as_bool).transpose()?;
@@ -421,10 +456,19 @@ pub(crate) fn parse_global_config<'de>(
 pub(crate) fn parse_file_config<'de>(
     table: &'de toml::value::Table<'de>,
     search_is_regex: Option<bool>,
-) -> Result<FileConfig, Error> {
+) -> Result<FileConfig, ParseError> {
     let (_, search) = parse_search_pattern(table, search_is_regex)?;
     let parse_version_pattern = table.get("parse").map(as_regex).transpose()?;
-    let serialize_version_patterns = table.get("serialize").map(as_string_array).transpose()?;
+    let serialize_version_patterns = table
+        .get("serialize")
+        .map(as_array)
+        .map(|patterns| {
+            patterns
+                .into_iter()
+                .map(as_format_string)
+                .collect::<Result<_, _>>()
+        })
+        .transpose()?;
     let replace = table.get("replace").map(as_string).transpose()?;
     let ignore_missing_file = table
         .get("ignore_missing_files")
@@ -452,7 +496,7 @@ impl Config {
         file_id: FileId,
         strict: bool,
         diagnostics: &mut Vec<Diagnostic<FileId>>,
-    ) -> Result<Option<Self>, Error> {
+    ) -> Result<Option<Self>, ParseError> {
         let Some((key, config)) = config
             .as_table()
             .and_then(|table| table.get("tool"))
@@ -462,12 +506,14 @@ impl Config {
             return Ok(None);
         };
 
-        let table = config.as_table().ok_or_else(|| Error::UnexpectedType {
-            message: "bumpversion config must be a table".to_string(),
-            expected: vec![ValueKind::Table],
-            found: config.into(),
-            span: config.span.into(),
-        })?;
+        let table = config
+            .as_table()
+            .ok_or_else(|| ParseError::UnexpectedType {
+                message: "bumpversion config must be a table".to_string(),
+                expected: vec![ValueKind::Table],
+                found: config.into(),
+                span: config.span.into(),
+            })?;
 
         if table.is_empty() {
             return Ok(None);
@@ -483,7 +529,7 @@ impl Config {
                     .map(|value| parse_file(value, is_regex_compat))
                     .collect::<Result<Vec<(InputFile, FileConfig)>, _>>()?,
                 other => {
-                    return Err(Error::UnexpectedType {
+                    return Err(ParseError::UnexpectedType {
                         message: "files must be an array must be a table".to_string(),
                         expected: vec![ValueKind::Table],
                         found: value.into(),
@@ -506,7 +552,7 @@ impl Config {
                     .into_iter()
                     .collect(),
                 other => {
-                    return Err(Error::UnexpectedType {
+                    return Err(ParseError::UnexpectedType {
                         message: "parts must be a table".to_string(),
                         expected: vec![ValueKind::Table],
                         found: value.into(),
@@ -528,96 +574,11 @@ impl Config {
         file_id: FileId,
         strict: bool,
         diagnostics: &mut Vec<Diagnostic<FileId>>,
-    ) -> Result<Option<Self>, Error> {
-        let config = toml_span::parse(config).map_err(|source| Error::Toml { source })?;
+    ) -> Result<Option<Self>, ParseError> {
+        let config = toml_span::parse(config).map_err(|source| ParseError::Toml { source })?;
         Self::from_pyproject_value(config, file_id, strict, diagnostics)
     }
 }
-
-// /// A class to handle updating files
-// pub struct DataFileUpdater<'a> {
-//     value: &'a str,
-//     file_change: &'a FileChange,
-// }
-//
-// impl<'a> DataFileUpdater<'a> {
-//     pub fn new(
-//         value: &'a str,
-//         replace: &'a crate::f_string::PythonFormatString,
-//         // file_change: &'a FileChange,
-//         // parts: &crate::config::Parts, // [str, VersionComponentSpec],
-//     ) -> Self {
-//         Self {
-//             value,
-//             file_change,
-//         }
-//         // self.version_config = VersionConfig(
-//         //     self.file_change.parse,
-//         //     self.file_change.serialize,
-//         //     self.file_change.search,
-//         //     self.file_change.replace,
-//         //     version_part_configs,
-//         // )
-//         // self.path = Path(self.file_change.filename)
-//         // self._newlines: Optional[str] = None
-//     }
-//
-//     /// Update the files
-//     pub fn update_file(
-//         &self,
-//         current_version: crate::version::compat::Version,
-//         new_version: crate::version::compat::Version,
-//         // context: MutableMapping,
-//         dry_run: bool,
-//     ) {
-//         // new_context = deepcopy(context)
-//         // new_context["current_version"] = self.version_config.serialize(current_version, context)
-//         // new_context["new_version"] = self.version_config.serialize(new_version, context)
-//         search_for, raw_search_pattern = self.file_change.get_search_pattern(new_context)
-//         replace_with = self.file_change.replace.format(**new_context)
-//         // if self.path.suffix == ".toml":
-//         //     try:
-//         //         self._update_toml_file(search_for, raw_search_pattern, replace_with, dry_run)
-//         //     except KeyError as e:
-//         //         if self.file_change.ignore_missing_file or self.file_change.ignore_missing_version:
-//         //             pass
-//         //         else:
-//         //             raise e
-//     }
-// }
-
-// def __init__(
-//     self,
-//     file_change: FileChange,
-//     version_part_configs: Dict[str, VersionComponentSpec],
-// ) -> None:
-//     self.file_change = file_change
-//     self.version_config = VersionConfig(
-//         self.file_change.parse,
-//         self.file_change.serialize,
-//         self.file_change.search,
-//         self.file_change.replace,
-//         version_part_configs,
-//     )
-//     self.path = Path(self.file_change.filename)
-//     self._newlines: Optional[str] = None
-
-/// Does the search pattern match any part of the contents?
-// fn contains_pattern(search: regex::Regex, content: &str) -> bool {
-// if not search or not contents:
-//     return False
-
-// for m in re.finditer(search, contents):
-//     line_no = contents.count("\n", 0, m.start(0)) + 1
-//     logger.info(
-//         "Found '%s' at line %s: %s",
-//         search.pattern,
-//         line_no,
-//         m.string[m.start() : m.end(0)],
-//     )
-//     return True
-// return False
-// }
 
 /// Update version in TOML document
 fn replace_version_of_document(
@@ -629,7 +590,7 @@ fn replace_version_of_document(
     // search_for: re.Pattern,
     // raw_search_pattern: str,
     // dry_run: bool = False
-) -> eyre::Result<bool> {
+) -> bool {
     use toml_edit::{Formatted, Item, Value};
     // document.path
     // assert_eq!(doc.to_string(), expected);
@@ -644,7 +605,7 @@ fn replace_version_of_document(
     // Formatted<String>
     // let Some(Value::String(Formatted{value: before, ..})) = item.and_then(Item::as_value_mut) else {
     let Some(Value::String(before)) = item.and_then(Item::as_value_mut) else {
-        return Ok(false);
+        return false;
     };
 
     // let before = before.ok_or_else("").map()
@@ -671,7 +632,7 @@ fn replace_version_of_document(
             search.as_str(),
         );
         // tracing::info!("could not find current version ({current_version}) in {path:?}");
-        return Ok(false);
+        return false;
     };
 
     // if contains_pattern(search, value_before)
@@ -689,48 +650,16 @@ fn replace_version_of_document(
     // set_nested_value(toml_data, new_value, self.file_change.key_path)
     //
     // self.path.write_text(tomlkit.dumps(toml_data), encoding="utf-8")
-    Ok(true)
+    true
 }
 
-// pub fn replace_version_str<'a>(
-//     search: &'a PythonFormatString,
-//     replace: &'a PythonFormatString,
-//     current_version_serialized: &'a str,
-//     new_version_serialized: &'a str,
-//     // new_version_serialized: &str,
-//     env: impl Iterator<Item = (&'a str, &'a str)>,
-// ) -> eyre::Result<String> {
-//     //     self, current_version: Version, new_version: Version, context: MutableMapping, dry_run: bool = False
-//     // ) -> None:
-//     //     """Update the files."""
-//     //     new_context = deepcopy(context)
-//     //     new_context["current_version"] = self.version_config.serialize(current_version, context)
-//     //     new_context["new_version"] = self.version_config.serialize(new_version, context)
-//     let ctx: HashMap<&str, &str> = env
-//         .chain(
-//             [
-//                 ("current_version", current_version_serialized),
-//                 ("next_version", new_version_serialized),
-//             ]
-//             .into_iter(),
-//         )
-//         .collect();
-//
-//     // TODO
-//     // let (search_for_regex, raw_search_pattern) = get_search_pattern(search, &ctx)?;
-//     // let strict = true;
-//     // let replace_with = replace.format(&ctx, strict)?;
-//     // dbg!(replace_with);
-//     // if self.path.suffix == ".toml":
-//     //     try:
-//     //         self._update_toml_file(search_for, raw_search_pattern, replace_with, dry_run)
-//     //     except KeyError as e:
-//     //         if self.file_change.ignore_missing_file or self.file_change.ignore_missing_version:
-//     //             pass
-//     //         else:
-//     //             raise e
-//     Ok("todo".to_string())
-// }
+#[derive(thiserror::Error, Debug)]
+pub enum ReplaceVersionError {
+    #[error(transparent)]
+    Io(#[from] IoError),
+    #[error(transparent)]
+    Toml(#[from] toml_edit::TomlError),
+}
 
 /// Update the `current_version` key in the configuration file
 pub async fn replace_version(
@@ -739,10 +668,15 @@ pub async fn replace_version(
     current_version: &str,
     next_version: &str,
     dry_run: bool,
-) -> eyre::Result<bool> {
+) -> Result<bool, ReplaceVersionError> {
     tracing::info!(config = ?path, "processing config file");
 
-    let existing_config = tokio::fs::read_to_string(path).await?;
+    let as_io_error = |source: std::io::Error| IoError {
+        source,
+        path: path.to_path_buf(),
+    };
+
+    let existing_config = tokio::fs::read_to_string(path).await.map_err(as_io_error)?;
     let extension = path.extension().and_then(|ext| ext.to_str());
 
     if extension.is_some_and(|ext| !ext.eq_ignore_ascii_case("toml")) {
@@ -753,32 +687,14 @@ pub async fn replace_version(
         return Ok(false);
     }
 
-    // // TODO: Eventually this should be transformed into another default
-    // // "files_to_modify" entry
-    // let file_change = FileChange {
-    //     // filename=str(config_path),
-    //     key_path: Some("tool.bumpversion.current_version".to_string()),
-    //     search: config.global.search.clone(),
-    //     replace: config.global.replace.clone(),
-    //     regex: config.global.regex.clone(),
-    //     ignore_missing_version: Some(true),
-    //     ignore_missing_files: Some(true),
-    //     serialize_patterns: config.global.serialize_patterns.clone(),
-    //     parse_pattern: config.global.parse_pattern.clone(),
-    //     ..FileChange::default()
-    // };
-
     if dry_run {
         tracing::info!(?path, "would write to config file");
     } else {
         tracing::info!(?path, "writing to config file");
     }
 
-    // updater = DataFileUpdater(datafile_config, config.version_config.part_configs)
-    // updater.update_file(current_version, new_version, context, dry_run)
-
     // parse the document
-    let raw_config = std::fs::read_to_string(path)?;
+    let raw_config = tokio::fs::read_to_string(path).await.map_err(as_io_error)?;
     let mut document = raw_config.parse::<toml_edit::Document>()?;
     let search = &config::defaults::PARSE_VERSION_REGEX; // TODO: change
     let replacement = "<new-version>";
@@ -789,7 +705,6 @@ pub async fn replace_version(
         search,
         replacement,
     );
-    // dbg!(updated);
     let new_config = document.to_string();
 
     let label_existing = format!("{path:?} (before)");
@@ -811,10 +726,14 @@ pub async fn replace_version(
             .create(false)
             .truncate(true)
             .open(path)
-            .await?;
+            .await
+            .map_err(as_io_error)?;
         let mut writer = tokio::io::BufWriter::new(file);
-        writer.write_all(new_config.as_bytes()).await?;
-        writer.flush().await?;
+        writer
+            .write_all(new_config.as_bytes())
+            .await
+            .map_err(as_io_error)?;
+        writer.flush().await.map_err(as_io_error)?;
     }
     Ok(true)
 }
@@ -841,7 +760,7 @@ pub mod tests {
         config: &str,
         printer: &BufferedPrinter,
     ) -> (
-        Result<Option<Config>, super::Error>,
+        Result<Option<Config>, super::ParseError>,
         usize,
         Vec<Diagnostic<usize>>,
     ) {
@@ -889,7 +808,7 @@ pub mod tests {
             &["tool", "bumpversion", "current_version"],
             search,
             replacement,
-        )?;
+        );
 
         let have = document.to_string();
         println!("{have}");
@@ -1311,8 +1230,25 @@ pub mod tests {
                 allow_dirty: Some(true),
                 parse_version_pattern: Some(regex::Regex::new("(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)(\\.(?P<dev>post)\\d+\\.dev\\d+)?")?.into()),
                 serialize_version_patterns: Some(vec![
-                    "{major}.{minor}.{patch}.{dev}{$PR_NUMBER}.dev{distance_to_latest_tag}".to_string(),
-                    "{major}.{minor}.{patch}".to_string(),
+                    [
+                        Value::Argument("major".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("minor".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("patch".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("dev".to_string()),
+                        Value::Argument("$PR_NUMBER".to_string()),
+                        Value::String(".dev".to_string()),
+                        Value::Argument("distance_to_latest_tag".to_string()),
+                    ].into_iter().collect(),
+                    [
+                        Value::Argument("major".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("minor".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("patch".to_string()),
+                    ].into_iter().collect(),
                 ]),
                 commit_message: Some(PythonFormatString(vec![
                     Value::String("Version updated from ".to_string()),
@@ -1413,8 +1349,26 @@ pub mod tests {
                     .into(),
                 ),
                 serialize_version_patterns: Some(vec![
-                    "{major}.{minor}.{patch}-{release}".to_string(),
-                    "{major}.{minor}.{patch}".to_string(),
+                    [
+                        Value::Argument("major".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("minor".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("patch".to_string()),
+                        Value::String("-".to_string()),
+                        Value::Argument("release".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                    [
+                        Value::Argument("major".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("minor".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("patch".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
                 ]),
                 ..GlobalConfig::empty()
             },
@@ -1489,8 +1443,26 @@ pub mod tests {
                     .into(),
                 ),
                 serialize_version_patterns: Some(vec![
-                    "{major}.{minor}.{patch}-{release}".to_string(),
-                    "{major}.{minor}.{patch}".to_string(),
+                    [
+                        Value::Argument("major".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("minor".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("patch".to_string()),
+                        Value::String("-".to_string()),
+                        Value::Argument("release".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                    [
+                        Value::Argument("major".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("minor".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("patch".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
                 ]),
                 ..GlobalConfig::empty()
             },
@@ -1731,8 +1703,28 @@ pub mod tests {
                     .into(),
                 ),
                 serialize_version_patterns: Some(vec![
-                    "{major}.{minor}.{patch}-{pre_label}-{pre_n}".to_string(),
-                    "{major}.{minor}.{patch}".to_string(),
+                    [
+                        Value::Argument("major".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("minor".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("patch".to_string()),
+                        Value::String("-".to_string()),
+                        Value::Argument("pre_label".to_string()),
+                        Value::String("-".to_string()),
+                        Value::Argument("pre_n".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                    [
+                        Value::Argument("major".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("minor".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("patch".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
                 ]),
                 ..GlobalConfig::empty()
             },
@@ -1769,8 +1761,29 @@ pub mod tests {
         )?
         .into();
         let serialize = vec![
-            "{major}.{minor}.{patch}.{dev}{$PR_NUMBER}.dev{distance_to_latest_tag}".to_string(),
-            "{major}.{minor}.{patch}".to_string(),
+            [
+                Value::Argument("major".to_string()),
+                Value::String(".".to_string()),
+                Value::Argument("minor".to_string()),
+                Value::String(".".to_string()),
+                Value::Argument("patch".to_string()),
+                Value::String(".".to_string()),
+                Value::Argument("dev".to_string()),
+                Value::Argument("$PR_NUMBER".to_string()),
+                Value::String(".dev".to_string()),
+                Value::Argument("distance_to_latest_tag".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            [
+                Value::Argument("major".to_string()),
+                Value::String(".".to_string()),
+                Value::Argument("minor".to_string()),
+                Value::String(".".to_string()),
+                Value::Argument("patch".to_string()),
+            ]
+            .into_iter()
+            .collect(),
         ];
         let expected = Config {
             global: GlobalConfig {
@@ -1920,9 +1933,9 @@ pub mod tests {
             },
         );
 
-        let parts = crate::config::version_component_configs(&config)?;
+        let component_configs = crate::config::version_component_configs(&config);
         sim_assert_eq!(
-            &parts,
+            &component_configs,
             &[
                 (
                     "major".to_string(),
@@ -1965,7 +1978,8 @@ pub mod tests {
             .collect::<IndexMap<_, _>>(),
         );
 
-        let file_map = crate::files::resolve_files_from_config(&mut config, &parts, None)?;
+        let file_map =
+            crate::files::resolve_files_from_config(&mut config, &component_configs, None)?;
         let include_bumps = vec![
             "major".to_string(),
             "minor".to_string(),

@@ -1,5 +1,4 @@
-use color_eyre::eyre;
-pub use parser::Error;
+pub use parser::ParseError;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -42,7 +41,6 @@ impl<'a> From<parser::Value<'a>> for Value {
 }
 
 pub mod parser {
-    use color_eyre::eyre;
     use winnow::ascii::{alpha1, alphanumeric1, digit0, digit1, escaped_transform};
     use winnow::combinator::{alt, cut_err, delimited, eof, opt, permutation, repeat, seq};
     use winnow::error::{ErrMode, ErrorKind, InputError, ParserError};
@@ -103,23 +101,23 @@ pub mod parser {
 
     #[derive(thiserror::Error, Debug, PartialEq, Eq)]
     #[error("invalid format: {format_string:?}")]
-    pub struct Error {
+    pub struct ParseError {
         pub format_string: String,
     }
 
-    pub fn escape_double_curly_braces(value: &str) -> Result<String, Error> {
+    pub fn escape_double_curly_braces(value: &str) -> Result<String, ParseError> {
         let test = text_including_escaped_brackets
             .parse(value)
-            .map_err(|_| Error {
+            .map_err(|_| ParseError {
                 format_string: value.to_string(),
             })?;
         Ok(test)
     }
 
-    pub fn parse_format_arguments(value: &str) -> Result<Vec<Value>, Error> {
+    pub fn parse_format_arguments(value: &str) -> Result<Vec<Value>, ParseError> {
         let test = repeat(0.., text_or_argument)
             .parse(value)
-            .map_err(|_| Error {
+            .map_err(|_| ParseError {
                 format_string: value.to_string(),
             })?;
         Ok(test)
@@ -273,7 +271,7 @@ impl AsRef<Vec<Value>> for PythonFormatString {
 pub struct MissingArgumentError(String);
 
 impl PythonFormatString {
-    pub fn parse(value: &str) -> Result<Self, parser::Error> {
+    pub fn parse(value: &str) -> Result<Self, parser::ParseError> {
         let arguments = parser::parse_format_arguments(value)?;
         Ok(Self(arguments.into_iter().map(Into::into).collect()))
     }

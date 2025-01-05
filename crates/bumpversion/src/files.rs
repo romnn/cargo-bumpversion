@@ -1,9 +1,8 @@
 use crate::{
     config::{Config, FileChange, FileConfig, InputFile, VersionComponentConfigs},
-    f_string::PythonFormatString,
-    version::Version,
+    f_string::{self, PythonFormatString},
+    version::{self, Version},
 };
-use color_eyre::eyre::{self, Context};
 use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -27,6 +26,23 @@ fn contains_pattern(contents: &str, search_pattern: &regex::Regex) -> bool {
     true
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum ReplaceVersionError {
+    #[error(transparent)]
+    Io(#[from] IoError),
+    #[error(transparent)]
+    Serialize(#[from] version::SerializeError),
+    #[error(transparent)]
+    MissingArgument(#[from] f_string::MissingArgumentError),
+    #[error(transparent)]
+    InvalidFormatString(#[from] f_string::ParseError),
+
+    #[error(transparent)]
+    RegexTemplate(#[from] crate::config::RegexTemplateError),
+    #[error(transparent)]
+    Toml(#[from] toml_edit::TomlError),
+}
+
 /// Replace version in file
 pub fn replace_version<'a, K, V>(
     before: &'a str,
@@ -34,7 +50,7 @@ pub fn replace_version<'a, K, V>(
     current_version: &'a Version,
     new_version: &'a Version,
     ctx: &'a HashMap<K, V>,
-) -> eyre::Result<String>
+) -> Result<String, ReplaceVersionError>
 where
     K: std::borrow::Borrow<str> + std::hash::Hash + Eq + std::fmt::Debug,
     V: AsRef<str> + std::fmt::Debug,
@@ -64,9 +80,8 @@ where
 
         let search_regex = change.search.format(&ctx, true)?;
         let replace = PythonFormatString::parse(&change.replace)?;
-        let replacement = replace
-            .format(&ctx, true)
-            .wrap_err_with(|| eyre::eyre!("invalid replace format string"))?;
+        let replacement = replace.format(&ctx, true)?;
+        // .wrap_err_with(|| eyre::eyre!("invalid replace format string"))?;
 
         // TODO(roman): i don't think we need to check if the change pattern is present?
         // // does the file contain the change pattern?
@@ -113,20 +128,27 @@ pub async fn replace_version_in_file<K, V>(
     new_version: &Version,
     ctx: &HashMap<K, V>,
     dry_run: bool,
-) -> eyre::Result<()>
+) -> Result<(), ReplaceVersionError>
 where
     K: std::borrow::Borrow<str> + std::hash::Hash + Eq + std::fmt::Debug,
     V: AsRef<str> + std::fmt::Debug,
 {
+    let as_io_error = |source: std::io::Error| -> IoError {
+        IoError {
+            source,
+            path: path.to_path_buf(),
+        }
+    };
     if !path.is_file() {
         if changes.iter().all(|change| change.ignore_missing_file) {
             tracing::info!(?path, "file not found");
             return Ok(());
         }
-        eyre::bail!("file not found {:?}", path);
+        let not_found = std::io::Error::new(std::io::ErrorKind::NotFound, "not found");
+        return Err(ReplaceVersionError::from(as_io_error(not_found)));
     }
 
-    let before = tokio::fs::read_to_string(path).await?;
+    let before = tokio::fs::read_to_string(path).await.map_err(as_io_error)?;
     let after = replace_version(&before, changes, current_version, new_version, ctx)?;
     if before == after {
         tracing::warn!(?path, "no change after version replacement");
@@ -153,10 +175,14 @@ where
             .create(false)
             .truncate(true)
             .open(path)
-            .await?;
+            .await
+            .map_err(as_io_error)?;
         let mut writer = tokio::io::BufWriter::new(file);
-        writer.write_all(after.as_bytes()).await?;
-        writer.flush().await?;
+        writer
+            .write_all(after.as_bytes())
+            .await
+            .map_err(as_io_error)?;
+        writer.flush().await.map_err(as_io_error)?;
     }
     Ok(())
 }
@@ -173,8 +199,8 @@ pub enum GlobError {
 #[error("io error for {path:?}")]
 pub struct IoError {
     #[source]
-    source: std::io::Error,
-    path: PathBuf,
+    pub source: std::io::Error,
+    pub path: PathBuf,
 }
 
 #[derive(thiserror::Error, Debug)]

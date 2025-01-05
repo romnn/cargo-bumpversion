@@ -4,10 +4,10 @@ use crate::{
         RegexTemplate, VersionComponentSpec,
     },
     diagnostics::{DiagnosticExt, FileId, Span, Spanned},
-    f_string::PythonFormatString,
+    f_string::{self, PythonFormatString},
+    files::IoError,
 };
 use codespan_reporting::diagnostic::{Diagnostic, Label};
-use color_eyre::eyre;
 use indexmap::IndexMap;
 use serde_ini_spanned as ini;
 use std::path::{Path, PathBuf};
@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 pub use ini::value::Options;
 
 #[derive(thiserror::Error, Debug)]
-pub enum Error {
+pub enum ParseError {
     #[error("{message}")]
     MissingKey {
         key: String,
@@ -31,7 +31,7 @@ pub enum Error {
     #[error("{message}")]
     InvalidFormatString {
         #[source]
-        source: crate::f_string::Error,
+        source: f_string::ParseError,
         message: String,
         span: Span,
     },
@@ -54,7 +54,7 @@ mod diagnostics {
     use crate::diagnostics::ToDiagnostics;
     use codespan_reporting::diagnostic::{self, Diagnostic, Label};
 
-    impl ToDiagnostics for super::Error {
+    impl ToDiagnostics for super::ParseError {
         fn to_diagnostics<F: Copy + PartialEq>(&self, file_id: F) -> Vec<Diagnostic<F>> {
             match self {
                 Self::InvalidRegex {
@@ -123,11 +123,11 @@ mod diagnostics {
 }
 
 #[inline]
-pub fn as_bool(value: ini::Spanned<String>) -> Result<bool, Error> {
+pub fn as_bool(value: ini::Spanned<String>) -> Result<bool, ParseError> {
     match value.as_ref().trim().to_ascii_lowercase().as_str() {
         "true" => Ok(true),
         "false" => Ok(false),
-        other => Err(Error::UnexpectedType {
+        other => Err(ParseError::UnexpectedType {
             message: "expected a boolean".to_string(),
             expected: vec![ValueKind::String],
             span: value.span.clone(),
@@ -136,9 +136,9 @@ pub fn as_bool(value: ini::Spanned<String>) -> Result<bool, Error> {
 }
 
 #[inline]
-pub fn as_format_string(value: ini::Spanned<String>) -> Result<PythonFormatString, Error> {
+pub fn as_format_string(value: ini::Spanned<String>) -> Result<PythonFormatString, ParseError> {
     let ini::Spanned { inner, span } = value;
-    PythonFormatString::parse(&inner).map_err(|source| Error::InvalidFormatString {
+    PythonFormatString::parse(&inner).map_err(|source| ParseError::InvalidFormatString {
         source,
         message: "invalid format string".to_string(),
         span,
@@ -146,13 +146,13 @@ pub fn as_format_string(value: ini::Spanned<String>) -> Result<PythonFormatStrin
 }
 
 #[inline]
-pub fn as_regex(value: ini::Spanned<String>) -> Result<config::Regex, Error> {
+pub fn as_regex(value: ini::Spanned<String>) -> Result<config::Regex, ParseError> {
     let ini::Spanned { inner, span } = value;
     let inner = inner.replace("\\\\", "\\");
-    let inner = crate::f_string::parser::escape_double_curly_braces(&inner).unwrap_or(inner);
+    let inner = f_string::parser::escape_double_curly_braces(&inner).unwrap_or(inner);
     regex::Regex::new(&inner)
         .map(Into::into)
-        .map_err(|source| Error::InvalidRegex {
+        .map_err(|source| ParseError::InvalidRegex {
             source,
             message: format!("invalid regular expression: {inner:?}"),
             span,
@@ -160,10 +160,42 @@ pub fn as_regex(value: ini::Spanned<String>) -> Result<config::Regex, Error> {
 }
 
 #[inline]
+pub fn as_spanned_string_array(
+    value: ini::Spanned<String>,
+    allow_single_value: bool,
+) -> Result<Vec<ini::Spanned<String>>, ParseError> {
+    let ini::Spanned { inner, span } = value;
+    // TODO(roman): how to keep spans here?
+    if inner.contains('\n') {
+        Ok(inner
+            .trim()
+            .split('\n')
+            .map(ToString::to_string)
+            .map(|inner| ini::Spanned::new(span.clone(), inner))
+            .collect())
+    } else if inner.contains(',') {
+        Ok(inner
+            .trim()
+            .split(',')
+            .map(ToString::to_string)
+            .map(|inner| ini::Spanned::new(span.clone(), inner))
+            .collect())
+    } else if allow_single_value {
+        Ok(vec![ini::Spanned::new(span, inner)])
+    } else {
+        Err(ParseError::UnexpectedType {
+            message: "expected a list".to_string(),
+            expected: vec![ValueKind::Array],
+            span,
+        })
+    }
+}
+
+#[inline]
 pub fn as_string_array(
     value: ini::Spanned<String>,
     allow_single_value: bool,
-) -> Result<Vec<String>, Error> {
+) -> Result<Vec<String>, ParseError> {
     let ini::Spanned { inner, span } = value;
     if inner.contains('\n') {
         Ok(inner.trim().split('\n').map(ToString::to_string).collect())
@@ -172,7 +204,7 @@ pub fn as_string_array(
     } else if allow_single_value {
         Ok(vec![inner])
     } else {
-        Err(Error::UnexpectedType {
+        Err(ParseError::UnexpectedType {
             message: "expected a list".to_string(),
             expected: vec![ValueKind::Array],
             span,
@@ -192,7 +224,7 @@ pub fn as_optional(value: ini::Spanned<String>) -> Option<ini::Spanned<String>> 
 
 pub(crate) fn parse_part_config<'de>(
     mut value: ini::SectionProxyMut<'_>,
-) -> Result<VersionComponentSpec, Error> {
+) -> Result<VersionComponentSpec, ParseError> {
     let independent = value
         .remove_option("independent")
         .map(as_bool)
@@ -219,7 +251,7 @@ pub(crate) fn parse_part_config<'de>(
 fn parse_search_pattern(
     value: &mut ini::SectionProxyMut<'_>,
     is_regex: Option<bool>,
-) -> Result<(Option<bool>, Option<RegexTemplate>), Error> {
+) -> Result<(Option<bool>, Option<RegexTemplate>), ParseError> {
     let search_is_regex_compat = value
         .remove_option("regex")
         .and_then(as_optional)
@@ -244,7 +276,7 @@ fn parse_search_pattern(
 
 pub(crate) fn parse_global_config(
     mut value: ini::SectionProxyMut<'_>,
-) -> Result<(Option<bool>, GlobalConfig), Error> {
+) -> Result<(Option<bool>, GlobalConfig), ParseError> {
     let current_version = value
         .remove_option("current_version")
         .and_then(as_optional)
@@ -258,10 +290,18 @@ pub(crate) fn parse_global_config(
         .map(as_bool)
         .transpose()?;
     let parse_version_pattern = value.remove_option("parse").map(as_regex).transpose()?;
+
     let serialize_version_patterns = value
         .remove_option("serialize")
         .and_then(as_optional)
-        .map(|value| as_string_array(value, true))
+        .map(|value| as_spanned_string_array(value, true))
+        .transpose()?
+        .map(|patterns| {
+            patterns
+                .into_iter()
+                .map(as_format_string)
+                .collect::<Result<_, _>>()
+        })
         .transpose()?;
 
     let replace = value
@@ -388,13 +428,20 @@ pub(crate) fn parse_global_config(
 pub(crate) fn parse_file_config(
     mut value: ini::SectionProxyMut<'_>,
     search_is_regex_compat: Option<bool>,
-) -> Result<FileConfig, Error> {
+) -> Result<FileConfig, ParseError> {
     let (_, search) = parse_search_pattern(&mut value, search_is_regex_compat)?;
     let parse_version_pattern = value.remove_option("parse").map(as_regex).transpose()?;
     let serialize_version_patterns = value
         .remove_option("serialize")
         .and_then(as_optional)
-        .map(|value| as_string_array(value, true))
+        .map(|value| as_spanned_string_array(value, true))
+        .transpose()?
+        .map(|patterns| {
+            patterns
+                .into_iter()
+                .map(as_format_string)
+                .collect::<Result<_, _>>()
+        })
         .transpose()?;
 
     let replace = value
@@ -431,7 +478,7 @@ impl Config {
         strict: bool,
         allow_unknown: bool,
         diagnostics: &mut Vec<Diagnostic<FileId>>,
-    ) -> Result<Option<Self>, Error> {
+    ) -> Result<Option<Self>, ParseError> {
         if !allow_unknown {
             for (key, value) in config.defaults() {
                 // emit warnings for ignored global values
@@ -528,9 +575,9 @@ impl Config {
         file_id: FileId,
         strict: bool,
         diagnostics: &mut Vec<Diagnostic<FileId>>,
-    ) -> Result<Option<Self>, Error> {
+    ) -> Result<Option<Self>, ParseError> {
         let config = ini::from_str(config, options, file_id, diagnostics)
-            .map_err(|source| Error::Ini { source })?;
+            .map_err(|source| ParseError::Ini { source })?;
         let allow_unknown = false;
         Self::from_ini_value(config, file_id, strict, allow_unknown, diagnostics)
     }
@@ -541,9 +588,9 @@ impl Config {
         file_id: FileId,
         strict: bool,
         diagnostics: &mut Vec<Diagnostic<FileId>>,
-    ) -> Result<Option<Self>, Error> {
+    ) -> Result<Option<Self>, ParseError> {
         let config = ini::from_str(config, options, file_id, diagnostics)
-            .map_err(|source| Error::Ini { source })?;
+            .map_err(|source| ParseError::Ini { source })?;
         let allow_unknown = true;
         Self::from_ini_value(config, file_id, strict, allow_unknown, diagnostics)
     }
@@ -566,8 +613,14 @@ pub async fn replace_version(
     current_version: &str,
     new_version: &str,
     dry_run: bool,
-) -> eyre::Result<bool> {
-    let existing_config = tokio::fs::read_to_string(path).await?;
+) -> Result<bool, IoError> {
+    let as_io_error = |source: std::io::Error| -> IoError {
+        IoError {
+            source,
+            path: path.to_path_buf(),
+        }
+    };
+    let existing_config = tokio::fs::read_to_string(path).await.map_err(as_io_error)?;
     // let extension = path.extension().and_then(|ext| ext.to_str());
     let matches = CONFIG_CURRENT_VERSION_REGEX.find_iter(&existing_config);
     // let new_config = if extension == Some("cfg") && matches.count() > 0 {
@@ -603,10 +656,14 @@ pub async fn replace_version(
             .create(false)
             .truncate(true)
             .open(path)
-            .await?;
+            .await
+            .map_err(as_io_error)?;
         let mut writer = tokio::io::BufWriter::new(file);
-        writer.write_all(new_config.as_bytes()).await?;
-        writer.flush().await?;
+        writer
+            .write_all(new_config.as_bytes())
+            .await
+            .map_err(as_io_error)?;
+        writer.flush().await.map_err(as_io_error)?;
     }
     Ok(true)
 }
@@ -632,7 +689,7 @@ mod tests {
         options: Options,
         printer: &BufferedPrinter,
     ) -> (
-        Result<Option<Config>, super::Error>,
+        Result<Option<Config>, super::ParseError>,
         usize,
         Vec<Diagnostic<usize>>,
     ) {
@@ -843,9 +900,15 @@ mod tests {
                             regex::Regex::new(r"(?P<major>\d+)-(?P<minor>\d+)-(?P<patch>\d+)")?
                                 .into(),
                         ),
-                        serialize_version_patterns: Some(vec![
-                            "{major}-{minor}-{patch}".to_string()
-                        ]),
+                        serialize_version_patterns: Some(vec![[
+                            Value::Argument("major".to_string()),
+                            Value::String("-".to_string()),
+                            Value::Argument("minor".to_string()),
+                            Value::String("-".to_string()),
+                            Value::Argument("patch".to_string()),
+                        ]
+                        .into_iter()
+                        .collect()]),
                         ..FileConfig::empty()
                     },
                 ),
@@ -915,8 +978,26 @@ mod tests {
                     .into(),
                 ),
                 serialize_version_patterns: Some(vec![
-                    r"{major}.{minor}.{patch}-{release}".to_string(),
-                    r"{major}.{minor}.{patch}".to_string(),
+                    [
+                        Value::Argument("major".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("minor".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("patch".to_string()),
+                        Value::String("-".to_string()),
+                        Value::Argument("release".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                    [
+                        Value::Argument("major".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("minor".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("patch".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
                 ]),
                 ..GlobalConfig::empty()
             },

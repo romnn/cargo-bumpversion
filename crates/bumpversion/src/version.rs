@@ -3,98 +3,173 @@ use crate::{
     context,
     f_string::PythonFormatString,
 };
-use color_eyre::eyre::{self, WrapErr};
 use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 
 pub type RawVersion<'a> = HashMap<&'a str, &'a str>;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ValuesFunction<'a> {
-    values: &'a [String],
-}
+// #[derive(Debug, Clone, PartialEq, Eq)]
+// pub struct ValuesFunction<'a> {
+//     values: &'a [String],
+// }
+//
+// impl ValuesFunction<'_> {
+//     /// Return the item after ``value`` in the list
+//     fn bump(&self, value: &str) -> Result<&str> {
+//         let current_idx = self.values.iter().position(|v| *v == value);
+//         let current_idx =
+//             current_idx.ok_or_else(|| eyre::eyre!("{value:?} must be one of {:?}", self.values))?;
+//         let bumped_value = self.values.get(current_idx + 1).ok_or_else(|| {
+//             eyre::eyre!(
+//                 "the component has already the maximum value among {:?} and cannot be bumped.",
+//                 self.values
+//             )
+//         })?;
+//         Ok(bumped_value.as_str())
+//     }
+// }
 
-impl ValuesFunction<'_> {
-    /// Return the item after ``value`` in the list
-    fn bump(&self, value: &str) -> eyre::Result<&str> {
-        let current_idx = self.values.iter().position(|v| *v == value);
-        let current_idx =
-            current_idx.ok_or_else(|| eyre::eyre!("{value:?} must be one of {:?}", self.values))?;
-        let bumped_value = self.values.get(current_idx + 1).ok_or_else(|| {
-            eyre::eyre!(
-                "the component has already the maximum value among {:?} and cannot be bumped.",
-                self.values
-            )
-        })?;
-        Ok(bumped_value.as_str())
+pub mod numeric {
+    pub static FIRST_NUMERIC_REGEX: once_cell::sync::Lazy<regex::Regex> =
+        once_cell::sync::Lazy::new(|| {
+            regex::RegexBuilder::new(r"(?P<prefix>[^-0-9]*)(?P<number>-?\d+)(?P<suffix>.*)")
+                .build()
+                .unwrap()
+        });
+
+    #[derive(thiserror::Error, Debug)]
+    pub enum Error {
+        #[error("version {0:?} does not contain any digit")]
+        MissingDigit(String),
+        #[error("version {0:?} has not prefix")]
+        MissingPrefix(String),
+        #[error("version {0:?} has no number")]
+        MissingNumber(String),
+        #[error("version {0:?} has no suffix")]
+        MissingSuffix(String),
+        #[error("{value:?} is not a valid number")]
+        InvalidNumber {
+            #[source]
+            source: std::num::ParseIntError,
+            value: String,
+        },
+        #[error("{value:?} of version {version:?} is not a valid number")]
+        InvalidNumeric {
+            #[source]
+            source: std::num::ParseIntError,
+            version: String,
+            value: String,
+        },
+        #[error("{value:?} is lower than the first value {first_value:?} and cannot be bumped")]
+        LessThanFirstValue { first_value: usize, value: usize },
+        #[error("version component {component:?} exceeds bounds and cannot be bumped")]
+        OutOfBounds { component: usize },
+        // #[error("{value:?} of version {version:?} is not a valid number")]
+        // InvalidFirstfvalue {
+        //     #[source]
+        //     source: std::num::ParseIntError,
+        //     version: String,
+        //     value: String,
+        // },
     }
-}
 
-pub static FIRST_NUMERIC_REGEX: once_cell::sync::Lazy<regex::Regex> =
-    once_cell::sync::Lazy::new(|| {
-        regex::RegexBuilder::new(r"(?P<prefix>[^-0-9]*)(?P<number>-?\d+)(?P<suffix>.*)")
-            .build()
-            .unwrap()
-    });
-
-#[derive(Debug)]
-pub struct NumericFunction<'a> {
-    pub first_value: &'a str,
-    pub optional_value: &'a str,
-    // pub first_value: String,
-    // pub optional_value: String,
-}
-
-impl<'a> NumericFunction<'a> {
-    #[must_use]
-    pub fn new(first_value: Option<&'a str>, optional_value: Option<&'a str>) -> Self {
-        let first_value = first_value.unwrap_or("0"); // .to_string();
-        let optional_value = optional_value.unwrap_or(first_value); // .to_string();
-        Self {
-            first_value,
-            optional_value,
-        }
+    #[derive(Debug)]
+    // pub struct NumericFunction<'a> {
+    pub struct NumericFunction {
+        pub first_value: usize,
+        pub optional_value: usize,
+        // pub first_value: &'a str,
+        // pub optional_value: &'a str,
+        // pub first_value: String,
+        // pub optional_value: String,
     }
 
-    /// Increase the first numerical value by one
-    pub fn bump(&self, value: &str) -> eyre::Result<String> {
-        let first_numeric = FIRST_NUMERIC_REGEX
-            .captures(value)
-            .ok_or_else(|| eyre::eyre!("the given value {value:?} does not contain any digit"))?;
+    // impl<'a> NumericFunction<'a> {
+    impl NumericFunction {
+        #[must_use]
+        pub fn new(first_value: Option<&str>, optional_value: Option<&str>) -> Result<Self, Error> {
+            // pub fn new(first_value: Option<usize>, optional_value: Option<usize>) -> Self {
+            let first_value = first_value
+                .as_deref()
+                .map(|value| {
+                    value.parse().map_err(|source| Error::InvalidNumber {
+                        source,
+                        value: value.to_string(),
+                    })
+                })
+                .transpose()?
+                .unwrap_or(0);
 
-        let prefix_part = first_numeric
-            .name("prefix")
-            .ok_or_else(|| eyre::eyre!("{value:?} has no prefix"))?;
-        let numeric_part = first_numeric
-            .name("number")
-            .ok_or_else(|| eyre::eyre!("{value:?} has no number"))?;
-        let suffix_part = first_numeric
-            .name("suffix")
-            .ok_or_else(|| eyre::eyre!("{value:?} has no suffix"))?;
-
-        let numeric_part: usize = numeric_part.as_str().parse().wrap_err_with(|| {
-            eyre::eyre!("numeric part {numeric_part:?} of value {value:?} is not a valid number")
-        })?;
-
-        let first_value: usize = self.first_value.parse().wrap_err_with(|| {
-            eyre::eyre!("first value {:?} is not a valid number", self.first_value)
-        })?;
-
-        if numeric_part < first_value {
-            eyre::bail!(
-                "{value:?} is lower than the first value {first_value:?} and cannot be bumped"
-            );
+            let optional_value = optional_value
+                .as_deref()
+                .map(|value| {
+                    value.parse().map_err(|source| Error::InvalidNumber {
+                        source,
+                        value: value.to_string(),
+                    })
+                })
+                .transpose()?
+                .unwrap_or(first_value);
+            Ok(Self {
+                first_value,
+                optional_value,
+            })
         }
 
-        let bumped_numeric = numeric_part.checked_add(1).ok_or_else(|| {
-            eyre::eyre!("cannot imcrement numeric version number {numeric_part:?}")
-        })?;
-        Ok(format!(
-            "{}{}{}",
-            prefix_part.as_str(),
-            bumped_numeric.to_string().as_str(),
-            suffix_part.as_str()
-        ))
+        /// Increase the first numerical value by one
+        pub fn bump(&self, value: &str) -> Result<String, Error> {
+            let first_numeric = FIRST_NUMERIC_REGEX
+                .captures(value)
+                .ok_or_else(|| Error::MissingDigit(value.to_string()))?;
+
+            let prefix_part = first_numeric
+                .name("prefix")
+                .ok_or_else(|| Error::MissingPrefix(value.to_string()))?;
+            let numeric_part = first_numeric
+                .name("number")
+                .ok_or_else(|| Error::MissingNumber(value.to_string()))?;
+            let suffix_part = first_numeric
+                .name("suffix")
+                .ok_or_else(|| Error::MissingSuffix(value.to_string()))?;
+
+            let numeric_part: usize =
+                numeric_part
+                    .as_str()
+                    .parse()
+                    .map_err(|source| Error::InvalidNumeric {
+                        source,
+                        version: value.to_string(),
+                        value: numeric_part.as_str().to_string(),
+                    })?;
+
+            // let first_value: usize = self.first_value.parse().map_err(|source| {
+            //     // eyre::eyre!("first value {:?} is not a valid number", self.first_value)
+            //     Error::InvalidNumeric {
+            //         source,
+            //         version: value.to_string(),
+            //         value: self.first_value.to_string(),
+            //     }
+            // })?;
+
+            if numeric_part < self.first_value {
+                return Err(Error::LessThanFirstValue {
+                    first_value: self.first_value,
+                    value: numeric_part,
+                });
+            }
+
+            let Some(bumped_numeric) = numeric_part.checked_add(1) else {
+                return Err(Error::OutOfBounds {
+                    component: numeric_part,
+                });
+            };
+            Ok(format!(
+                "{}{}{}",
+                prefix_part.as_str(),
+                bumped_numeric.to_string().as_str(),
+                suffix_part.as_str()
+            ))
+        }
     }
 }
 
@@ -129,6 +204,17 @@ impl AsRef<str> for VersionComponent {
         self.value().unwrap_or_default()
     }
 }
+
+#[derive(thiserror::Error, Debug)]
+pub enum BumpError {
+    #[error(transparent)]
+    Numeric(#[from] numeric::Error),
+    #[error("invalid version component {0:?}")]
+    InvalidComponent(String),
+}
+
+// #[derive(thiserror::Error, Debug)]
+// pub enum BumpError { }
 
 impl VersionComponent {
     #[must_use]
@@ -167,23 +253,23 @@ impl VersionComponent {
     }
 
     /// Return a part with bumped value.
-    pub fn bump(&self) -> eyre::Result<Self> {
+    pub fn bump(&self) -> Result<Self, BumpError> {
         let value = if !self.spec.values.is_empty() {
-            // let value = self.func.bump(Some(&self.value)).unwrap();
-            let func = ValuesFunction {
-                values: self.spec.values.as_slice(),
-            };
-            let value = self
-                .value
-                .as_deref()
-                .unwrap_or(self.spec.values[0].as_str());
-            func.bump(value).map(ToString::to_string)
+            todo!("value bump function");
+            // let func = ValuesFunction {
+            //     values: self.spec.values.as_slice(),
+            // };
+            // let value = self
+            //     .value
+            //     .as_deref()
+            //     .unwrap_or(self.spec.values[0].as_str());
+            // func.bump(value).map(ToString::to_string)
         } else {
             // numeric
-            let func = NumericFunction::new(
+            let func = numeric::NumericFunction::new(
                 self.spec.first_value.as_deref(),
                 self.spec.optional_value.as_deref(),
-            );
+            )?;
             func.bump(self.value.as_deref().unwrap_or("0"))
         }?;
         Ok(Self {
@@ -199,12 +285,6 @@ impl VersionComponent {
 //         VersionComponent::new(value, self.clone())
 //     }
 // }
-
-#[derive(thiserror::Error, Debug)]
-pub enum BumpError {
-    #[error("invalid version component {0:?}")]
-    InvalidComponent(String),
-}
 
 #[derive(Debug, Clone)]
 pub struct Version {
@@ -222,15 +302,14 @@ impl std::fmt::Display for Version {
 
 impl Version {
     /// Serialize a version to a string.
-    pub fn serialize<S, K, V>(
+    pub fn serialize<'a, K, V>(
         &self,
-        serialize_version_patterns: impl IntoIterator<Item = S>,
+        serialize_version_patterns: impl IntoIterator<Item = &'a PythonFormatString>,
         ctx: &HashMap<K, V>,
-    ) -> eyre::Result<String>
+    ) -> Result<String, SerializeError>
     where
         K: std::borrow::Borrow<str> + std::hash::Hash + Eq + std::fmt::Debug,
         V: AsRef<str> + std::fmt::Debug,
-        S: AsRef<str> + std::fmt::Debug,
     {
         serialize_version(self, serialize_version_patterns, ctx)
     }
@@ -264,7 +343,7 @@ impl Version {
     }
 
     /// Increase the values of the components that always increment
-    fn increment_always_incr(&self) -> eyre::Result<HashMap<&str, VersionComponent>> {
+    fn increment_always_incr(&self) -> Result<HashMap<&str, VersionComponent>, BumpError> {
         let components = self
             .spec
             .components_to_always_increment
@@ -279,7 +358,9 @@ impl Version {
     }
 
     /// Return the components that always increment and their dependents
-    fn always_increment(&self) -> eyre::Result<(HashMap<&str, VersionComponent>, HashSet<&str>)> {
+    fn always_increment(
+        &self,
+    ) -> Result<(HashMap<&str, VersionComponent>, HashSet<&str>), BumpError> {
         let values = self.increment_always_incr()?;
         let mut dependents = self.always_incr_dependencies();
         for (comp_name, value) in &values {
@@ -294,7 +375,7 @@ impl Version {
     /// Increase the value of the specified component.
     ///
     /// This will reset its dependents, and return a new `Version`.
-    pub fn bump(&self, component: &str) -> eyre::Result<Self> {
+    pub fn bump(&self, component: &str) -> Result<Self, BumpError> {
         if !self.components.contains_key(component) {
             return Err(BumpError::InvalidComponent(component.to_string()).into());
         }
@@ -343,12 +424,12 @@ pub struct VersionSpec {
 }
 
 impl VersionSpec {
-    pub fn from_components(components: config::VersionComponentConfigs) -> eyre::Result<Self> {
+    pub fn from_components(components: config::VersionComponentConfigs) -> Self {
         let mut dependency_map: HashMap<String, Vec<String>> = HashMap::new();
-        let mut previous_component: &String = components
-            .keys()
-            .next()
-            .ok_or_else(|| eyre::eyre!("must have at least one component"))?;
+        // let mut previous_component: &String = components
+        //     .keys()
+        //     .next()
+        //     .ok_or_else(|| eyre::eyre!("must have at least one component"))?;
 
         let components_to_always_increment: Vec<String> = components
             .iter()
@@ -362,7 +443,10 @@ impl VersionSpec {
             .cloned()
             .collect();
 
-        for (comp_name, comp_config) in components.iter().skip(1) {
+        // for (comp_name, comp_config) in components.iter().skip(1) {
+        for (previous_component, (comp_name, comp_config)) in
+            components.keys().zip(components.iter().skip(1))
+        {
             if comp_config.independent == Some(true) {
                 continue;
             }
@@ -377,17 +461,17 @@ impl VersionSpec {
                     .or_default()
                     .push(comp_name.clone());
             }
-            previous_component = comp_name;
+            // previous_component = comp_name;
         }
 
         // dbg!(&components_to_always_increment);
         // dbg!(&dependency_map);
 
-        Ok(Self {
+        Self {
             components,
             dependency_map,
             components_to_always_increment,
-        })
+        }
     }
 
     /// Return the components that depend on the given component.
@@ -437,6 +521,25 @@ impl VersionSpec {
     }
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum SerializeError {
+    #[error("version {version} has no valid formats")]
+    NoValidFormat {
+        version: Version,
+        formats: Vec<(usize, PythonFormatString)>,
+        // could not find a valid serialization format in {patterns:?} for {version:?}"
+    },
+    #[error(transparent)]
+    MissingArgumnet(#[from] crate::f_string::MissingArgumentError),
+    // #[error(transparent)]
+    // FormatString(#[from] crate::f_string::Error),
+    // FormatString {
+    //     version: String,
+    //     #[source]
+    //     source: crate::f_string::Error,
+    // }),
+}
+
 /// Attempts to serialize a version with the given serialization format.
 ///
 /// - valid serialization patterns are those that are renderable with the given context
@@ -444,15 +547,14 @@ impl VersionSpec {
 /// - the shortest valid serialization pattern is used
 /// - if two patterns are equally short, the first one is used
 /// - if no valid serialization pattern is found, an error is raised
-fn serialize_version<S, K, V>(
+fn serialize_version<'a, K, V>(
     version: &Version,
-    serialize_patterns: impl IntoIterator<Item = S>,
+    serialize_patterns: impl IntoIterator<Item = &'a PythonFormatString>,
     ctx: &HashMap<K, V>,
-) -> eyre::Result<String>
+) -> Result<String, SerializeError>
 where
     K: std::borrow::Borrow<str> + std::hash::Hash + Eq + std::fmt::Debug,
     V: AsRef<str> + std::fmt::Debug,
-    S: AsRef<str> + std::fmt::Debug,
 {
     tracing::debug!(?version, "serializing");
 
@@ -464,11 +566,11 @@ where
 
     let required_component_names: HashSet<_> = version.required_component_names().collect();
 
-    let mut patterns: Vec<(usize, PythonFormatString)> = serialize_patterns
-        .into_iter()
-        .enumerate()
-        .map(|(idx, pattern)| PythonFormatString::parse(pattern.as_ref()).map(|f| (idx, f)))
-        .collect::<Result<_, _>>()?;
+    // TODO(roman): could also avoid allocation of indices when using stable sort?
+    let mut patterns: Vec<(usize, &'a PythonFormatString)> =
+        serialize_patterns.into_iter().enumerate().collect();
+    // .map(|(idx, pattern)| PythonFormatString::parse(pattern.as_ref()).map(|f| (idx, f)))
+    // .collect::<Result<_, _>>()?;
 
     patterns.sort_by_key(|(idx, pattern)| {
         let labels: HashSet<&str> = pattern.named_arguments().collect();
@@ -477,9 +579,17 @@ where
         (std::cmp::Reverse(has_required_components), num_labels, *idx)
     });
 
-    let (_, chosen_pattern) = patterns.first().ok_or_else(|| {
-        eyre::eyre!("could not find a valid serialization format in {patterns:?} for {version:?}")
-    })?;
+    let (_, chosen_pattern) =
+        patterns
+            .first()
+            .copied()
+            .ok_or_else(|| SerializeError::NoValidFormat {
+                version: version.clone(),
+                formats: patterns
+                    .into_iter()
+                    .map(|(idx, format_string)| (idx, format_string.clone()))
+                    .collect(),
+            })?;
 
     tracing::debug!(format = ?chosen_pattern, "serialization format");
     let serialized = chosen_pattern.format(&ctx, true)?;
@@ -521,13 +631,13 @@ pub fn parse_version(
     value: &str,
     regex: &regex::Regex,
     version_spec: &VersionSpec,
-) -> eyre::Result<Option<Version>> {
+) -> Option<Version> {
     let parsed = parse_raw_version(value, regex);
     if parsed.is_empty() {
-        return Ok(None);
+        return None;
     }
     let version = version_spec.build(&parsed);
-    Ok(Some(version))
+    Some(version)
 }
 
 #[cfg(test)]

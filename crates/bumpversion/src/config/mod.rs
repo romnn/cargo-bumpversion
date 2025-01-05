@@ -5,10 +5,9 @@ pub mod toml;
 use crate::{
     diagnostics::{DiagnosticExt, FileId, Printer, Span, Spanned},
     f_string::{MissingArgumentError, PythonFormatString, Value},
+    files::IoError,
 };
 use codespan_reporting::diagnostic::{Diagnostic, Label};
-use color_eyre::eyre;
-use color_eyre::owo_colors::OwoColorize;
 use indexmap::IndexMap;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -17,26 +16,44 @@ use std::path::{Path, PathBuf};
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]
-    BumpversionToml(pyproject_toml::Error),
-    #[error(transparent)]
-    PyProject(pyproject_toml::Error),
-    #[error(transparent)]
-    SetupCfg(#[from] ini::Error),
-    #[error("TODO")]
-    CargoToml(()),
+    IoError(#[from] IoError),
+    #[error("failed to parse {path:?}")]
+    Toml {
+        path: PathBuf,
+        #[source]
+        source: pyproject_toml::ParseError,
+    },
+    // #[error("failed to parse {path:?}")]
+    // PyProject {
+    //     path: PathBuf,
+    //     #[source]
+    //     source: pyproject_toml::ParseError,
+    // },
+    #[error("failed to parse {path:?}")]
+    Ini {
+        path: PathBuf,
+        #[source]
+        source: ini::ParseError,
+    },
+    #[error("failed to parse {path:?}")]
+    CargoToml {
+        path: PathBuf,
+        // #[source]
+        // source: ini::ParseError,
+    },
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum ParseError {
-    #[error("failed to read config: {0}")]
-    Io(#[from] std::io::Error),
-
-    #[error("invalid integer: {0}")]
-    BadInt(#[from] std::num::TryFromIntError),
-
-    #[error("{0}")]
-    Unknown(String),
-}
+// #[derive(thiserror::Error, Debug)]
+// pub enum ParseError {
+//     #[error("failed to read config: {0}")]
+//     Io(#[from] std::io::Error),
+//
+//     #[error("invalid integer: {0}")]
+//     BadInt(#[from] std::num::TryFromIntError),
+//
+//     #[error("{0}")]
+//     Unknown(String),
+// }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ConfigFile {
@@ -76,11 +93,11 @@ pub fn config_file_locations(dir: &Path) -> impl Iterator<Item = ConfigFile> + u
     .into_iter()
 }
 
-impl From<String> for ParseError {
-    fn from(message: String) -> Self {
-        Self::Unknown(message)
-    }
-}
+// impl From<String> for ParseError {
+//     fn from(message: String) -> Self {
+//         Self::Unknown(message)
+//     }
+// }
 
 fn deserialize_python_bool<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
 where
@@ -212,7 +229,7 @@ pub struct GlobalConfig {
     /// Regex parsing the version string
     pub parse_version_pattern: Option<Regex>,
     /// How to serialize back to a version
-    pub serialize_version_patterns: Option<Vec<String>>,
+    pub serialize_version_patterns: Option<Vec<PythonFormatString>>,
     /// Template for complete string to search
     pub search: Option<RegexTemplate>,
     /// Template for complete string to replace
@@ -291,7 +308,7 @@ pub struct FileConfig {
     /// Regex parsing the version string
     pub parse_version_pattern: Option<Regex>,
     /// How to serialize back to a version
-    pub serialize_version_patterns: Option<Vec<String>>,
+    pub serialize_version_patterns: Option<Vec<PythonFormatString>>,
     /// Template for complete string to search
     pub search: Option<RegexTemplate>,
     /// Template for complete string to replace
@@ -325,8 +342,15 @@ pub mod defaults {
     pub static PARSE_VERSION_REGEX: Lazy<Regex> =
         Lazy::new(|| RegexBuilder::new(PARSE_VERSION_PATTERN).build().unwrap());
 
-    pub static SERIALIZE_VERSION_PATTERNS: Lazy<Vec<String>> =
-        Lazy::new(|| vec!["{major}.{minor}.{patch}".to_string()]);
+    pub static SERIALIZE_VERSION_PATTERNS: Lazy<Vec<PythonFormatString>> = Lazy::new(|| {
+        vec![PythonFormatString(vec![
+            Value::Argument("major".to_string()),
+            Value::String(".".to_string()),
+            Value::Argument("minor".to_string()),
+            Value::String(".".to_string()),
+            Value::Argument("patch".to_string()),
+        ])]
+    });
 
     pub const SEARCH: Lazy<super::RegexTemplate> = Lazy::new(|| {
         super::RegexTemplate::Escaped(
@@ -375,11 +399,10 @@ pub mod defaults {
 impl GlobalConfig {
     pub fn default() -> Self {
         Self {
-            parse_version_pattern: Some(defaults::PARSE_VERSION_REGEX.clone().into()), // TODO: use regex here?
+            parse_version_pattern: Some(defaults::PARSE_VERSION_REGEX.clone().into()),
             serialize_version_patterns: Some(defaults::SERIALIZE_VERSION_PATTERNS.clone()),
             search: Some(defaults::SEARCH.clone()),
             replace: Some(defaults::REPLACE.to_string()),
-            // regex: Some(defaults::SEARCH_IS_REGEX),
             ignore_missing_version: Some(defaults::IGNORE_MISSING_VERSION),
             ignore_missing_files: Some(defaults::IGNORE_MISSING_FILES),
             tag: Some(defaults::CREATE_TAG),
@@ -401,24 +424,8 @@ impl FileConfig {
             serialize_version_patterns: Some(defaults::SERIALIZE_VERSION_PATTERNS.clone()),
             search: Some(defaults::SEARCH.clone()),
             replace: Some(defaults::REPLACE.to_string()),
-            // regex: Some(defaults::SEARCH_IS_REGEX),
             ignore_missing_version: Some(defaults::IGNORE_MISSING_VERSION),
             ignore_missing_file: Some(defaults::IGNORE_MISSING_FILES),
-            // tag: Some(false),
-            // sign_tags: Some(false),
-            // tag_name: Some(DEFAULT_TAG_NAME.to_string()),
-            // tag_message: Some("Bump version: {current_version} → {new_version}".to_string()),
-            // allow_dirty: Some(false),
-            // commit: Some(false),
-            // // commit_message: Some("Bump version: {current_version} → {new_version}".to_string()),
-            // commit_message: Some(PythonFormatString(vec![
-            //     Value::String("Bump version: ".to_string()),
-            //     Value::Argument("current_version".to_string()),
-            //     Value::String(" → ".to_string()),
-            //     Value::Argument("new_version".to_string()),
-            //     // "Bump version: {current_version} → {new_version}",
-            // ])),
-            // ..FileConfig::empty()
         }
     }
 }
@@ -560,7 +567,7 @@ impl Config {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FileChange {
     pub parse_version_pattern: Regex,
-    pub serialize_version_patterns: Vec<String>,
+    pub serialize_version_patterns: Vec<PythonFormatString>,
     pub search: RegexTemplate,
     pub replace: String,
     pub ignore_missing_version: bool,
@@ -594,44 +601,6 @@ impl FileChange {
             exclude_bumps: None,
         }
     }
-
-    // /// Render the search pattern and return the compiled regex pattern
-    // pub fn search_pattern<K, V>(&self, ctx: &HashMap<K, V>) -> eyre::Result<regex::Regex>
-    // where
-    //     K: std::borrow::Borrow<str>,
-    //     K: std::hash::Hash + Eq,
-    //     V: AsRef<str>,
-    // {
-    //     tracing::debug!("rendering search pattern with context");
-    //     // todo!();
-    //
-    //     let strict = true;
-    //     // let search = PythonFormatString::parse(&self.search)?;
-    //     let raw_pattern = self.search.format(ctx, strict)?;
-    //     let default_regex = regex::RegexBuilder::new(&regex::escape(raw_pattern.as_str()))
-    //         .multi_line(true)
-    //         .build()?;
-    //
-    //     if !self.regex {
-    //         tracing::debug!(
-    //             pattern = default_regex.as_str(),
-    //             "searching for default pattern"
-    //         );
-    //         return Ok(default_regex);
-    //     }
-    //
-    //     let ctx: HashMap<&str, String> = ctx
-    //         .iter()
-    //         .map(|(k, v)| (k.borrow(), regex::escape(v.as_ref())))
-    //         .collect();
-    //     let regex_pattern = search.format(&ctx, strict)?;
-    //     let search_regex = regex::RegexBuilder::new(&regex_pattern)
-    //         .multi_line(true)
-    //         .build()?;
-    //     tracing::debug!(pattern = search_regex.as_str(), "searching for the regex");
-    //
-    //     Ok(search_regex)
-    // }
 
     #[must_use]
     pub fn will_bump_component(&self, component: &str) -> bool {
@@ -682,7 +651,7 @@ pub struct VersionComponentSpec {
 }
 
 /// Make sure all version components are included
-pub fn version_component_configs(config: &Config) -> eyre::Result<VersionComponentConfigs> {
+pub fn version_component_configs(config: &Config) -> VersionComponentConfigs {
     let parsing_groups: Vec<String> = match &config.global.parse_version_pattern {
         Some(parse) => parse
             .capture_names()
@@ -703,7 +672,7 @@ pub fn version_component_configs(config: &Config) -> eyre::Result<VersionCompone
             (label, spec)
         })
         .collect();
-    Ok(component_configs)
+    component_configs
 }
 
 #[cfg(test)]
@@ -720,7 +689,7 @@ mod tests {
     // }
 
     #[test]
-    fn test_get_all_part_configs_dependent() -> eyre::Result<()> {
+    fn test_get_all_component_configs_dependent() -> eyre::Result<()> {
         crate::tests::init();
         let config = Config {
             global: GlobalConfig {
@@ -732,9 +701,9 @@ mod tests {
             files: vec![],
             components: [].into_iter().collect(),
         };
-        let part_configs = super::version_component_configs(&config)?;
+        let component_configs = super::version_component_configs(&config);
         sim_assert_eq!(
-            part_configs,
+            component_configs,
             [
                 (
                     "major".to_string(),
@@ -766,7 +735,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_all_part_configs_with_parts() -> eyre::Result<()> {
+    fn test_get_all_component_configs_with_parts() -> eyre::Result<()> {
         crate::tests::init();
         let config = Config {
             global: GlobalConfig {
@@ -797,9 +766,9 @@ mod tests {
             .into_iter()
             .collect(),
         };
-        let part_configs = super::version_component_configs(&config)?;
+        let component_configs = super::version_component_configs(&config);
         sim_assert_eq!(
-            part_configs,
+            component_configs,
             [
                 (
                     "major".to_string(),

@@ -1,5 +1,4 @@
 use clap::Parser;
-use color_eyre::owo_colors::OwoColorize;
 use std::path::{Path, PathBuf};
 
 pub trait Invert {

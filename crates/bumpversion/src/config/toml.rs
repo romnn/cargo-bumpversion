@@ -150,8 +150,26 @@ mod tests {
                     .into(),
                 ),
                 serialize_version_patterns: Some(vec![
-                    r"{major}.{minor}.{patch}-{release}".to_string(),
-                    r"{major}.{minor}.{patch}".to_string(),
+                    [
+                        Value::Argument("major".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("minor".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("patch".to_string()),
+                        Value::String("-".to_string()),
+                        Value::Argument("release".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                    [
+                        Value::Argument("major".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("minor".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("patch".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
                 ]),
                 ..GlobalConfig::empty()
             },
@@ -281,7 +299,11 @@ mod tests {
                 (
                     InputFile::Path("should_override_serialize.txt".into()),
                     FileConfig {
-                        serialize_version_patterns: Some(vec!["{major}".to_string()]),
+                        serialize_version_patterns: Some(vec![[Value::Argument(
+                            "major".to_string(),
+                        )]
+                        .into_iter()
+                        .collect()]),
                         ..FileConfig::empty()
                     },
                 ),
@@ -474,8 +496,8 @@ mod tests {
                     Value::Argument("new_version".to_string()),
                 ])),
                 current_version: Some("1.0.0".to_string()),
-                parse_version_pattern: Some(regex::Regex::new(
-                    indoc::indoc! {r"(?x)
+                parse_version_pattern: Some(
+                    regex::Regex::new(indoc::indoc! {r"(?x)
                     (?:
                         (?P<major>[0-9]+)
                         (?:
@@ -507,52 +529,105 @@ mod tests {
                     )
                     (?:\+(?P<local>[a-z0-9]+(?:[-_\.][a-z0-9]+)*))?
                     ",
-                    }
-                )?.into()
+                    })?
+                    .into(),
                 ),
                 serialize_version_patterns: Some(vec![
-                    "{major}.{minor}.{patch}.{dev_label}{distance_to_latest_tag}+{short_branch_name}".to_string(),
-                    "{major}.{minor}.{patch}".to_string(),
+                    // "{major}.{minor}.{patch}.{dev_label}{distance_to_latest_tag}+{short_branch_name}".to_string(),
+                    // "{major}.{minor}.{patch}".to_string(),
+                    [
+                        Value::Argument("major".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("minor".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("patch".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("dev_label".to_string()),
+                        Value::Argument("distance_to_latest_tag".to_string()),
+                        Value::String("+".to_string()),
+                        Value::Argument("short_branch_name".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                    [
+                        Value::Argument("major".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("minor".to_string()),
+                        Value::String(".".to_string()),
+                        Value::Argument("patch".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
                 ]),
-                search: Some(RegexTemplate::Escaped([
-                    Value::Argument("current_version".to_string()),
-                ].into_iter().collect())),
+                search: Some(RegexTemplate::Escaped(
+                    [Value::Argument("current_version".to_string())]
+                        .into_iter()
+                        .collect(),
+                )),
                 replace: Some("{new_version}".to_string()),
                 ..GlobalConfig::empty()
             },
             files: vec![].into_iter().collect(),
             components: [
-                ("pre_label".to_string(), VersionComponentSpec{
-            values: vec!["final".to_string(), "a".to_string(), "b".to_string(), "rc".to_string()],
-                    ..VersionComponentSpec::default()
-                }),
-                ("pre_n".to_string(), VersionComponentSpec{
-                    // first_value: Some(1),
-                    ..VersionComponentSpec::default()
-                }),
-                ("post_label".to_string(), VersionComponentSpec{
-                     values: vec!["final".to_string(), "post".to_string()],
-                    ..VersionComponentSpec::default()
-                }),
-                ("post_n".to_string(), VersionComponentSpec{
-                     // first_value: Some(1),
-                    ..VersionComponentSpec::default()
-                }),
-                ("dev_label".to_string(), VersionComponentSpec{
-                     // first_value: Some(1),
-                     values: vec!["final".to_string(), "dev".to_string()],
-                     independent: Some(true),
-                    ..VersionComponentSpec::default()
-                }),
-                ("dev_n".to_string(), VersionComponentSpec{
-                     // first_value: Some(1),
-                    ..VersionComponentSpec::default()
-                }),
-                ("local".to_string(), VersionComponentSpec{
-                    independent: Some(true),
-                    ..VersionComponentSpec::default()
-                }),
-            ].into_iter().collect(),
+                (
+                    "pre_label".to_string(),
+                    VersionComponentSpec {
+                        values: vec![
+                            "final".to_string(),
+                            "a".to_string(),
+                            "b".to_string(),
+                            "rc".to_string(),
+                        ],
+                        ..VersionComponentSpec::default()
+                    },
+                ),
+                (
+                    "pre_n".to_string(),
+                    VersionComponentSpec {
+                        // first_value: Some(1),
+                        ..VersionComponentSpec::default()
+                    },
+                ),
+                (
+                    "post_label".to_string(),
+                    VersionComponentSpec {
+                        values: vec!["final".to_string(), "post".to_string()],
+                        ..VersionComponentSpec::default()
+                    },
+                ),
+                (
+                    "post_n".to_string(),
+                    VersionComponentSpec {
+                        // first_value: Some(1),
+                        ..VersionComponentSpec::default()
+                    },
+                ),
+                (
+                    "dev_label".to_string(),
+                    VersionComponentSpec {
+                        // first_value: Some(1),
+                        values: vec!["final".to_string(), "dev".to_string()],
+                        independent: Some(true),
+                        ..VersionComponentSpec::default()
+                    },
+                ),
+                (
+                    "dev_n".to_string(),
+                    VersionComponentSpec {
+                        // first_value: Some(1),
+                        ..VersionComponentSpec::default()
+                    },
+                ),
+                (
+                    "local".to_string(),
+                    VersionComponentSpec {
+                        independent: Some(true),
+                        ..VersionComponentSpec::default()
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
         };
         similar_asserts::assert_eq!(config, Some(expected));
         Ok(())

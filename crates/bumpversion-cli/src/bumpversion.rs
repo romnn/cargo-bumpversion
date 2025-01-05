@@ -67,7 +67,7 @@ async fn main() -> eyre::Result<()> {
         .ok_or(eyre::eyre!("missing config file"))?;
 
     // build list of parts
-    let components = crate::config::version_component_configs(&config)?;
+    let components = crate::config::version_component_configs(&config);
 
     let mut cli_files = vec![];
     let mut bump: Option<String> = options
@@ -188,7 +188,7 @@ async fn main() -> eyre::Result<()> {
         &TagAndRevision { tag, revision },
         file_map,
         components,
-        Some(config_file_path.as_path()),
+        Some(&config_file_path),
         dry_run,
     )
     .await?;

@@ -5,7 +5,6 @@ use crate::{
     version::Version,
 };
 use async_process::{Command, Stdio};
-use color_eyre::eyre;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -168,7 +167,7 @@ pub async fn run_pre_commit_hooks(
     new_version: Option<&Version>,
     new_version_serialized: &str,
     dry_run: bool,
-) -> eyre::Result<()> {
+) -> Result<(), Error> {
     let tag = tag_and_revision
         .tag
         .as_ref()
@@ -210,7 +209,7 @@ pub async fn run_post_commit_hooks(
     new_version: Option<&Version>,
     new_version_serialized: &str,
     dry_run: bool,
-) -> eyre::Result<()> {
+) -> Result<(), Error> {
     let env = pre_and_post_commit_hook_env(
         config,
         tag_and_revision,
@@ -267,7 +266,7 @@ async fn run_hooks(
     working_dir: &Path,
     env: impl Iterator<Item = (String, String)>,
     dry_run: bool,
-) -> eyre::Result<()> {
+) -> Result<(), Error> {
     let env = env.collect();
     for script in hooks {
         if dry_run {
@@ -286,7 +285,7 @@ async fn run_hooks(
                     tracing::warn!(output.stdout);
                     tracing::warn!(output.stderr);
                 };
-                return Err(err.into());
+                return Err(err);
             }
         };
     }
@@ -300,7 +299,7 @@ pub async fn run_setup_hooks(
     tag_and_revision: &TagAndRevision,
     current_version: Option<&Version>,
     dry_run: bool,
-) -> eyre::Result<()> {
+) -> Result<(), Error> {
     let env = setup_hook_env(config, tag_and_revision, current_version);
     let setup_hooks = config.global.setup_hooks.as_deref().unwrap_or_default();
     if setup_hooks.is_empty() {

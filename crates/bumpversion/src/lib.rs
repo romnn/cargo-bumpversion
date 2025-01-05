@@ -15,7 +15,7 @@ use crate::{
     files::FileMap,
     vcs::{git::GitRepository, TagAndRevision, VersionControlSystem},
 };
-use color_eyre::eyre;
+use files::IoError;
 use futures::stream::{StreamExt, TryStreamExt};
 use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
@@ -34,16 +34,13 @@ pub enum Bump<'a> {
 pub async fn find_config<W>(
     dir: &Path,
     printer: &diagnostics::Printer<W>,
-) -> eyre::Result<Option<(PathBuf, config::Config)>>
+) -> Result<Option<(config::ConfigFile, config::Config)>, config::Error>
 where
     W: codespan_reporting::term::termcolor::WriteColor + Send + Sync + 'static,
 {
     use diagnostics::ToDiagnostics;
     let config_files = config::config_file_locations(&dir);
 
-    // let test: Vec<_> = futures::stream::iter(config_files).collect().await;
-
-    // let mut config_files = futures::stream::iter(config_files.collect::<Vec<_>>())
     let mut config_files = futures::stream::iter(config_files)
         .then(|config_file| async move {
             let path = config_file.path();
@@ -53,7 +50,14 @@ where
             let Ok(path) = path.canonicalize() else {
                 return Ok(None);
             };
-            let config = tokio::fs::read_to_string(&path).await?;
+            let config = tokio::fs::read_to_string(&path)
+                .await
+                .map_err(|source| IoError {
+                    source,
+                    path: path.to_path_buf(),
+                })
+                .map_err(config::Error::from)?;
+
             let file_id = printer.add_source_file(&path, config.to_string());
 
             let test = tokio::task::spawn_blocking(move || {
@@ -72,7 +76,11 @@ where
                         if let Err(ref err) = res {
                             diagnostics.extend(err.to_diagnostics(file_id));
                         }
-                        res.map_err(eyre::Report::from)
+                        res.map_err(|source| config::Error::Toml {
+                            source,
+                            path: path.to_path_buf(),
+                        })
+                        // res.map_err(eyre::Report::from)
                     }
                     config::ConfigFile::BumpversionCfg(path) => {
                         let options = config::ini::Options::default();
@@ -86,7 +94,11 @@ where
                         if let Err(ref err) = res {
                             diagnostics.extend(err.to_diagnostics(file_id));
                         }
-                        res.map_err(eyre::Report::from)
+                        res.map_err(|source| config::Error::Ini {
+                            source,
+                            path: path.to_path_buf(),
+                        })
+                        // res.map_err(eyre::Report::from)
                     }
                     config::ConfigFile::SetupCfg(path) => {
                         let options = config::ini::Options::default();
@@ -100,7 +112,10 @@ where
                         if let Err(ref err) = res {
                             diagnostics.extend(err.to_diagnostics(file_id));
                         }
-                        res.map_err(eyre::Report::from)
+                        res.map_err(|source| config::Error::Ini {
+                            source,
+                            path: path.to_path_buf(),
+                        })
                     }
                     config::ConfigFile::CargoToml(_) => {
                         // TODO: cargo
@@ -108,10 +123,10 @@ where
                     }
                 };
 
-                config_res.map(|c| c.map(|c| (path.clone(), c, diagnostics)))
+                config_res.map(|c| c.map(|c| (config_file.clone(), c, diagnostics)))
             });
 
-            test.await?
+            Ok::<_, config::Error>(test.await.unwrap()?)
         })
         .filter_map(|res| async move { res.transpose() });
 
@@ -121,7 +136,7 @@ where
         .next()
         .await
         .transpose()?
-        .map(|(config_file_path, mut config, diagnostics)| {
+        .map(|(config_file, mut config, diagnostics)| {
             // emit diagnostics
             for diagnostic in &diagnostics {
                 printer.emit(diagnostic);
@@ -133,8 +148,28 @@ where
             let defaults = config::GlobalConfig::default();
             config.apply_defaults(&defaults);
 
-            (config_file_path, config)
+            (config_file, config)
         }))
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum BumpError {
+    #[error("missing current version")]
+    MissingCurrentVersion,
+    #[error("version is empty")]
+    EmptyVersion,
+    #[error("failed to run hook")]
+    Hook(#[from] crate::hooks::Error),
+    #[error("failed to bump version")]
+    Bump(#[from] crate::version::BumpError),
+    #[error("failed to serialize version")]
+    Serialize(#[from] crate::version::SerializeError),
+    #[error("failed to replace version")]
+    ReplaceVersion(#[from] crate::files::ReplaceVersionError),
+    #[error(transparent)]
+    MissingArgument(#[from] f_string::MissingArgumentError),
+    #[error(transparent)]
+    Git(#[from] crate::vcs::git::Error),
 }
 
 /// Bump the desired version component to the next value or set the version to `new_version`.
@@ -145,14 +180,15 @@ pub async fn bump(
     tag_and_revision: &TagAndRevision,
     file_map: FileMap,
     components: config::VersionComponentConfigs,
-    config_file: Option<&Path>,
+    // config_file: Option<&Path>,
+    config_file: Option<&config::ConfigFile>,
     dry_run: bool,
-) -> eyre::Result<()> {
+) -> Result<(), BumpError> {
     let current_version_serialized = config
         .global
         .current_version
         .as_ref()
-        .ok_or_else(|| eyre::eyre!("missing current version"))?;
+        .ok_or_else(|| BumpError::MissingCurrentVersion)?;
 
     tracing::debug!(
         version = current_version_serialized,
@@ -165,14 +201,14 @@ pub async fn bump(
         .as_deref()
         .unwrap_or(&config::defaults::PARSE_VERSION_REGEX);
 
-    let version_spec = version::VersionSpec::from_components(components)?;
+    let version_spec = version::VersionSpec::from_components(components);
 
     let current_version = version::parse_version(
         current_version_serialized,
         &parse_version_pattern,
         &version_spec,
-    )?;
-    let current_version = current_version.ok_or_else(|| eyre::eyre!("current version is empty"))?;
+    );
+    let current_version = current_version.ok_or_else(|| BumpError::EmptyVersion)?;
 
     let working_dir = repo.path();
     hooks::run_setup_hooks(
@@ -194,10 +230,14 @@ pub async fn bump(
         }
         Bump::NewVersion(new_version) => {
             tracing::info!(new_version, "parse new version");
-            version::parse_version(new_version, &parse_version_pattern, &version_spec)
+            Ok(version::parse_version(
+                new_version,
+                &parse_version_pattern,
+                &version_spec,
+            ))
         }
     }?;
-    let next_version = next_version.ok_or_else(|| eyre::eyre!("next version is empty"))?;
+    let next_version = next_version.ok_or_else(|| BumpError::EmptyVersion)?;
     tracing::info!(next_version = next_version.to_string(), "next version");
 
     let ctx_without_new_version: HashMap<String, String> = context::get_context(
@@ -270,45 +310,57 @@ pub async fn bump(
                     dry_run,
                 )
                 .await?;
-                Ok::<_, eyre::Report>(())
+                Ok::<_, BumpError>(())
             }
         })
         .try_collect()
         .await?;
 
     if let Some(config_file) = config_file {
+        let config_path = config_file.path();
         // check if config file is inside repo
         assert!(working_dir.is_absolute());
-        assert!(config_file.is_absolute());
+        assert!(config_path.is_absolute());
 
-        if config_file.starts_with(working_dir) {
-            match config_file
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .map(str::to_ascii_lowercase)
-                .as_deref()
-            {
-                Some("cfg" | "ini") => {
+        if config_path.starts_with(working_dir) {
+            // let ext = config_path
+            //     .extension()
+            //     .and_then(|ext| ext.to_str())
+            //     .map(str::to_ascii_lowercase)
+            //     .as_deref();
+            match config_file {
+                config::ConfigFile::SetupCfg(_) | config::ConfigFile::BumpversionCfg(_) => {
                     config::ini::replace_version(
-                        config_file,
+                        config_path,
                         config,
                         current_version_serialized,
                         &next_version_serialized,
                         dry_run,
                     )
                     .await
+                    .map_err(files::ReplaceVersionError::from)
                 }
-                Some("toml") => {
+                config::ConfigFile::PyProject(_) | config::ConfigFile::BumpversionToml(_) => {
                     config::pyproject_toml::replace_version(
-                        config_file,
+                        config_path,
                         config,
                         current_version_serialized,
                         &next_version_serialized,
                         dry_run,
                     )
                     .await
+                    .map_err(|err| match err {
+                        config::pyproject_toml::ReplaceVersionError::Io(err) => {
+                            files::ReplaceVersionError::from(err)
+                        }
+                        config::pyproject_toml::ReplaceVersionError::Toml(err) => {
+                            files::ReplaceVersionError::from(err)
+                        }
+                    })
                 }
-                other => Err(eyre::eyre!("unknown config file format {other:?}")),
+                config::ConfigFile::CargoToml(_) => {
+                    todo!("cargo support")
+                } // other => Err(eyre::eyre!("unknown config file format {other:?}")),
             }?;
         } else {
             tracing::warn!("config file {config_file:?} is outside of the repo {working_dir:?} and will not be modified");
@@ -336,7 +388,7 @@ pub async fn bump(
     let mut files_to_commit: HashSet<&Path> =
         configured_files.keys().map(PathBuf::as_path).collect();
     if let Some(config_file) = config_file {
-        files_to_commit.insert(config_file);
+        files_to_commit.insert(config_file.path());
     }
 
     let commit = config.global.commit.unwrap_or(true);

@@ -1,9 +1,9 @@
 #### short-term
 
-- make async
-- implement pretty verbose mode
 - proper error types
 - lint
+- read configuration from Cargo.toml
+- implement pretty verbose mode
 - rename repo to bumpversion only
 - setup goreleaser
 - release the bumpversion crate
@@ -13,10 +13,11 @@
 - test and improve nom error messages
 - remove deprecated code
 - include spans in all the configs
-- reduce confusion: remove version config, version spec, component spec, component, etc.
-- more imperative, functional approach
-- make serde-ini-spanend a separate crate
+- publish serde-ini-spanend as a separate crate
 
+- DONE: reduce confusion: remove version config, version spec, component spec, component, etc.
+- DONE: more imperative, functional approach
+- DONE: make async
 - DONE: remove "owned" python format string...
 - DONE: group file changes together
 - DONE: get rid of configured file
