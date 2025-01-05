@@ -1,19 +1,17 @@
 use crate::command::{self, Error as CommandError, Output};
 use crate::{
-    config::{self, Config},
+    config::Config,
     vcs::{RevisionInfo, TagAndRevision},
     version::Version,
 };
-use async_process::{Command, Stdio};
+use async_process::Command;
 use std::collections::HashMap;
 use std::path::Path;
-
-// type Env = HashMap<String, String>;
 
 pub const ENV_PREFIX: &str = "BVHOOK_";
 
 /// Provide the base environment variables
-fn base_env(config: &Config) -> impl Iterator<Item = (String, String)> {
+fn base_env() -> impl Iterator<Item = (String, String)> {
     vec![
         (
             format!("{ENV_PREFIX}NOW"),
@@ -106,52 +104,28 @@ fn new_version_env<'a>(
 
 /// Provide the environment dictionary for `setup_hook`s.
 fn setup_hook_env<'a>(
-    config: &'a Config,
     tag_and_revision: &'a TagAndRevision,
-    // current_version: &Version,
     current_version: Option<&'a Version>,
 ) -> impl Iterator<Item = (String, String)> + use<'a> {
-    // ) -> HashMap<String, String> {
     std::env::vars()
-        .chain(base_env(config))
+        .chain(base_env())
         .chain(vcs_env(tag_and_revision))
         .chain(version_env(current_version, "CURRENT_"))
-    // .collect()
 }
-
-// /// Provide the environment dictionary for `pre_commit_hook`s
-// fn pre_commit_hook_env<'a>(
-//     config: &'a Config,
-//     // tag_and_revision: Option<&'a TagAndRevision>,
-//     tag_and_revision: &'a TagAndRevision,
-//     current_version: Option<&'a Version>,
-//     new_version: Option<&'a Version>,
-//     new_version_serialized: &SerializedVersion,
-// ) -> impl Iterator<Item = (String, String)> + use<'a> {
-//     std::env::vars()
-//         .chain(base_env(config))
-//         .chain(vcs_env(tag_and_revision))
-//         .chain(version_env(current_version, "CURRENT_"))
-//         .chain(version_env(new_version, "NEW_"))
-//         .chain(new_version_env(new_version_serialized))
-// }
 
 /// Provide the environment dictionary for `pre_commit_hook` and `post_commit_hook`s
 fn pre_and_post_commit_hook_env<'a>(
-    config: &'a Config,
-    // tag_and_revision: Option<&'a TagAndRevision>,
     tag_and_revision: &'a TagAndRevision,
     current_version: Option<&'a Version>,
     new_version: Option<&'a Version>,
     new_version_serialized: &str,
-    // tag: Option<&str>,
 ) -> impl Iterator<Item = (String, String)> + use<'a> {
     let tag = tag_and_revision
         .tag
         .as_ref()
         .map(|tag| tag.current_tag.as_str());
     std::env::vars()
-        .chain(base_env(config))
+        .chain(base_env())
         .chain(vcs_env(tag_and_revision))
         .chain(version_env(current_version, "CURRENT_"))
         .chain(version_env(new_version, "NEW_"))
@@ -159,6 +133,9 @@ fn pre_and_post_commit_hook_env<'a>(
 }
 
 /// Run the pre-commit hooks
+///
+/// # Errors
+/// When one of the user-provided pre-commit hooks exits with a non-zero exit code.
 pub async fn run_pre_commit_hooks(
     config: &Config,
     working_dir: &Path,
@@ -168,13 +145,7 @@ pub async fn run_pre_commit_hooks(
     new_version_serialized: &str,
     dry_run: bool,
 ) -> Result<(), Error> {
-    let tag = tag_and_revision
-        .tag
-        .as_ref()
-        .map(|tag| tag.current_tag.as_str());
-
     let env = pre_and_post_commit_hook_env(
-        config,
         tag_and_revision,
         current_version,
         new_version,
@@ -201,6 +172,9 @@ pub async fn run_pre_commit_hooks(
 }
 
 /// Run the post-commit hooks
+///
+/// # Errors
+/// When one of the user-provided post-commit hooks exits with a non-zero exit code.
 pub async fn run_post_commit_hooks(
     config: &Config,
     working_dir: &Path,
@@ -211,7 +185,6 @@ pub async fn run_post_commit_hooks(
     dry_run: bool,
 ) -> Result<(), Error> {
     let env = pre_and_post_commit_hook_env(
-        config,
         tag_and_revision,
         current_version,
         new_version,
@@ -237,6 +210,7 @@ pub async fn run_post_commit_hooks(
     run_hooks(post_commit_hooks, working_dir, env, dry_run).await
 }
 
+/// An Error that can occur when executing hooks
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]
@@ -260,7 +234,7 @@ async fn run_hook(
     Ok(output)
 }
 
-/// Run a list of command-line programs using the shell.
+/// Run command-line hooks using the shell.
 async fn run_hooks(
     hooks: &[String],
     working_dir: &Path,
@@ -293,6 +267,9 @@ async fn run_hooks(
 }
 
 /// Run the setup hooks
+///
+/// # Errors
+/// When one of the user-provided setup hooks exits with a non-zero exit code.
 pub async fn run_setup_hooks(
     config: &Config,
     working_dir: &Path,
@@ -300,7 +277,7 @@ pub async fn run_setup_hooks(
     current_version: Option<&Version>,
     dry_run: bool,
 ) -> Result<(), Error> {
-    let env = setup_hook_env(config, tag_and_revision, current_version);
+    let env = setup_hook_env(tag_and_revision, current_version);
     let setup_hooks = config.global.setup_hooks.as_deref().unwrap_or_default();
     if setup_hooks.is_empty() {
         tracing::trace!("no setup hooks defined");

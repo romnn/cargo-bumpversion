@@ -1,16 +1,14 @@
 use crate::{
     config::{
-        self, Config, FileChange, FileConfig, GlobalConfig, InputFile, RegexTemplate,
-        VersionComponentSpec,
+        self, Config, FileConfig, GlobalConfig, InputFile, RegexTemplate, VersionComponentSpec,
     },
-    diagnostics::{DiagnosticExt, FileId, Span, Spanned},
+    diagnostics::{FileId, Span},
     f_string::PythonFormatString,
     files::IoError,
 };
-use codespan_reporting::diagnostic::{Diagnostic, Label};
+use codespan_reporting::diagnostic::Diagnostic;
 use indexmap::IndexMap;
 use std::path::{Path, PathBuf};
-use std::{borrow::BorrowMut, collections::HashMap};
 use toml_span as toml;
 
 #[derive(thiserror::Error, Debug)]
@@ -59,7 +57,7 @@ pub enum ParseError {
 
 mod diagnostics {
     use crate::diagnostics::ToDiagnostics;
-    use codespan_reporting::diagnostic::{self, Diagnostic, Label};
+    use codespan_reporting::diagnostic::{Diagnostic, Label};
 
     impl ToDiagnostics for super::ParseError {
         fn to_diagnostics<F: Copy + PartialEq>(&self, file_id: F) -> Vec<Diagnostic<F>> {
@@ -185,21 +183,11 @@ pub fn as_string_array<'de>(value: &'de toml::Value<'de>) -> Result<Vec<String>,
 }
 
 #[inline]
-pub fn as_array<'de>(
-    value: &'de toml::Value<'de>,
-    // ) -> Result<Vec<&'de toml::Value<'de>>, ParseError> {
-) -> Vec<&'de toml::Value<'de>> {
+#[must_use]
+pub fn as_array<'de>(value: &'de toml::Value<'de>) -> Vec<&'de toml::Value<'de>> {
     match value.as_ref() {
-        // toml::value::ValueInner::String(_) => Ok(vec![value]),
-        // toml::value::ValueInner::String(_) => Ok(vec![value]),
         toml::value::ValueInner::Array(array) => array.iter().collect(),
         _ => vec![value],
-        // other => Err(ParseError::UnexpectedType {
-        //     message: "expected an array".to_string(),
-        //     expected: vec![ValueKind::Array],
-        //     found: value.into(),
-        //     span: value.span.into(),
-        // }),
     }
 }
 
@@ -209,18 +197,6 @@ pub fn as_str_array<'de>(value: &'de toml::Value<'de>) -> Result<Vec<&'de str>, 
         .into_iter()
         .map(|value| as_str(value))
         .collect::<Result<_, _>>()
-    // match value.as_ref() {
-    //     toml::value::ValueInner::String(value) => Ok(vec![value]),
-    //     toml::value::ValueInner::Array(array) => {
-    //         array.iter().map(as_str).collect::<Result<Vec<_>, _>>()
-    //     }
-    //     other => Err(ParseError::UnexpectedType {
-    //         message: "expected a string or an array of strings".to_string(),
-    //         expected: vec![ValueKind::Array, ValueKind::String],
-    //         found: value.into(),
-    //         span: value.span.into(),
-    //     }),
-    // }
 }
 
 #[inline]
@@ -239,9 +215,9 @@ pub fn as_format_string<'de>(
 #[inline]
 pub fn as_regex<'de>(value: &'de toml::Value<'de>) -> Result<config::Regex, ParseError> {
     as_str(value).and_then(|s| {
-        let s = s.replace("\\\\", "\\");
-        let s = crate::f_string::parser::escape_double_curly_braces(&s).unwrap_or(s);
-        regex::Regex::new(&s)
+        // let s = s.replace("\\\\", "\\");
+        // let s = crate::f_string::parser::escape_double_curly_braces(&s).unwrap_or(s);
+        regex::Regex::new(s)
             .map(Into::into)
             .map_err(|source| ParseError::InvalidRegex {
                 source,
@@ -493,11 +469,11 @@ pub(crate) fn parse_file_config<'de>(
 impl Config {
     pub fn from_pyproject_value(
         config: toml::Value,
-        file_id: FileId,
-        strict: bool,
-        diagnostics: &mut Vec<Diagnostic<FileId>>,
+        _file_id: FileId,
+        _strict: bool,
+        _diagnostics: &mut Vec<Diagnostic<FileId>>,
     ) -> Result<Option<Self>, ParseError> {
-        let Some((key, config)) = config
+        let Some((_, config)) = config
             .as_table()
             .and_then(|table| table.get("tool"))
             .and_then(|tool| tool.as_table())
@@ -528,7 +504,7 @@ impl Config {
                     .iter()
                     .map(|value| parse_file(value, is_regex_compat))
                     .collect::<Result<Vec<(InputFile, FileConfig)>, _>>()?,
-                other => {
+                _ => {
                     return Err(ParseError::UnexpectedType {
                         message: "files must be an array must be a table".to_string(),
                         expected: vec![ValueKind::Table],
@@ -551,7 +527,7 @@ impl Config {
                     .collect::<Result<Vec<(String, VersionComponentSpec)>, _>>()?
                     .into_iter()
                     .collect(),
-                other => {
+                _ => {
                     return Err(ParseError::UnexpectedType {
                         message: "parts must be a table".to_string(),
                         expected: vec![ValueKind::Table],
@@ -582,7 +558,7 @@ impl Config {
 
 /// Update version in TOML document
 fn replace_version_of_document(
-    document: &mut toml_edit::Document,
+    document: &mut toml_edit::DocumentMut,
     key_path: &[&str],
     search: &regex::Regex,
     replacement: &str,
@@ -664,17 +640,14 @@ pub enum ReplaceVersionError {
 /// Update the `current_version` key in the configuration file
 pub async fn replace_version(
     path: &Path,
-    config: &Config,
-    current_version: &str,
-    next_version: &str,
+    _config: &Config,
+    _current_version: &str,
+    _next_version: &str,
     dry_run: bool,
 ) -> Result<bool, ReplaceVersionError> {
     tracing::info!(config = ?path, "processing config file");
 
-    let as_io_error = |source: std::io::Error| IoError {
-        source,
-        path: path.to_path_buf(),
-    };
+    let as_io_error = |source: std::io::Error| IoError::new(source, path);
 
     let existing_config = tokio::fs::read_to_string(path).await.map_err(as_io_error)?;
     let extension = path.extension().and_then(|ext| ext.to_str());
@@ -695,7 +668,7 @@ pub async fn replace_version(
 
     // parse the document
     let raw_config = tokio::fs::read_to_string(path).await.map_err(as_io_error)?;
-    let mut document = raw_config.parse::<toml_edit::Document>()?;
+    let mut document = raw_config.parse::<toml_edit::DocumentMut>()?;
     let search = &config::defaults::PARSE_VERSION_REGEX; // TODO: change
     let replacement = "<new-version>";
 
@@ -705,6 +678,12 @@ pub async fn replace_version(
         search,
         replacement,
     );
+
+    if updated {
+        tracing::info!("updated TOML config");
+    } else {
+        tracing::info!("TOML config was not updated");
+    }
     let new_config = document.to_string();
 
     let label_existing = format!("{path:?} (before)");
@@ -719,7 +698,6 @@ pub async fn replace_version(
     if dry_run {
         println!("{diff}");
     } else {
-        todo!("write");
         use tokio::io::AsyncWriteExt;
         let file = tokio::fs::OpenOptions::new()
             .write(true)
@@ -739,24 +717,24 @@ pub async fn replace_version(
 }
 
 #[cfg(test)]
+#[allow(clippy::too_many_lines, clippy::unnecessary_wraps)]
 pub mod tests {
     use crate::{
         config::{
-            self, pyproject_toml, Config, FileChange, FileConfig, GlobalConfig, InputFile,
-            RegexTemplate, VersionComponentSpec,
+            self, Config, FileChange, FileConfig, GlobalConfig, InputFile, RegexTemplate,
+            VersionComponentSpec,
         },
         diagnostics::{BufferedPrinter, ToDiagnostics},
         f_string::{PythonFormatString, Value},
-        tests::sim_assert_eq_sorted,
     };
     use codespan_reporting::diagnostic::Diagnostic;
     use color_eyre::eyre;
     use indexmap::IndexMap;
     use similar_asserts::assert_eq as sim_assert_eq;
-    use std::io::Read;
+
     use std::path::PathBuf;
 
-    pub fn parse_toml(
+    pub(crate) fn parse_toml(
         config: &str,
         printer: &BufferedPrinter,
     ) -> (
@@ -773,9 +751,9 @@ pub mod tests {
         }
         dbg!(&diagnostics);
         for diagnostic in &diagnostics {
-            printer.emit(diagnostic);
+            printer.emit(diagnostic).expect("emit diagnostics");
         }
-        printer.print();
+        printer.print().expect("print diagnostics");
         (config, file_id, diagnostics)
     }
 
@@ -799,7 +777,7 @@ pub mod tests {
             version={new_version}"""
         "#};
 
-        let mut document = pyproject_toml.parse::<toml_edit::Document>()?;
+        let mut document = pyproject_toml.parse::<toml_edit::DocumentMut>()?;
         dbg!(&document);
         let search = &config::defaults::PARSE_VERSION_REGEX;
         let replacement = "<new-version>";
@@ -1298,7 +1276,7 @@ pub mod tests {
                     InputFile::Path("Dockerfile".into()),
                     FileConfig {
                         search: Some(RegexTemplate::Regex([
-                            Value::String(r#"created=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"#.to_string())
+                            Value::String(r"created=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z".to_string())
                         ].into_iter().collect())),
                         replace: Some("created={utcnow:%Y-%m-%dT%H:%M:%SZ}".to_string()),
                         // is_regex: Some(true),
@@ -1503,7 +1481,6 @@ pub mod tests {
             ]
             .into_iter()
             .collect(),
-            ..Config::default()
         };
 
         let config = parse_toml(pyproject_toml, &BufferedPrinter::default()).0?;
@@ -1860,7 +1837,7 @@ pub mod tests {
                     FileConfig {
                         search: Some(RegexTemplate::Regex(
                             [Value::String(
-                                r#"created=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"#.to_string(),
+                                r"created=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z".to_string(),
                             )]
                             .into_iter()
                             .collect(),
@@ -2071,7 +2048,7 @@ pub mod tests {
                             serialize_version_patterns: serialize.clone(),
                             search: RegexTemplate::Regex(
                                 [Value::String(
-                                    r#"created=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"#.to_string()
+                                    r"created=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z".to_string()
                                 ),]
                                 .into_iter()
                                 .collect()

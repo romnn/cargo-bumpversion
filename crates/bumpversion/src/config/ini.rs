@@ -3,12 +3,11 @@ use crate::{
         self, pyproject_toml::ValueKind, Config, FileConfig, GlobalConfig, InputFile,
         RegexTemplate, VersionComponentSpec,
     },
-    diagnostics::{DiagnosticExt, FileId, Span, Spanned},
+    diagnostics::{DiagnosticExt, FileId, Span},
     f_string::{self, PythonFormatString},
     files::IoError,
 };
 use codespan_reporting::diagnostic::{Diagnostic, Label};
-use indexmap::IndexMap;
 use serde_ini_spanned as ini;
 use std::path::{Path, PathBuf};
 
@@ -52,7 +51,7 @@ pub enum ParseError {
 mod diagnostics {
     use crate::config::pyproject_toml::ValueKind;
     use crate::diagnostics::ToDiagnostics;
-    use codespan_reporting::diagnostic::{self, Diagnostic, Label};
+    use codespan_reporting::diagnostic::{Diagnostic, Label};
 
     impl ToDiagnostics for super::ParseError {
         fn to_diagnostics<F: Copy + PartialEq>(&self, file_id: F) -> Vec<Diagnostic<F>> {
@@ -111,11 +110,6 @@ mod diagnostics {
                         .with_notes(vec![note]);
                     vec![diagnostic]
                 }
-                // // Self::Serde { source, span } => vec![Diagnostic::error()
-                // //     .with_message(self.to_string())
-                // //     .with_labels(vec![
-                // //         Label::primary(file_id, span.clone()).with_message(source.to_string())
-                // //     ])],
                 Self::Ini { source } => source.to_diagnostics(file_id),
             }
         }
@@ -127,7 +121,7 @@ pub fn as_bool(value: ini::Spanned<String>) -> Result<bool, ParseError> {
     match value.as_ref().trim().to_ascii_lowercase().as_str() {
         "true" => Ok(true),
         "false" => Ok(false),
-        other => Err(ParseError::UnexpectedType {
+        _ => Err(ParseError::UnexpectedType {
             message: "expected a boolean".to_string(),
             expected: vec![ValueKind::String],
             span: value.span.clone(),
@@ -148,8 +142,8 @@ pub fn as_format_string(value: ini::Spanned<String>) -> Result<PythonFormatStrin
 #[inline]
 pub fn as_regex(value: ini::Spanned<String>) -> Result<config::Regex, ParseError> {
     let ini::Spanned { inner, span } = value;
-    let inner = inner.replace("\\\\", "\\");
-    let inner = f_string::parser::escape_double_curly_braces(&inner).unwrap_or(inner);
+    // let inner = inner.replace("\\\\", "\\");
+    // let inner = f_string::parser::escape_double_curly_braces(&inner).unwrap_or(inner);
     regex::Regex::new(&inner)
         .map(Into::into)
         .map_err(|source| ParseError::InvalidRegex {
@@ -480,7 +474,7 @@ impl Config {
         diagnostics: &mut Vec<Diagnostic<FileId>>,
     ) -> Result<Option<Self>, ParseError> {
         if !allow_unknown {
-            for (key, value) in config.defaults() {
+            for (key, _) in config.defaults() {
                 // emit warnings for ignored global values
                 let diagnostic = Diagnostic::warning_or_error(strict)
                     .with_message("global config values have no effect")
@@ -614,12 +608,7 @@ pub async fn replace_version(
     new_version: &str,
     dry_run: bool,
 ) -> Result<bool, IoError> {
-    let as_io_error = |source: std::io::Error| -> IoError {
-        IoError {
-            source,
-            path: path.to_path_buf(),
-        }
-    };
+    let as_io_error = |source: std::io::Error| -> IoError { IoError::new(source, path) };
     let existing_config = tokio::fs::read_to_string(path).await.map_err(as_io_error)?;
     // let extension = path.extension().and_then(|ext| ext.to_str());
     let matches = CONFIG_CURRENT_VERSION_REGEX.find_iter(&existing_config);
@@ -669,6 +658,7 @@ pub async fn replace_version(
 }
 
 #[cfg(test)]
+#[allow(clippy::too_many_lines, clippy::unnecessary_wraps)]
 mod tests {
     use crate::{
         config::{
@@ -679,10 +669,8 @@ mod tests {
     };
     use codespan_reporting::diagnostic::Diagnostic;
     use color_eyre::eyre;
-    use indexmap::IndexMap;
-    use serde_ini_spanned::{self as ini, value::Options};
-    use std::io::Read;
-    use std::path::PathBuf;
+
+    use serde_ini_spanned::value::Options;
 
     fn parse_ini(
         config: &str,
@@ -701,9 +689,9 @@ mod tests {
             diagnostics.extend(err.to_diagnostics(file_id));
         }
         for diagnostic in &diagnostics {
-            printer.emit(diagnostic);
+            printer.emit(diagnostic).expect("emit diagnostics");
         }
-        printer.print();
+        printer.print().expect("print diagnostics");
         (config, file_id, diagnostics)
     }
 

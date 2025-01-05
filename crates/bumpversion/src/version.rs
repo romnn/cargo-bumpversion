@@ -1,6 +1,5 @@
 use crate::{
-    config::{self, VersionComponentConfigs, VersionComponentSpec},
-    context,
+    config::{self, VersionComponentSpec},
     f_string::PythonFormatString,
 };
 use indexmap::IndexMap;
@@ -90,7 +89,6 @@ pub mod numeric {
         pub fn new(first_value: Option<&str>, optional_value: Option<&str>) -> Result<Self, Error> {
             // pub fn new(first_value: Option<usize>, optional_value: Option<usize>) -> Self {
             let first_value = first_value
-                .as_deref()
                 .map(|value| {
                     value.parse().map_err(|source| Error::InvalidNumber {
                         source,
@@ -101,7 +99,6 @@ pub mod numeric {
                 .unwrap_or(0);
 
             let optional_value = optional_value
-                .as_deref()
                 .map(|value| {
                     value.parse().map_err(|source| Error::InvalidNumber {
                         source,
@@ -177,7 +174,7 @@ pub mod numeric {
 ///
 /// Determines how the component behaves when increased or reset
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct VersionComponent {
+pub struct Component {
     // value: String,
     value: Option<String>,
     spec: VersionComponentSpec,
@@ -199,7 +196,7 @@ pub struct VersionComponent {
 
 // self.func = ValuesFunction(str_values, str_optional_value, str_first_value)
 
-impl AsRef<str> for VersionComponent {
+impl AsRef<str> for Component {
     fn as_ref(&self) -> &str {
         self.value().unwrap_or_default()
     }
@@ -213,10 +210,7 @@ pub enum BumpError {
     InvalidComponent(String),
 }
 
-// #[derive(thiserror::Error, Debug)]
-// pub enum BumpError { }
-
-impl VersionComponent {
+impl Component {
     #[must_use]
     pub fn new(value: Option<&str>, spec: VersionComponentSpec) -> Self {
         // let func = ValuesFunction {
@@ -254,7 +248,14 @@ impl VersionComponent {
 
     /// Return a part with bumped value.
     pub fn bump(&self) -> Result<Self, BumpError> {
-        let value = if !self.spec.values.is_empty() {
+        let value = if self.spec.values.is_empty() {
+            // numeric
+            let func = numeric::NumericFunction::new(
+                self.spec.first_value.as_deref(),
+                self.spec.optional_value.as_deref(),
+            )?;
+            func.bump(self.value.as_deref().unwrap_or("0"))
+        } else {
             todo!("value bump function");
             // let func = ValuesFunction {
             //     values: self.spec.values.as_slice(),
@@ -264,13 +265,6 @@ impl VersionComponent {
             //     .as_deref()
             //     .unwrap_or(self.spec.values[0].as_str());
             // func.bump(value).map(ToString::to_string)
-        } else {
-            // numeric
-            let func = numeric::NumericFunction::new(
-                self.spec.first_value.as_deref(),
-                self.spec.optional_value.as_deref(),
-            )?;
-            func.bump(self.value.as_deref().unwrap_or("0"))
         }?;
         Ok(Self {
             value: Some(value),
@@ -288,7 +282,7 @@ impl VersionComponent {
 
 #[derive(Debug, Clone)]
 pub struct Version {
-    components: IndexMap<String, VersionComponent>,
+    components: IndexMap<String, Component>,
     spec: VersionSpec,
 }
 
@@ -297,6 +291,22 @@ impl std::fmt::Display for Version {
         f.debug_map()
             .entries(self.components.iter().map(|(k, v)| (k, v.value())))
             .finish()
+    }
+}
+
+impl IntoIterator for Version {
+    type Item = (String, Component);
+    type IntoIter = indexmap::map::IntoIter<String, Component>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.components.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a Version {
+    type Item = (&'a String, &'a Component);
+    type IntoIter = indexmap::map::Iter<'a, String, Component>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
     }
 }
 
@@ -316,20 +326,14 @@ impl Version {
 
     // Return the values of the parts
     #[must_use]
-    pub fn into_iter(self) -> indexmap::map::IntoIter<String, VersionComponent> {
-        self.components.into_iter()
-    }
-
-    // Return the values of the parts
-    #[must_use]
-    pub fn iter(&self) -> indexmap::map::Iter<String, VersionComponent> {
+    pub fn iter(&self) -> indexmap::map::Iter<String, Component> {
         self.components.iter()
     }
 
     // Return the names of the parts that are required
     pub fn required_component_names(&self) -> impl Iterator<Item = &str> {
         self.iter()
-            .filter(|(k, v)| v.value() != v.spec.optional_value.as_deref())
+            .filter(|(_, v)| v.value() != v.spec.optional_value.as_deref())
             .map(|(k, _)| k.as_str())
     }
 
@@ -343,7 +347,7 @@ impl Version {
     }
 
     /// Increase the values of the components that always increment
-    fn increment_always_incr(&self) -> Result<HashMap<&str, VersionComponent>, BumpError> {
+    fn increment_always_incr(&self) -> Result<HashMap<&str, Component>, BumpError> {
         let components = self
             .spec
             .components_to_always_increment
@@ -358,9 +362,7 @@ impl Version {
     }
 
     /// Return the components that always increment and their dependents
-    fn always_increment(
-        &self,
-    ) -> Result<(HashMap<&str, VersionComponent>, HashSet<&str>), BumpError> {
+    fn always_increment(&self) -> Result<(HashMap<&str, Component>, HashSet<&str>), BumpError> {
         let values = self.increment_always_incr()?;
         let mut dependents = self.always_incr_dependencies();
         for (comp_name, value) in &values {
@@ -377,7 +379,7 @@ impl Version {
     /// This will reset its dependents, and return a new `Version`.
     pub fn bump(&self, component: &str) -> Result<Self, BumpError> {
         if !self.components.contains_key(component) {
-            return Err(BumpError::InvalidComponent(component.to_string()).into());
+            return Err(BumpError::InvalidComponent(component.to_string()));
         }
 
         let mut new_components = self.components.clone();
@@ -417,6 +419,7 @@ impl Version {
 
 /// The specification of a version's components and their relationships
 #[derive(Debug, Clone, Default)]
+#[allow(clippy::module_name_repetitions)]
 pub struct VersionSpec {
     components: config::VersionComponentConfigs,
     dependency_map: HashMap<String, Vec<String>>,
@@ -424,6 +427,7 @@ pub struct VersionSpec {
 }
 
 impl VersionSpec {
+    #[must_use]
     pub fn from_components(components: config::VersionComponentConfigs) -> Self {
         let mut dependency_map: HashMap<String, Vec<String>> = HashMap::new();
         // let mut previous_component: &String = components
@@ -478,12 +482,13 @@ impl VersionSpec {
     #[must_use]
     pub fn dependents(&self, comp_name: &str) -> HashSet<&str> {
         use std::collections::VecDeque;
-        let mut stack = VecDeque::from_iter(
-            self.dependency_map
-                .get(comp_name)
-                .map(|deps| deps.iter())
-                .unwrap_or_default(),
-        );
+        let mut stack: VecDeque<&String> = self
+            .dependency_map
+            .get(comp_name)
+            .map(|deps| deps.iter())
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
         let mut visited: HashSet<&str> = HashSet::new();
 
         while let Some(e) = stack.pop_front() {
@@ -510,7 +515,7 @@ impl VersionSpec {
             .iter()
             .map(|(comp_name, comp_config)| {
                 let comp_value = raw_components.get(comp_name.as_str()).copied();
-                let component = VersionComponent::new(comp_value, comp_config.clone());
+                let component = Component::new(comp_value, comp_config.clone());
                 (comp_name.to_string(), component)
             })
             .collect();
@@ -530,14 +535,7 @@ pub enum SerializeError {
         // could not find a valid serialization format in {patterns:?} for {version:?}"
     },
     #[error(transparent)]
-    MissingArgumnet(#[from] crate::f_string::MissingArgumentError),
-    // #[error(transparent)]
-    // FormatString(#[from] crate::f_string::Error),
-    // FormatString {
-    //     version: String,
-    //     #[source]
-    //     source: crate::f_string::Error,
-    // }),
+    MissingArgument(#[from] crate::f_string::MissingArgumentError),
 }
 
 /// Attempts to serialize a version with the given serialization format.
@@ -569,8 +567,6 @@ where
     // TODO(roman): could also avoid allocation of indices when using stable sort?
     let mut patterns: Vec<(usize, &'a PythonFormatString)> =
         serialize_patterns.into_iter().enumerate().collect();
-    // .map(|(idx, pattern)| PythonFormatString::parse(pattern.as_ref()).map(|f| (idx, f)))
-    // .collect::<Result<_, _>>()?;
 
     patterns.sort_by_key(|(idx, pattern)| {
         let labels: HashSet<&str> = pattern.named_arguments().collect();
@@ -627,6 +623,7 @@ fn parse_raw_version<'a>(version: &'a str, pattern: &'a regex::Regex) -> RawVers
 }
 
 /// Parse a version string into a Version object.
+#[must_use]
 pub fn parse_version(
     value: &str,
     regex: &regex::Regex,

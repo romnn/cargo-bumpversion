@@ -11,7 +11,7 @@ impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::String(s) => write!(f, "{s}"),
-            Self::Argument(arg) => write!(f, r#"{{arg}}"#),
+            Self::Argument(arg) => write!(f, "{{{arg}}}"),
         }
     }
 }
@@ -41,12 +41,12 @@ impl<'a> From<parser::Value<'a>> for Value {
 }
 
 pub mod parser {
-    use winnow::ascii::{alpha1, alphanumeric1, digit0, digit1, escaped_transform};
-    use winnow::combinator::{alt, cut_err, delimited, eof, opt, permutation, repeat, seq};
-    use winnow::error::{ErrMode, ErrorKind, InputError, ParserError};
+    
+    use winnow::combinator::{alt, delimited, repeat};
+    use winnow::error::InputError;
     use winnow::prelude::*;
-    use winnow::stream::AsChar;
-    use winnow::token::{any, none_of, one_of, take_while};
+    
+    use winnow::token::take_while;
 
     #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub enum Value<'a> {
@@ -128,7 +128,7 @@ pub mod parser {
         use super::*;
         use color_eyre::eyre;
         use similar_asserts::assert_eq as sim_assert_eq;
-        use winnow::{ascii::alphanumeric1, error::ParseError, token::any};
+        
 
         #[test]
         fn parses_complex_arguments() -> eyre::Result<()> {
@@ -473,6 +473,15 @@ mod tests {
             ),
             Err(super::MissingArgumentError("$value1".to_string())),
         );
+        Ok(())
+    }
+
+    #[test]
+    fn f_string_display() -> eyre::Result<()> {
+        crate::tests::init();
+        let raw_fstring = "this is a formatted {$value1}, and {another1}!";
+        let fstring = PythonFormatString::parse(raw_fstring)?;
+        sim_assert_eq!(&fstring.to_string(), raw_fstring);
         Ok(())
     }
 }

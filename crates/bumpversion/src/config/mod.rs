@@ -3,13 +3,10 @@ pub mod pyproject_toml;
 pub mod toml;
 
 use crate::{
-    diagnostics::{DiagnosticExt, FileId, Printer, Span, Spanned},
-    f_string::{MissingArgumentError, PythonFormatString, Value},
+    f_string::{MissingArgumentError, PythonFormatString},
     files::IoError,
 };
-use codespan_reporting::diagnostic::{Diagnostic, Label};
 use indexmap::IndexMap;
-use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -23,12 +20,6 @@ pub enum Error {
         #[source]
         source: pyproject_toml::ParseError,
     },
-    // #[error("failed to parse {path:?}")]
-    // PyProject {
-    //     path: PathBuf,
-    //     #[source]
-    //     source: pyproject_toml::ParseError,
-    // },
     #[error("failed to parse {path:?}")]
     Ini {
         path: PathBuf,
@@ -41,19 +32,11 @@ pub enum Error {
         // #[source]
         // source: ini::ParseError,
     },
+    #[error("failed to join spawned task")]
+    Join(#[from] tokio::task::JoinError),
+    #[error(transparent)]
+    Diagnostics(#[from] crate::diagnostics::Error),
 }
-
-// #[derive(thiserror::Error, Debug)]
-// pub enum ParseError {
-//     #[error("failed to read config: {0}")]
-//     Io(#[from] std::io::Error),
-//
-//     #[error("invalid integer: {0}")]
-//     BadInt(#[from] std::num::TryFromIntError),
-//
-//     #[error("{0}")]
-//     Unknown(String),
-// }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ConfigFile {
@@ -91,31 +74,6 @@ pub fn config_file_locations(dir: &Path) -> impl Iterator<Item = ConfigFile> + u
         ConfigFile::CargoToml(dir.join("Cargo.toml")),
     ]
     .into_iter()
-}
-
-// impl From<String> for ParseError {
-//     fn from(message: String) -> Self {
-//         Self::Unknown(message)
-//     }
-// }
-
-fn deserialize_python_bool<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
-where
-    D: serde::de::Deserializer<'de>,
-{
-    let s: Option<String> = serde::de::Deserialize::deserialize(deserializer).ok();
-    let Some(s) = s else {
-        return Ok(None);
-    };
-    match s.as_str() {
-        "" => Ok(None),
-        "True" | "true" => Ok(Some(true)),
-        "False" | "false" => Ok(Some(false)),
-        _ => Err(serde::de::Error::unknown_variant(
-            &s,
-            &["True", "true", "False", "false"],
-        )),
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -156,7 +114,7 @@ impl Eq for Regex {}
 
 impl std::hash::Hash for Regex {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.0.as_str().hash(state)
+        self.0.as_str().hash(state);
     }
 }
 
@@ -181,10 +139,12 @@ pub enum RegexTemplate {
 }
 
 impl RegexTemplate {
+    #[must_use]
     pub fn is_regex(&self) -> bool {
         matches!(self, Self::Regex(_))
     }
 
+    #[must_use]
     pub fn is_escaped(&self) -> bool {
         matches!(self, Self::Escaped(_))
     }
@@ -205,8 +165,8 @@ impl RegexTemplate {
                     .iter()
                     .map(|(k, v)| (k.borrow(), regex::escape(v.as_ref())))
                     .collect();
-                let raw_pattern = format_string.format(&escaped_values, strict)?;
-                raw_pattern
+
+                format_string.format(&escaped_values, strict)?
             }
             Self::Escaped(format_string) => {
                 let raw_pattern = format_string.format(values, strict)?;
@@ -677,7 +637,7 @@ pub fn version_component_configs(config: &Config) -> VersionComponentConfigs {
 
 #[cfg(test)]
 mod tests {
-    use super::{Config, FileConfig, GlobalConfig, VersionComponentConfigs, VersionComponentSpec};
+    use super::{Config, GlobalConfig, VersionComponentConfigs, VersionComponentSpec};
     use color_eyre::eyre;
     use indexmap::IndexMap;
     use similar_asserts::assert_eq as sim_assert_eq;

@@ -46,26 +46,6 @@ where
     }
 }
 
-// impl<T> std::ops::Deref for &&Spanned<T>
-// where
-//     T: std::ops::Deref,
-// {
-//     type Target = <T as std::ops::Deref>::Target;
-//
-//     fn deref(&self) -> &Self::Target {
-//         // use std:ops::Deref;
-//         self.as_ref().deref()
-//         // &self.inner.deref()
-//     }
-// }
-
-// impl std::ops::Deref for Spanned<String> {
-//     type Target = str;
-//     fn deref(&self) -> &Self::Target {
-//         &self.inner
-//     }
-// }
-
 impl<T> AsRef<T> for Spanned<T> {
     fn as_ref(&self) -> &T {
         &self.inner

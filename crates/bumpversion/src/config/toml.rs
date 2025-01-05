@@ -1,18 +1,16 @@
 #[cfg(test)]
+#[allow(clippy::too_many_lines, clippy::unnecessary_wraps)]
 mod tests {
     use crate::{
         config::{
             pyproject_toml::tests::parse_toml, Config, FileConfig, GlobalConfig, InputFile,
             RegexTemplate, VersionComponentSpec,
         },
-        diagnostics::{Printer, ToDiagnostics},
+        diagnostics::Printer,
         f_string::{PythonFormatString, Value},
     };
-    use codespan_reporting::diagnostic;
+
     use color_eyre::eyre;
-    use indexmap::IndexMap;
-    use std::io::Read;
-    use std::path::PathBuf;
 
     #[test]
     fn test_invalid_bumpversion_toml() -> eyre::Result<()> {
@@ -34,7 +32,7 @@ mod tests {
         "};
 
         let printer = Printer::default();
-        let (config, file_id, diagnostics) = parse_toml(bumpversion_toml, &printer);
+        let (config, _file_id, diagnostics) = parse_toml(bumpversion_toml, &printer);
         let err = config.unwrap_err();
         similar_asserts::assert_eq!(&err.to_string(), "expected newline, found a period");
         similar_asserts::assert_eq!(printer.lines(&diagnostics[0]).ok(), Some(vec![1]));
@@ -662,7 +660,7 @@ mod tests {
                 FileConfig {
                     search: Some(RegexTemplate::Regex(
                         [Value::String(
-                            r#"date-released: \d{4}-\d{2}-\d{2}"#.to_string(),
+                            r"date-released: \d{4}-\d{2}-\d{2}".to_string(),
                         )]
                         .into_iter()
                         .collect(),

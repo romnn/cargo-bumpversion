@@ -46,6 +46,14 @@ tasks:
     cmds:
       - cargo clean {{.CLI_ARGS}}
 
+  docs:
+    desc: "open documentation preview"
+    env:
+      RUSTDOCFLAGS: "--cfg docsrs"
+    cmds:
+      - cargo +nightly watchdoc {{.CLI_ARGS}}
+      # - cargo +nightly doc --all-features {{.CLI_ARGS}}
+
   outdated:
     desc: "check for outdated cargo workspace dependencies"
     cmds:
@@ -84,7 +92,8 @@ tasks:
       - >-
         cargo clippy
         --tests --benches --examples --all-features
-        -- -Dclippy::all -Dclippy::pedantic {{.CLI_ARGS}}
+        {{.CLI_ARGS}}
+        -- -Dclippy::all -Dclippy::pedantic
 
   lint:fc:
     desc: "lint cargo workspace for feature combinations"
@@ -93,7 +102,8 @@ tasks:
       - >-
         cargo fc clippy
         --tests --benches --examples --all-features
-        -- -Dclippy::all -Dclippy::pedantic {{.CLI_ARGS}}
+        {{.CLI_ARGS}}
+        -- -Dclippy::all -Dclippy::pedantic
 
   lint:fix:
     desc: "lint and fix cargo workspace"
@@ -104,4 +114,5 @@ tasks:
         cargo clippy
         --fix --allow-dirty --allow-staged
         --tests --benches --examples --all-features
-        -- -Dclippy::all -Dclippy::pedantic {{.CLI_ARGS}}
+        {{.CLI_ARGS}}
+        -- -Dclippy::all -Dclippy::pedantic

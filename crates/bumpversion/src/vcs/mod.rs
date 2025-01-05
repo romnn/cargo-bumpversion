@@ -4,18 +4,25 @@ pub mod git;
 pub mod temp;
 
 use crate::f_string::PythonFormatString;
-use std::collections::HashMap;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 
+/// Info on the latest tag of the VCS.
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TagInfo {
+    /// Whether the repository contains dirty files
     pub dirty: bool,
+    /// The current commit SHA hash.
     pub commit_sha: String,
+    /// The distance to the latest tag.
     pub distance_to_latest_tag: usize,
+    /// The current tag.
     pub current_tag: String,
+    /// The current version.
     pub current_version: String,
 }
 
+/// Info on the latest revision of the VCS.
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RevisionInfo {
     /// The name of the current branch.
@@ -24,17 +31,19 @@ pub struct RevisionInfo {
     ///
     /// Consists of 20 lowercase characters of the branch name with special characters removed.
     pub short_branch_name: String,
-    /// The root directory of the Git repository.
+    /// The root directory of the repository.
     pub repository_root: PathBuf,
 }
 
+/// Wrapper that contains both the current tag and the latest revision of the repository.
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TagAndRevision {
+    /// The current tag information.
     pub tag: Option<TagInfo>,
+    /// The latest revision.
     pub revision: Option<RevisionInfo>,
 }
 
-// #[async_trait::async_trait]
 pub trait VersionControlSystem {
     type Error: std::error::Error + Send + Sync + 'static;
 
@@ -47,17 +56,15 @@ pub trait VersionControlSystem {
     fn path(&self) -> &Path;
 
     /// Add files to the staging area of the VCS.
-    async fn add(&self, files: &[impl AsRef<Path>]) -> Result<(), Self::Error>;
+    fn add(&self, files: &[impl AsRef<Path>]) -> impl Future<Output = Result<(), Self::Error>>;
 
     /// Commit current changes to the VCS.
-    async fn commit<A, E, AS, EK, EV>(
+    fn commit<A, E, AS, EK, EV>(
         &self,
         message: &str,
-        // extra_args: Option<impl IntoIterator<Item = S>>,
         extra_args: A,
-        // env: &HashMap<&str, &str>,
         env: E,
-    ) -> Result<(), Self::Error>
+    ) -> impl Future<Output = Result<(), Self::Error>>
     where
         A: IntoIterator<Item = AS>,
         E: IntoIterator<Item = (EK, EV)>,
@@ -66,19 +73,23 @@ pub trait VersionControlSystem {
         EV: AsRef<std::ffi::OsStr>;
 
     /// Create a new tag for the VCS.
-    async fn tag(&self, name: &str, message: Option<&str>, sign: bool) -> Result<(), Self::Error>;
+    fn tag(
+        &self,
+        name: &str,
+        message: Option<&str>,
+        sign: bool,
+    ) -> impl Future<Output = Result<(), Self::Error>>;
 
     /// Get all tags for the VCS
-    async fn tags(&self) -> Result<Vec<String>, Self::Error>;
+    fn tags(&self) -> impl Future<Output = Result<Vec<String>, Self::Error>>;
 
     /// Get the list of dirty files in the VCS.
-    async fn dirty_files(&self) -> Result<Vec<PathBuf>, Self::Error>;
+    fn dirty_files(&self) -> impl Future<Output = Result<Vec<PathBuf>, Self::Error>>;
 
     /// Get the information on the latest tag and revision for the VCS.
-    async fn latest_tag_and_revision(
+    fn latest_tag_and_revision(
         &self,
         tag_name: &PythonFormatString,
         parse_version_regex: &regex::Regex,
-        // parse_pattern: &str,
-    ) -> Result<TagAndRevision, Self::Error>;
+    ) -> impl Future<Output = Result<TagAndRevision, Self::Error>>;
 }

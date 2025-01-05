@@ -1,7 +1,6 @@
 use crate::{command::run_command, vcs::VersionControlSystem};
 use async_process::Command;
 use color_eyre::eyre;
-use std::io::Write;
 use std::path::Path;
 use tempfile::TempDir;
 
@@ -14,20 +13,29 @@ fn random_string_of_length(length: usize) -> String {
         .collect()
 }
 
-pub struct GitRepository<VCS> {
+/// An ephemeral repository that wraps a VCS.
+///
+/// Used for testing purposes.
+pub(crate) struct EphemeralRepository<VCS> {
     inner: VCS,
     dir: TempDir,
 }
 
-impl<VCS> GitRepository<VCS>
+impl<VCS> EphemeralRepository<VCS> {
+    pub(crate) fn path(&self) -> &Path {
+        self.dir.path()
+    }
+}
+
+impl<VCS> EphemeralRepository<VCS>
 where
     VCS: VersionControlSystem,
 {
-    pub async fn new() -> eyre::Result<Self> {
+    pub(crate) async fn new() -> eyre::Result<Self> {
         Self::with_name(&random_string_of_length(10)).await
     }
 
-    pub async fn with_name(name: &str) -> eyre::Result<Self> {
+    pub(crate) async fn with_name(name: &str) -> eyre::Result<Self> {
         let dir = TempDir::with_prefix(name)?;
         Self::init(dir.path()).await?;
         let inner = VCS::open(dir.path())?;
@@ -56,8 +64,8 @@ where
     }
 }
 
-impl<Repo> std::ops::Deref for GitRepository<Repo> {
-    type Target = Repo;
+impl<VCS> std::ops::Deref for EphemeralRepository<VCS> {
+    type Target = VCS;
 
     fn deref(&self) -> &Self::Target {
         &self.inner

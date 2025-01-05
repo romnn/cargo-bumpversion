@@ -1,5 +1,5 @@
 use clap::Parser;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub trait Invert {
     fn invert(self) -> Self;
@@ -29,6 +29,31 @@ impl AsRef<str> for BumpCommand {
             BumpCommand::Patch => "patch",
         }
     }
+}
+
+/// Logging flags to `#[command(flatten)]` into your CLI
+#[derive(clap::Args, Debug, Clone, Copy, Default)]
+pub struct Verbosity {
+    #[arg(
+        long,
+        short = 'v',
+        action = clap::ArgAction::Count,
+        global = true,
+        help = "Increase logging verbosity",
+        long_help = None,
+    )]
+    pub verbose: u8,
+
+    #[arg(
+        long,
+        short = 'q',
+        action = clap::ArgAction::Count,
+        global = true,
+        help = "Decrease logging verbosity",
+        long_help = None,
+        conflicts_with = "verbose",
+    )]
+    pub quiet: u8,
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -61,7 +86,7 @@ pub struct Options {
     pub color_choice: Option<termcolor::ColorChoice>,
 
     #[command(flatten)]
-    pub verbosity: clap_verbosity_flag::Verbosity,
+    pub verbosity: Verbosity,
 
     #[arg(
         long = "log",

@@ -1,4 +1,4 @@
-#![allow(warnings)]
+// #![allow(warnings)]
 
 pub mod diagnostics;
 pub mod lines;
@@ -6,14 +6,13 @@ pub mod parse;
 pub mod spanned;
 pub mod value;
 
-pub use parse::Error;
-pub use spanned::{Span, Spanned};
-pub use value::{from_reader, from_str, Section, SectionProxy, SectionProxyMut, Value};
+pub use parse::{Config as ParseConfig, Error};
+pub use spanned::{DerefInner, Span, Spanned};
+pub use value::{from_reader, from_str, Options, Section, SectionProxy, SectionProxyMut, Value};
 
 #[cfg(test)]
 pub mod tests {
     use crate::{
-        diagnostics,
         value::{Options, Value},
         SectionProxy, Spanned,
     };
@@ -38,7 +37,7 @@ pub mod tests {
         }
     }
 
-    pub trait SectionProxyExt<'a> {
+    pub(crate) trait SectionProxyExt<'a> {
         fn items_vec(self) -> Vec<(&'a str, &'a str)>;
         fn keys_vec(self) -> Vec<&'a str>;
     }
@@ -57,7 +56,7 @@ pub mod tests {
         }
     }
 
-    // this makes writing tests quick and concise but is confusing if included in the library
+    // this makes writing tests quick and concise but may be confusing if it was included in the library
     impl From<String> for Spanned<String> {
         fn from(value: String) -> Self {
             Spanned::dummy(value)
@@ -65,7 +64,7 @@ pub mod tests {
     }
 
     #[derive(Debug)]
-    pub struct Printer {
+    pub(crate) struct Printer {
         writer: Mutex<term::termcolor::Buffer>,
         diagnostic_config: term::Config,
         files: RwLock<files::SimpleFiles<String, String>>,
@@ -73,13 +72,13 @@ pub mod tests {
 
     impl Default for Printer {
         fn default() -> Self {
-            Self::new(term::termcolor::ColorChoice::Auto)
+            Self::new()
         }
     }
 
     impl Printer {
-        #[must_use] pub fn new(color_choice: term::termcolor::ColorChoice) -> Self {
-            use term::termcolor::WriteColor;
+        #[must_use]
+        pub(crate) fn new() -> Self {
             let writer = term::termcolor::Buffer::ansi();
             let diagnostic_config = term::Config {
                 styles: term::Styles::with_blue(term::termcolor::Color::Blue),
@@ -92,12 +91,12 @@ pub mod tests {
             }
         }
 
-        pub fn add_source_file(&self, name: String, source: String) -> usize {
+        pub(crate) fn add_source_file(&self, name: String, source: String) -> usize {
             let mut files = self.files.write().unwrap();
             files.add(name, source)
         }
 
-        pub fn emit(&self, diagnostic: &Diagnostic<usize>) -> Result<(), files::Error> {
+        pub(crate) fn emit(&self, diagnostic: &Diagnostic<usize>) -> Result<(), files::Error> {
             term::emit(
                 &mut *self.writer.lock().unwrap(),
                 &self.diagnostic_config,
@@ -109,15 +108,16 @@ pub mod tests {
         /// Print written diagnostics to stderr.
         ///
         /// This is a workaround for <https://github.com/BurntSushi/termcolor/issues/51>.
-        pub fn print(&self) {
+        pub(crate) fn print(&self) {
             use std::io::Write;
             let mut writer = self.writer.lock().unwrap();
-            writer.flush();
+            let _ = writer.flush();
             eprintln!("{}", String::from_utf8_lossy(writer.as_slice()));
         }
     }
 
-    pub fn parse(
+    /// Parse an INI string and print diagnostics.
+    pub(crate) fn parse(
         config: &str,
         options: Options,
         printer: &Printer,
@@ -129,7 +129,7 @@ pub mod tests {
             diagnostics.extend(err.to_diagnostics(file_id));
         }
         for diagnostic in &diagnostics {
-            printer.emit(diagnostic);
+            printer.emit(diagnostic).expect("emit diagnostic");
         }
         printer.print();
         (config, file_id, diagnostics)

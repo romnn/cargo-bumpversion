@@ -3,8 +3,7 @@ use crate::{
     f_string::{PythonFormatString, Value},
     vcs::{RevisionInfo, TagAndRevision, TagInfo, VersionControlSystem},
 };
-use async_process::{Command, Output, Stdio};
-use std::collections::HashMap;
+use async_process::Command;
 use std::path::{Path, PathBuf};
 
 #[derive(thiserror::Error, Debug)]
@@ -51,6 +50,7 @@ pub enum InvalidTagError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[allow(clippy::module_name_repetitions)]
 pub struct GitRepository {
     path: PathBuf,
 }
@@ -76,24 +76,32 @@ fn extract_regex_flags(pattern: &str) -> (&str, &str) {
 }
 
 /// Return the version from a tag
-pub fn get_version_from_tag<'a>(
+///
+/// # Errors
+/// - When the given `parse_version_regex` cannot be transformed to extract the
+///   current version from the git tag
+fn get_version_from_tag<'a>(
     tag: &'a str,
     tag_name: &PythonFormatString,
     parse_version_regex: &regex::Regex,
-) -> Result<Option<&'a str>, Error> {
+) -> Result<Option<&'a str>, regex::Error> {
     let parse_pattern = parse_version_regex.as_str();
     let version_pattern = parse_pattern.replace("\\\\", "\\");
     let (version_pattern, regex_flags) = extract_regex_flags(&version_pattern);
+    // dbg!(&version_pattern, &regex_flags);
     let PythonFormatString(values) = tag_name;
+    // dbg!(&values);
     let (prefix, suffix) = values
         .iter()
         .position(|value| value == &Value::Argument("new_version".to_string()))
         .map(|idx| {
             let prefix = &values[..idx];
-            let suffix = &values[idx..];
+            let suffix = &values[(idx + 1)..];
             (prefix, suffix)
         })
         .unwrap_or_default();
+
+    // dbg!(&prefix, &suffix);
 
     let prefix = prefix.iter().fold(String::new(), |mut acc, value| {
         acc.push_str(&value.to_string());
@@ -103,6 +111,8 @@ pub fn get_version_from_tag<'a>(
         acc.push_str(&value.to_string());
         acc
     });
+
+    // dbg!(&prefix, &suffix);
 
     let pattern = format!(
         "{regex_flags}{}(?P<current_version>{version_pattern}){}",
@@ -162,7 +172,6 @@ impl GitRepository {
         &self,
         tag_name: &PythonFormatString,
         parse_version_regex: &regex::Regex,
-        // parse_pattern: &str,
     ) -> Result<Option<TagInfo>, Error> {
         let tag_pattern = tag_name
             .format(&[("new_version", "*")].into_iter().collect(), true)
@@ -201,7 +210,7 @@ impl GitRepository {
                 let commit_sha = tag_parts
                     .pop()
                     .ok_or_else(|| InvalidTagError::MissingCommitSha(raw_tag.clone()))?
-                    .trim_left_matches("g")
+                    .trim_start_matches('g')
                     .to_string();
 
                 let distance_to_latest_tag = tag_parts
@@ -214,7 +223,7 @@ impl GitRepository {
                     })?;
                 let current_tag = tag_parts.join("-");
                 let version = get_version_from_tag(&current_tag, tag_name, parse_version_regex)?;
-                let current_numeric_version = current_tag.trim_left_matches("v").to_string();
+                let current_numeric_version = current_tag.trim_start_matches('v').to_string();
                 let current_version = version
                     .unwrap_or(current_numeric_version.as_str())
                     .to_string();
@@ -364,7 +373,6 @@ impl VersionControlSystem for GitRepository {
     async fn latest_tag_and_revision(
         &self,
         tag_name: &PythonFormatString,
-        // parse_pattern: &str,
         parse_version_regex: &regex::Regex,
     ) -> Result<TagAndRevision, Error> {
         let mut cmd = Command::new("git");
@@ -385,21 +393,35 @@ impl VersionControlSystem for GitRepository {
 mod tests {
     use crate::{
         command::run_command,
+        f_string::PythonFormatString,
         tests::sim_assert_eq_sorted,
-        vcs::{git, temp, VersionControlSystem},
+        vcs::{git, temp::EphemeralRepository, VersionControlSystem},
     };
     use async_process::Command;
     use color_eyre::eyre;
-    use regex::Regex;
-    use std::collections::HashMap;
+
+    use similar_asserts::assert_eq as sim_assert_eq;
+
     use std::io::Write;
-    use std::path::{Path, PathBuf};
-    use tempfile::TempDir;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_get_version_from_tag() -> eyre::Result<()> {
+        crate::tests::init();
+        let regex_pattern =
+            regex::RegexBuilder::new(r"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)").build()?;
+        let tag_name = PythonFormatString::parse("v{new_version}")?;
+        let version = super::get_version_from_tag("v2.1.4", &tag_name, &regex_pattern)?;
+        dbg!(&version);
+        sim_assert_eq!(version, Some("2.1.4"));
+        Ok(())
+    }
 
     #[ignore = "wip"]
     #[tokio::test]
     async fn test_create_empty_git_repo() -> eyre::Result<()> {
-        let repo: temp::GitRepository<git::GitRepository> = temp::GitRepository::new().await?;
+        crate::tests::init();
+        let repo: EphemeralRepository<git::GitRepository> = EphemeralRepository::new().await?;
         let status = run_command(
             Command::new("git")
                 .args(["status"])
@@ -413,7 +435,8 @@ mod tests {
     #[ignore = "wip"]
     #[tokio::test]
     async fn test_tag() -> eyre::Result<()> {
-        let repo: temp::GitRepository<git::GitRepository> = temp::GitRepository::new().await?;
+        crate::tests::init();
+        let repo: EphemeralRepository<git::GitRepository> = EphemeralRepository::new().await?;
         let tags = vec![
             None,
             Some(("tag1", Some("tag1 message"))),
@@ -444,7 +467,8 @@ mod tests {
     #[ignore = "wip"]
     #[tokio::test]
     async fn test_dirty_tree() -> eyre::Result<()> {
-        let repo: temp::GitRepository<git::GitRepository> = temp::GitRepository::new().await?;
+        crate::tests::init();
+        let repo: EphemeralRepository<git::GitRepository> = EphemeralRepository::new().await?;
         similar_asserts::assert_eq!(repo.dirty_files().await?.len(), 0);
 
         // add some dirty files
@@ -456,7 +480,7 @@ mod tests {
         for dirty_file in &dirty_files {
             use tokio::io::AsyncWriteExt;
             if let Some(parent) = dirty_file.parent() {
-                tokio::fs::create_dir_all(parent);
+                tokio::fs::create_dir_all(parent).await?;
             }
             let file = tokio::fs::OpenOptions::new()
                 .create(true)
@@ -470,11 +494,11 @@ mod tests {
         similar_asserts::assert_eq!(repo.dirty_files().await?.len(), 0);
 
         // track first file
-        repo.add(&dirty_files[0..1]);
+        repo.add(&dirty_files[0..1]).await?;
         sim_assert_eq_sorted!(repo.dirty_files().await?, dirty_files[0..1]);
 
         // track all files
-        repo.add(&dirty_files);
+        repo.add(&dirty_files).await?;
         sim_assert_eq_sorted!(repo.dirty_files().await?, dirty_files);
         Ok(())
     }

@@ -1,5 +1,4 @@
 #![forbid(unsafe_code)]
-#![allow(warnings)]
 
 mod logging;
 mod options;

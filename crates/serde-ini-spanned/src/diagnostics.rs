@@ -1,7 +1,4 @@
-use codespan_reporting::{
-    diagnostic::{self, Diagnostic, Label, Severity},
-    files, term,
-};
+use codespan_reporting::diagnostic::{Diagnostic, Severity};
 
 pub trait DiagnosticExt {
     fn is_error(&self) -> bool;

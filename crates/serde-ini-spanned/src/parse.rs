@@ -1,7 +1,7 @@
 use crate::spanned::{Span, Spanned};
-use aho_corasick::{AhoCorasick, PatternID};
+use aho_corasick::AhoCorasick;
 use codespan_reporting::diagnostic::{Diagnostic, Label};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 pub const DEFAULT_ASSIGNMENT_DELIMITERS: [&str; 2] = ["=", ":"];
 pub const DEFAULT_COMMENT_PREFIXES: [&str; 2] = [";", "#"];
@@ -44,12 +44,12 @@ pub enum SyntaxError {
 impl std::fmt::Display for SyntaxError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::SectionNotClosed { span } => write!(f, r"section was not closed: missing ']'"),
-            Self::InvalidSectionName { span } => write!(f, r"invalid section name: contains ']'"),
-            Self::EmptyOptionName { span } => write!(f, r"empty option name"),
+            Self::SectionNotClosed { .. } => write!(f, r"section was not closed: missing ']'"),
+            Self::InvalidSectionName { .. } => write!(f, r"invalid section name: contains ']'"),
+            Self::EmptyOptionName { .. } => write!(f, r"empty option name"),
             Self::MissingAssignmentDelimiter {
-                span,
                 assignment_delimiters,
+                ..
             } => write!(
                 f,
                 r"variable assignment missing one of: {}",
@@ -123,11 +123,11 @@ impl Error {
     }
 }
 
-pub trait Parse {
+pub(crate) trait Parse {
     fn parse_next(&mut self, state: &mut ParseState) -> Result<Option<Vec<Spanned<Item>>>, Error>;
 }
 
-pub fn trim_trailing_whitespace(value: &mut String, span: &mut Span) {
+pub(crate) fn trim_trailing_whitespace(value: &mut String, span: &mut Span) {
     let count = value
         .chars()
         .rev()
@@ -140,14 +140,14 @@ pub fn trim_trailing_whitespace(value: &mut String, span: &mut Span) {
 #[must_use]
 pub fn compact_span(line: &str, span: Span) -> Span {
     let Span { mut start, mut end } = span;
-    assert!(start <= end);
+    debug_assert!(start <= end);
 
     start += line[start..]
         .chars()
         .take_while(|c| c.is_whitespace())
         .count();
 
-    assert!(start <= end);
+    debug_assert!(start <= end);
 
     end -= line[start..end]
         .chars()
@@ -155,7 +155,7 @@ pub fn compact_span(line: &str, span: Span) -> Span {
         .take_while(|c| c.is_whitespace())
         .count();
 
-    assert!(start <= end);
+    debug_assert!(start <= end);
     Span { start, end }
 }
 
@@ -185,19 +185,100 @@ impl AddOffset for Span {
 }
 
 #[derive(Debug, Default)]
-pub struct ParseState {
+pub(crate) struct ParseState {
     current_section: HashMap<String, Vec<String>>,
     option_name: Option<String>,
     indent_level: usize,
 }
 
+/// INI parser config.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Config {
-    assignment_delimiters: Vec<&'static str>,
-    comment_prefixes: Vec<&'static str>,
-    inline_comment_prefixes: Vec<&'static str>,
-    empty_lines_in_values: bool,
-    allow_brackets_in_section_name: bool,
+    /// Assignment delimiters that denote assignment.
+    ///
+    /// # Example
+    /// When using "=" as an assignment delimiter, "a = 3" is a valid assignment.
+    /// ```rust
+    /// use serde_ini_spanned::{from_str, Options, ParseConfig, DerefInner};
+    ///
+    /// let ini = indoc::indoc!{r#"
+    ///     [my-section]
+    ///     a = 3
+    /// "#};
+    /// let options = Options{
+    ///     strict: true,
+    ///     parser_config: ParseConfig::default().with_assignment_delimiters(["="]),
+    /// };
+    /// let mut diagnostics = vec![];
+    /// let config = from_str(ini, options, 0, &mut diagnostics)?;
+    /// assert_eq!(config.get("my-section", "a").deref_inner(), Some("3"));
+    /// # Ok::<_, color_eyre::eyre::Report>(())
+    /// ```
+    pub assignment_delimiters: Vec<&'static str>,
+
+    /// Comment prefixes that denote full-line comments.
+    ///
+    /// # Example
+    /// When using "#" as a comment prefix, "# a = 3" is a comment.
+    /// Note that "a = 3 # test" will parse as "3 # test",
+    /// unless "#" is also set in `inline_comment_prefixes`.
+    pub comment_prefixes: Vec<&'static str>,
+
+    /// Comment prefixes that denote inline comments.
+    ///
+    /// # Example
+    /// When using "#" as an inline comment prefix, "a = 3 # test" will parse as a=3.
+    pub inline_comment_prefixes: Vec<&'static str>,
+
+    /// Allow empty lines in values.
+    ///
+    /// ```ini
+    /// value = this value is
+    ///
+    ///     actually still here
+    ///
+    /// next_value = test
+    /// ```
+    pub allow_empty_lines_in_values: bool,
+
+    /// Allow brackets in section name.
+    pub allow_brackets_in_section_name: bool,
+}
+
+impl Config {
+    pub fn with_assignment_delimiters(
+        mut self,
+        delimiters: impl IntoIterator<Item = &'static str>,
+    ) -> Self {
+        self.assignment_delimiters = delimiters.into_iter().collect();
+        self
+    }
+
+    pub fn with_comment_prefixes(
+        mut self,
+        prefixes: impl IntoIterator<Item = &'static str>,
+    ) -> Self {
+        self.comment_prefixes = prefixes.into_iter().collect();
+        self
+    }
+
+    pub fn with_inline_comment_prefixes(
+        mut self,
+        prefixes: impl IntoIterator<Item = &'static str>,
+    ) -> Self {
+        self.inline_comment_prefixes = prefixes.into_iter().collect();
+        self
+    }
+
+    #[must_use] pub fn empty_lines_in_values(mut self, enabled: bool) -> Self {
+        self.allow_empty_lines_in_values = enabled;
+        self
+    }
+
+    #[must_use] pub fn brackets_in_section_names(mut self, enabled: bool) -> Self {
+        self.allow_brackets_in_section_name = enabled;
+        self
+    }
 }
 
 impl Default for Config {
@@ -206,14 +287,14 @@ impl Default for Config {
             assignment_delimiters: DEFAULT_ASSIGNMENT_DELIMITERS.to_vec(),
             comment_prefixes: DEFAULT_COMMENT_PREFIXES.to_vec(),
             inline_comment_prefixes: DEFAULT_INLINE_COMMENT_PREFIXES.to_vec(),
-            empty_lines_in_values: true,
+            allow_empty_lines_in_values: true,
             allow_brackets_in_section_name: true,
         }
     }
 }
 
 #[derive(Debug)]
-pub struct Parser<B> {
+pub(crate) struct Parser<B> {
     config: Config,
     assignment_delimiters: AhoCorasick,
     comment_prefixes: AhoCorasick,
@@ -330,7 +411,7 @@ where
 
             // check if continue
             let mut is_continue = false;
-            if let Some(ref option_name) = state.option_name {
+            if let Some(ref _option_name) = state.option_name {
                 // if true {
                 //     dbg!(
                 //         !state.current_section.is_empty(),
@@ -359,7 +440,7 @@ where
             }
 
             if is_empty {
-                if self.config.empty_lines_in_values {
+                if self.config.allow_empty_lines_in_values {
                     println!("\t=> empty (continuation)");
                     items.push(Spanned::new(
                         to_byte_span(&line, span.clone()).add_offset(offset),
@@ -430,51 +511,52 @@ where
 }
 
 #[cfg(test)]
+#[allow(clippy::too_many_lines, clippy::unnecessary_wraps)]
 mod tests {
-    use crate::parse::{DEFAULT_ASSIGNMENT_DELIMITERS, DEFAULT_COMMENT_PREFIXES};
-    use crate::spanned::{DerefInner, Spanned};
-    use crate::tests::{parse, Printer, SectionProxyExt};
-    use crate::value::{ClearSpans, NoSectionError, Options, RawSection, Section, Value};
+    use crate::{
+        parse::{DEFAULT_ASSIGNMENT_DELIMITERS, DEFAULT_COMMENT_PREFIXES},
+        spanned::{DerefInner, Spanned},
+        tests::{parse, Printer, SectionProxyExt},
+        value::{ClearSpans, NoSectionError, Options, RawSection, Section, Value},
+        ParseConfig,
+    };
     use color_eyre::eyre;
-    use indexmap::map::Keys;
-    use serde::de::Error;
-    use std::string::ParseError;
+    use similar_asserts::assert_eq as sim_assert_eq;
     use unindent::unindent;
 
     #[test]
     fn compact_span() {
         let line = " this is a  test ";
         let span = super::compact_span(line, 0..line.len());
-        similar_asserts::assert_eq!(&line[span], "this is a  test");
+        sim_assert_eq!(&line[span], "this is a  test");
 
         let line = "this is a  test";
         let span = super::compact_span(line, 0..line.len());
-        similar_asserts::assert_eq!(&line[span], "this is a  test");
+        sim_assert_eq!(&line[span], "this is a  test");
 
         let line = "    ";
         let span = super::compact_span(line, 0..line.len());
-        similar_asserts::assert_eq!(&line[span], "");
+        sim_assert_eq!(&line[span], "");
 
         let line = " \n\r   ";
         let span = super::compact_span(line, 0..line.len());
-        similar_asserts::assert_eq!(&line[span], "");
+        sim_assert_eq!(&line[span], "");
 
         let line = "";
         let span = super::compact_span(line, 0..line.len());
-        similar_asserts::assert_eq!(&line[span], "");
+        sim_assert_eq!(&line[span], "");
 
         let line = " ####      ";
         let span = super::compact_span(line, 3..line.len());
-        similar_asserts::assert_eq!(&line[span], "##");
+        sim_assert_eq!(&line[span], "##");
 
         let line = "####      ";
         let span = super::compact_span(line, 4..line.len());
-        similar_asserts::assert_eq!(&line[span], "");
+        sim_assert_eq!(&line[span], "");
     }
 
     #[test]
     fn parse_simple_ini() -> eyre::Result<()> {
-        use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
 
         let config = indoc::indoc! {r"
@@ -544,7 +626,6 @@ mod tests {
     }
 
     fn check_configparser_compat_basic(have: &mut Value) -> eyre::Result<()> {
-        use similar_asserts::assert_eq as sim_assert_eq;
         let expected_section_names = [
             "Foo Bar",
             "Spacey Bar",
@@ -983,7 +1064,6 @@ mod tests {
 
     #[test]
     fn configparser_compat_case_sensitivity() -> eyre::Result<()> {
-        use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
 
         let mut config = Value::default();
@@ -1042,7 +1122,7 @@ mod tests {
             ",
             DEFAULT_ASSIGNMENT_DELIMITERS[0],
         ));
-        let mut config = parse(&config, Options::default(), &Printer::default()).0?;
+        let config = parse(&config, Options::default(), &Printer::default()).0?;
 
         sim_assert_eq!(config.options("MySection").collect::<Vec<_>>(), ["option"]);
         sim_assert_eq!(
@@ -1058,7 +1138,7 @@ mod tests {
             "#,
             DEFAULT_ASSIGNMENT_DELIMITERS[0],
         ));
-        let mut config = parse(&config, Options::default(), &Printer::default()).0?;
+        let config = parse(&config, Options::default(), &Printer::default()).0?;
 
         // cf = self.fromstring("[section]\n"
         //                      "nekey{}nevalue\n".format(self.delimiters[0]),
@@ -1071,7 +1151,6 @@ mod tests {
 
     #[test]
     fn configparser_compat_case_insensitivity_mapping_access() -> eyre::Result<()> {
-        use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
 
         let mut config = Value::default();
@@ -1139,7 +1218,7 @@ mod tests {
             "[MySection]\nOption{} first line   \n\tsecond line   \n",
             DEFAULT_ASSIGNMENT_DELIMITERS[0],
         );
-        let mut config = parse(&config, Options::default(), &Printer::default()).0?;
+        let config = parse(&config, Options::default(), &Printer::default()).0?;
 
         sim_assert_eq!(
             config
@@ -1172,10 +1251,9 @@ mod tests {
 
     #[test]
     fn configparser_compat_default_case_sensitivity() -> eyre::Result<()> {
-        use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
 
-        let mut config = Value::with_defaults(
+        let config = Value::with_defaults(
             [(Spanned::from("foo"), Spanned::from("Bar"))]
                 .into_iter()
                 .collect(),
@@ -1205,7 +1283,6 @@ mod tests {
 
     #[test]
     fn configparser_compat_parse_errors() -> eyre::Result<()> {
-        use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
 
         let config = format!(
@@ -1261,7 +1338,6 @@ mod tests {
 
     #[test]
     fn configparser_compat_query_errors() -> eyre::Result<()> {
-        use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
 
         let mut config = Value::default();
@@ -1303,7 +1379,6 @@ mod tests {
 
     #[test]
     fn configparser_compat_boolean() -> eyre::Result<()> {
-        use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
 
         let config = unindent::unindent(&format!(
@@ -1352,7 +1427,6 @@ mod tests {
 
     #[test]
     fn configparser_compat_weird_errors() -> eyre::Result<()> {
-        use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
 
         let mut config = Value::default();
@@ -1398,7 +1472,6 @@ mod tests {
 
     #[test]
     fn configparser_compat_get_after_duplicate_option_error() -> eyre::Result<()> {
-        use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
 
         let config = unindent(&format!(
@@ -1415,7 +1488,6 @@ mod tests {
             ..Options::default()
         };
         let config = parse(&config, options, &Printer::default()).0?;
-        let mut expected = Value::default();
         sim_assert_eq!(config.get("Foo", "x").deref_inner(), Some("1"));
         sim_assert_eq!(config.get("Foo", "y").deref_inner(), Some("2"));
         Ok(())
@@ -1423,7 +1495,6 @@ mod tests {
 
     #[test]
     fn configparser_compat_set_string_types() -> eyre::Result<()> {
-        use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
 
         let config = unindent(&format!(
@@ -1438,18 +1509,17 @@ mod tests {
         // check that we don't get an exception when setting values in
         // an existing section using strings:
 
-        config.set("sect", "option1".into(), "splat".into());
-        config.set("sect", "option1".into(), "splat".to_string().into());
-        config.set("sect", "option2".into(), "splat".into());
-        config.set("sect", "option2".into(), "splat".to_string().into());
-        config.set("sect", "option1".into(), "splat".into());
-        config.set("sect", "option2".into(), "splat".into());
+        config.set("sect", "option1".into(), "splat".into())?;
+        config.set("sect", "option1".into(), "splat".to_string().into())?;
+        config.set("sect", "option2".into(), "splat".into())?;
+        config.set("sect", "option2".into(), "splat".to_string().into())?;
+        config.set("sect", "option1".into(), "splat".into())?;
+        config.set("sect", "option2".into(), "splat".into())?;
         Ok(())
     }
 
     #[test]
     fn configparser_compat_check_items_config() -> eyre::Result<()> {
-        use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
 
         let config = unindent(&format!(
@@ -1464,7 +1534,7 @@ mod tests {
             delim0 = DEFAULT_ASSIGNMENT_DELIMITERS[0],
             delim1 = DEFAULT_ASSIGNMENT_DELIMITERS[1],
         ));
-        let mut config = parse(&config, Options::default(), &Printer::default()).0?;
+        let config = parse(&config, Options::default(), &Printer::default()).0?;
         sim_assert_eq!(
             config.section("section").unwrap().items_vec(),
             vec![
@@ -1480,7 +1550,6 @@ mod tests {
 
     #[test]
     fn configparser_compat_popitem() -> eyre::Result<()> {
-        use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
 
         let config = unindent(&format!(
@@ -1514,7 +1583,6 @@ mod tests {
 
     #[test]
     fn configparser_compat_clear() -> eyre::Result<()> {
-        use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
 
         let mut config = Value::default();
@@ -1559,7 +1627,6 @@ mod tests {
 
     #[test]
     fn configparser_compat_setitem() -> eyre::Result<()> {
-        use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
 
         let config = unindent(&format!(
@@ -1722,7 +1789,6 @@ mod tests {
 
     #[test]
     fn configparser_compat_invalid_multiline_value() -> eyre::Result<()> {
-        use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
 
         let config = unindent(&format!(
@@ -1753,7 +1819,6 @@ mod tests {
 
     #[test]
     fn configparser_compat_defaults_keyword() -> eyre::Result<()> {
-        use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
 
         // bpo-23835 fix for ConfigParser
@@ -1788,7 +1853,6 @@ mod tests {
 
     #[test]
     fn configparser_compat_no_interpolation_matches_ini() -> eyre::Result<()> {
-        use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
 
         let config = unindent(
@@ -1822,7 +1886,6 @@ mod tests {
 
     #[test]
     fn configparser_compat_empty_case() -> eyre::Result<()> {
-        use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
 
         let config = parse("", Options::default(), &Printer::default()).0?;
@@ -1833,7 +1896,6 @@ mod tests {
 
     #[test]
     fn configparser_compat_dominating_multiline_values() -> eyre::Result<()> {
-        use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
 
         let wonderful_spam =
@@ -1877,12 +1939,11 @@ mod tests {
     #[ignore = "allow non-string values"]
     #[test]
     fn configparser_compat_set_nonstring_types() -> eyre::Result<()> {
-        use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
 
         let mut config = Value::default();
         config.add_section("non-string".into(), []);
-        config.set("non-string", "int".into(), "1".into());
+        config.set("non-string", "int".into(), "1".into())?;
         todo!("support for different value types similar to serde_json");
         // config.set("non-string", "list", vec![0, 1, 1, 2, 3, 5, 8, 13]);
         // // config.set("non-string", "dict", {'pi': 3.14159});
@@ -1892,35 +1953,33 @@ mod tests {
         // config.add_section(123);
         // config.set(123, "this is sick", True);
         // sim_assert_eq!(config.get(123, "this is sick"), True);
-        Ok(())
+        // Ok(())
     }
 
     #[test]
     fn configparser_compat_parse_cfgparser_1() -> eyre::Result<()> {
-        use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
         let config = include_str!("../test-data/cfgparser.1.ini");
-        let mut config = parse(config, Options::default(), &Printer::default()).0?;
+        let config = parse(config, Options::default(), &Printer::default()).0?;
         println!("{}", &config);
         Ok(())
     }
 
     #[test]
     fn configparser_compat_parse_cfgparser_2() -> eyre::Result<()> {
-        use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
         let config = include_str!("../test-data/cfgparser.2.ini");
         // let config = include_str!("../test-data/cfgparser.0.ini");
         let options = Options {
-            parser_config: crate::parse::Config {
+            parser_config: ParseConfig {
                 comment_prefixes: vec![";", "#", "----", "//"],
                 inline_comment_prefixes: vec!["//"],
-                empty_lines_in_values: false,
-                ..crate::parse::Config::default()
+                allow_empty_lines_in_values: false,
+                ..ParseConfig::default()
             },
             ..Options::default()
         };
-        let mut config = parse(config, options, &Printer::default()).0?;
+        let config = parse(config, options, &Printer::default()).0?;
         println!("{}", &config);
 
         sim_assert_eq!(
@@ -1960,21 +2019,20 @@ mod tests {
 
     #[test]
     fn configparser_compat_parse_cfgparser_3() -> eyre::Result<()> {
-        use similar_asserts::assert_eq as sim_assert_eq;
         crate::tests::init();
 
         let config = include_str!("../test-data/cfgparser.3.ini");
         // let config = include_str!("../test-data/cfgparser.0.ini");
         let options = Options {
-            parser_config: crate::parse::Config {
+            parser_config: ParseConfig {
                 comment_prefixes: vec![";", "#"],
                 inline_comment_prefixes: vec!["#"],
-                empty_lines_in_values: true,
-                ..crate::parse::Config::default()
+                allow_empty_lines_in_values: true,
+                ..ParseConfig::default()
             },
             ..Options::default()
         };
-        let mut config = parse(config, options, &Printer::default()).0?;
+        let config = parse(config, options, &Printer::default()).0?;
         println!("{}", &config);
 
         sim_assert_eq!(
@@ -2125,9 +2183,9 @@ mod tests {
         ));
 
         let options = Options {
-            parser_config: crate::parse::Config {
+            parser_config: ParseConfig {
                 inline_comment_prefixes: vec!["#", ";"],
-                ..crate::parse::Config::default()
+                ..ParseConfig::default()
             },
             ..Options::default()
         };
@@ -2264,7 +2322,7 @@ mod tests {
             ],
         );
 
-        similar_asserts::assert_eq!(have.clone().cleared_spans(), expected);
+        sim_assert_eq!(have.clone().cleared_spans(), expected);
         Ok(())
     }
 }

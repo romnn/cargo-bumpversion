@@ -1,25 +1,6 @@
 use color_eyre::eyre;
 use termcolor::ColorChoice;
-use tracing::{info, warn};
 use tracing_subscriber::layer::SubscriberExt;
-
-pub const APPLICATION_NAME: &str = "bumpversion";
-
-pub trait ToLogLevel {
-    fn to_log_level(self) -> tracing::metadata::Level;
-}
-
-impl ToLogLevel for clap_verbosity_flag::log::Level {
-    fn to_log_level(self) -> tracing::metadata::Level {
-        match self {
-            Self::Trace => tracing::metadata::Level::TRACE,
-            Self::Debug => tracing::metadata::Level::DEBUG,
-            Self::Info => tracing::metadata::Level::INFO,
-            Self::Warn => tracing::metadata::Level::WARN,
-            Self::Error => tracing::metadata::Level::ERROR,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LogFormat {
@@ -40,7 +21,12 @@ impl std::str::FromStr for LogFormat {
     }
 }
 
-pub fn setup_logging(
+/// Setup logging
+///
+/// # Errors
+/// - If the logging directive cannot be parsed.
+/// - If the global tracing subscriber cannot be installed.
+pub fn setup(
     log_level: Option<tracing::metadata::Level>,
     log_format: Option<LogFormat>,
     color_choice: ColorChoice,
@@ -76,8 +62,7 @@ pub fn setup_logging(
     // autodetect logging format
     let log_format = log_format.unwrap_or(LogFormat::PrettyCompact);
     let use_color = match color_choice {
-        ColorChoice::Always => true,
-        ColorChoice::AlwaysAnsi => true,
+        ColorChoice::Always | ColorChoice::AlwaysAnsi => true,
         ColorChoice::Never => false,
         ColorChoice::Auto => {
             use std::io::IsTerminal;
@@ -89,7 +74,7 @@ pub fn setup_logging(
         .pretty()
         .without_time()
         .with_ansi(use_color)
-        .fmt_fields(tracing_subscriber::fmt::format::PrettyFields::new().with_ansi(use_color))
+        .fmt_fields(tracing_subscriber::fmt::format::PrettyFields::new())
         .with_writer(std::io::stdout);
     let fmt_layer_pretty_compact = tracing_subscriber::fmt::Layer::new()
         .compact()
@@ -102,13 +87,6 @@ pub fn setup_logging(
         .without_time()
         .with_ansi(use_color)
         .with_writer(std::io::stdout);
-
-    type BoxedFmtLayer = Box<
-        dyn tracing_subscriber::Layer<tracing_subscriber::registry::Registry>
-            + Send
-            + Sync
-            + 'static,
-    >;
 
     let subscriber = tracing_subscriber::registry()
         .with(if log_format == LogFormat::Json {

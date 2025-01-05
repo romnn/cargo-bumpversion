@@ -1,23 +1,17 @@
 #![forbid(unsafe_code)]
-#![allow(warnings)]
 
 mod logging;
 mod options;
 mod verbose;
 
 use bumpversion::{
-    config, context,
-    diagnostics::{Printer, ToDiagnostics},
-    files::FileMap,
-    hooks,
+    config,
     vcs::{git::GitRepository, TagAndRevision, VersionControlSystem},
-    version,
 };
 use clap::Parser;
 use color_eyre::eyre::{self, WrapErr};
 use options::Invert;
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 fn fix_options(options: &mut options::Options) {
     // HACK(roman):
@@ -35,40 +29,10 @@ fn fix_options(options: &mut options::Options) {
     }
 }
 
-#[tokio::main]
-async fn main() -> eyre::Result<()> {
-    if std::env::var("RUST_SPANTRACE").is_err() {
-        std::env::set_var("RUST_SPANTRACE", "0");
-    }
-
-    let start = std::time::Instant::now();
-    color_eyre::install()?;
-
-    let mut options = options::Options::parse();
-    fix_options(&mut options);
-    let color_choice = options.color_choice.unwrap_or(termcolor::ColorChoice::Auto);
-    let log_level = options.log_level.or_else(|| {
-        options
-            .verbosity
-            .log_level()
-            .map(logging::ToLogLevel::to_log_level)
-    });
-    let (log_format, use_color) =
-        logging::setup_logging(log_level, options.log_format, color_choice)?;
-
-    let cwd = std::env::current_dir().wrap_err("could not determine current working dir")?;
-    let dir = options.dir.unwrap_or(cwd).canonicalize()?;
-    let repo = GitRepository::open(&dir)?;
-
-    let printer = bumpversion::diagnostics::Printer::stderr(color_choice);
-
-    let (config_file_path, mut config) = bumpversion::find_config(&dir, &printer)
-        .await?
-        .ok_or(eyre::eyre!("missing config file"))?;
-
-    // build list of parts
-    let components = crate::config::version_component_configs(&config);
-
+fn parse_positional_arguments(
+    options: &mut options::Options,
+    components: &config::VersionComponentConfigs,
+) -> eyre::Result<(Option<String>, Vec<PathBuf>)> {
     let mut cli_files = vec![];
     let mut bump: Option<String> = options
         .bump
@@ -95,6 +59,63 @@ async fn main() -> eyre::Result<()> {
             cli_files.extend(options.args.drain(..).map(PathBuf::from));
         }
     }
+    Ok((bump, cli_files))
+}
+
+async fn check_is_dirty(
+    repo: &GitRepository,
+    options: &options::Options,
+    config: &config::Config,
+) -> eyre::Result<()> {
+    let allow_dirty = options
+        .allow_dirty
+        .or(options.no_allow_dirty.invert())
+        .or(config.global.allow_dirty)
+        .unwrap_or(false);
+
+    let dirty_files = repo.dirty_files().await?;
+    if !allow_dirty && !dirty_files.is_empty() {
+        eyre::bail!(
+            "Working directory is not clean:\n\n{}",
+            dirty_files
+                .iter()
+                .map(|file| file.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> eyre::Result<()> {
+    if std::env::var("RUST_SPANTRACE").is_err() {
+        std::env::set_var("RUST_SPANTRACE", "0");
+    }
+
+    let start = std::time::Instant::now();
+    color_eyre::install()?;
+
+    let mut options = options::Options::parse();
+    fix_options(&mut options);
+    let color_choice = options.color_choice.unwrap_or(termcolor::ColorChoice::Auto);
+    let (_log_format, _use_color) =
+        logging::setup(options.log_level, options.log_format, color_choice)?;
+
+    let cwd = std::env::current_dir().wrap_err("could not determine current working dir")?;
+    let dir = options.dir.as_deref().unwrap_or(&cwd).canonicalize()?;
+    let repo = GitRepository::open(&dir)?;
+
+    let printer = bumpversion::diagnostics::Printer::stderr(color_choice);
+
+    let (config_file_path, mut config) = bumpversion::find_config(&dir, &printer)
+        .await?
+        .ok_or(eyre::eyre!("missing config file"))?;
+
+    // build list of parts
+    let components = crate::config::version_component_configs(&config);
+    let (bump, cli_files) = parse_positional_arguments(&mut options, &components)?;
 
     let tag_name = config
         .global
@@ -115,12 +136,6 @@ async fn main() -> eyre::Result<()> {
     tracing::debug!(?tag, "current");
     tracing::debug!(?revision, "current");
 
-    let allow_dirty = options
-        .allow_dirty
-        .or(options.no_allow_dirty.invert())
-        .or(config.global.allow_dirty)
-        .unwrap_or(false);
-
     let dry_run = options.dry_run.or(config.global.dry_run).unwrap_or(false);
 
     let configured_version = options
@@ -131,31 +146,21 @@ async fn main() -> eyre::Result<()> {
     let actual_version = tag.as_ref().map(|tag| &tag.current_version).cloned();
 
     // if both versions are present, they should match
-    match (&configured_version, &actual_version) {
-        (Some(configured_version), Some(actual_version))
-            if configured_version != actual_version =>
-        {
+    if let Some((configured_version, actual_version)) =
+        configured_version.as_ref().zip(actual_version.as_ref())
+    {
+        if configured_version != actual_version {
             tracing::warn!(
-                "Specified version ({configured_version}) does not match last tagged version ({actual_version})",
+                "version {configured_version} from config does not match last tagged version ({actual_version})",
             );
         }
-        _ => {}
-    };
-    let current_version: String = configured_version
-        .or(actual_version)
-        .ok_or(eyre::eyre!("Unable to determine the current version"))?;
-
-    let dirty_files = repo.dirty_files().await?;
-    if !allow_dirty && !dirty_files.is_empty() {
-        eyre::bail!(
-            "Working directory is not clean:\n\n{}",
-            dirty_files
-                .iter()
-                .map(|file| file.to_string_lossy())
-                .collect::<Vec<_>>()
-                .join("\n")
-        );
     }
+
+    // let current_version: String = configured_version
+    //     .or(actual_version)
+    //     .ok_or(eyre::eyre!("Unable to determine the current version"))?;
+
+    check_is_dirty(&repo, &options, &config).await?;
 
     // build resolved file map
     let file_map =
@@ -171,27 +176,33 @@ async fn main() -> eyre::Result<()> {
         config.global.included_paths = Some(cli_files);
     }
 
-    let bump = match options.new_version.as_deref() {
-        Some(new_version) => bumpversion::Bump::NewVersion(new_version),
-        None => {
-            let bump = bump
-                .as_deref()
-                .ok_or_else(|| eyre::eyre!("missing version component to bump"))?;
-            bumpversion::Bump::Component(&bump)
-        }
+    let bump = if let Some(new_version) = options.new_version.as_deref() {
+        bumpversion::Bump::NewVersion(new_version)
+    } else {
+        let bump = bump
+            .as_deref()
+            .ok_or_else(|| eyre::eyre!("missing version component to bump"))?;
+        bumpversion::Bump::Component(bump)
     };
 
-    bumpversion::bump(
-        bump,
-        &repo,
-        &config,
-        &TagAndRevision { tag, revision },
+    let verbosity: bumpversion::Verbosity = if options.verbosity.quiet > 0 {
+        bumpversion::Verbosity::Off
+    } else {
+        options.verbosity.verbose.into()
+    };
+
+    let logger = verbose::Logger::new(verbosity);
+    let manager = bumpversion::BumpVersion {
+        repo,
+        config,
+        logger,
+        tag_and_revision: TagAndRevision { tag, revision },
         file_map,
         components,
-        Some(&config_file_path),
+        config_file: Some(config_file_path),
         dry_run,
-    )
-    .await?;
+    };
+    manager.bump(bump).await?;
 
     tracing::info!(elapsed = ?start.elapsed(), "done");
     Ok(())

@@ -1,13 +1,19 @@
 use codespan_reporting::{
-    diagnostic::{self, Diagnostic, Label, Severity},
+    diagnostic::{Diagnostic, Severity},
     files, term,
 };
-use indexmap::IndexMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, RwLock};
 
 pub type FileId = usize;
 pub type Span = std::ops::Range<usize>;
+
+/// A diagnostics error.
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("failed to lookup file")]
+    FileLookup(#[from] codespan_reporting::files::Error),
+}
 
 pub trait ToDiagnostics {
     fn to_diagnostics<F: Copy + PartialEq>(&self, file_id: F) -> Vec<Diagnostic<F>>;
@@ -41,13 +47,6 @@ pub struct Spanned<T> {
     pub span: Span,
 }
 
-// impl<'a> std::ops::Deref for &'a Spanned<&String> {
-//     type Target = str;
-//     fn deref(&self) -> &Self::Target {
-//         &self.inner
-//     }
-// }
-
 impl std::ops::Deref for Spanned<&String> {
     type Target = str;
     fn deref(&self) -> &Self::Target {
@@ -61,13 +60,6 @@ impl std::ops::Deref for Spanned<String> {
         &self.inner
     }
 }
-
-// impl<T> std::ops::Deref for Spanned<T> {
-//     type Target = T;
-//     fn deref(&self) -> &Self::Target {
-//         &self.inner
-//     }
-// }
 
 impl<T> AsRef<T> for Spanned<T> {
     fn as_ref(&self) -> &T {
@@ -122,16 +114,9 @@ impl PartialEq<Spanned<&str>> for Spanned<String> {
     }
 }
 
-// impl std::ops::Deref for Spanned<String> {
-//     type Target = &str;
-//
-//     fn deref(&self) -> &Self::Target {
-//         self.as_str()
-//     }
-// }
-
 impl Spanned<String> {
-    fn as_str(&self) -> &str {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
         self.as_ref().as_str()
     }
 }
@@ -246,19 +231,19 @@ impl Default for Printer<term::termcolor::StandardStream> {
 
 impl Default for Printer<term::termcolor::Buffer> {
     fn default() -> Self {
-        Self::buffered(term::termcolor::ColorChoice::Auto)
+        Self::buffered()
     }
 }
 
 impl Printer<term::termcolor::Buffer> {
-    #[must_use] pub fn buffered(color_choice: term::termcolor::ColorChoice) -> Self {
+    #[must_use]
+    pub fn buffered() -> Self {
         let writer = term::termcolor::Buffer::ansi();
         let diagnostic_config = term::Config {
             styles: term::Styles::with_blue(term::termcolor::Color::Blue),
             ..term::Config::default()
         };
         Self {
-            // writer: Mutex::new(Box::new(writer)),
             writer: Mutex::new(writer),
             diagnostic_config,
             files: RwLock::new(files::SimpleFiles::new()),
@@ -268,24 +253,25 @@ impl Printer<term::termcolor::Buffer> {
     /// Print written diagnostics to stderr.
     ///
     /// This is a workaround for <https://github.com/BurntSushi/termcolor/issues/51>.
-    pub fn print(&self) {
+    pub fn print(&self) -> Result<(), std::io::Error> {
         use std::io::Write;
         let mut writer = self.writer.lock().unwrap();
-        writer.flush();
+        writer.flush()?;
         eprintln!("{}", String::from_utf8_lossy(writer.as_slice()));
+        Ok(())
     }
 }
 
 impl Printer<term::termcolor::StandardStream> {
-    #[must_use] pub fn stderr(color_choice: term::termcolor::ColorChoice) -> Self {
+    #[must_use]
+    pub fn stderr(color_choice: term::termcolor::ColorChoice) -> Self {
         let writer = term::termcolor::StandardStream::stderr(color_choice);
-        use term::termcolor::WriteColor;
+
         let diagnostic_config = term::Config {
             styles: term::Styles::with_blue(term::termcolor::Color::Blue),
             ..term::Config::default()
         };
         Self {
-            // writer: Mutex::new(Box::new(writer)),
             writer: Mutex::new(writer),
             diagnostic_config,
             files: RwLock::new(files::SimpleFiles::new()),

@@ -1,20 +1,21 @@
 #### short-term
 
-- proper error types
+- implement pretty verbose mode
 - lint
 - read configuration from Cargo.toml
-- implement pretty verbose mode
 - rename repo to bumpversion only
 - setup goreleaser
 - release the bumpversion crate
 
 #### long-term
 
+- remove different log formats
 - test and improve nom error messages
-- remove deprecated code
 - include spans in all the configs
 - publish serde-ini-spanend as a separate crate
 
+- DONE: remove deprecated code
+- DONE: proper error types
 - DONE: reduce confusion: remove version config, version spec, component spec, component, etc.
 - DONE: more imperative, functional approach
 - DONE: make async

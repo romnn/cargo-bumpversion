@@ -273,7 +273,6 @@ version = "0.1.0"
 dependencies = [
  "bumpversion",
  "clap",
- "clap-verbosity-flag",
  "codespan-reporting",
  "color-eyre",
  "colored",
@@ -333,16 +332,6 @@ checksum = "3135e7ec2ef7b10c6ed8950f0f792ed96ee093fa088608f1c76e569722700c84"
 dependencies = [
  "clap_builder",
  "clap_derive",
-]
-
-[[package]]
-name = "clap-verbosity-flag"
-version = "3.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2678fade3b77aa3a8ff3aae87e9c008d3fb00473a41c71fbf74e91c8c7b37e84"
-dependencies = [
- "clap",
- "log",
 ]
 
 [[package]]

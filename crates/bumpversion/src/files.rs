@@ -1,5 +1,5 @@
 use crate::{
-    config::{Config, FileChange, FileConfig, InputFile, VersionComponentConfigs},
+    config::{Config, FileChange, InputFile, VersionComponentConfigs},
     f_string::{self, PythonFormatString},
     version::{self, Version},
 };
@@ -7,24 +7,24 @@ use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-/// Does the search pattern match any part of the contents?
-fn contains_pattern(contents: &str, search_pattern: &regex::Regex) -> bool {
-    let matches = search_pattern.captures_iter(contents);
-    let Some(m) = matches.into_iter().next() else {
-        return false;
-    };
-    let Some(m) = m.iter().next().flatten() else {
-        return false;
-    };
-    let line_num = contents[..m.start()].chars().filter(|c| *c == '\n').count() + 1;
-    tracing::info!(
-        "found {:?} at line {}: {:?}",
-        search_pattern.as_str(),
-        line_num,
-        m.as_str(),
-    );
-    true
-}
+// /// Does the search pattern match any part of the contents?
+// fn contains_pattern(contents: &str, search_pattern: &regex::Regex) -> bool {
+//     let matches = search_pattern.captures_iter(contents);
+//     let Some(m) = matches.into_iter().next() else {
+//         return false;
+//     };
+//     let Some(m) = m.iter().next().flatten() else {
+//         return false;
+//     };
+//     let line_num = contents[..m.start()].chars().filter(|c| *c == '\n').count() + 1;
+//     tracing::info!(
+//         "found {:?} at line {}: {:?}",
+//         search_pattern.as_str(),
+//         line_num,
+//         m.as_str(),
+//     );
+//     true
+// }
 
 #[derive(thiserror::Error, Debug)]
 pub enum ReplaceVersionError {
@@ -133,12 +133,7 @@ where
     K: std::borrow::Borrow<str> + std::hash::Hash + Eq + std::fmt::Debug,
     V: AsRef<str> + std::fmt::Debug,
 {
-    let as_io_error = |source: std::io::Error| -> IoError {
-        IoError {
-            source,
-            path: path.to_path_buf(),
-        }
-    };
+    let as_io_error = |source: std::io::Error| -> IoError { IoError::new(source, path) };
     if !path.is_file() {
         if changes.iter().all(|change| change.ignore_missing_file) {
             tracing::info!(?path, "file not found");
@@ -168,7 +163,6 @@ where
     if dry_run {
         println!("{diff}");
     } else {
-        todo!("write");
         use tokio::io::AsyncWriteExt;
         let file = tokio::fs::OpenOptions::new()
             .write(true)
@@ -196,11 +190,28 @@ pub enum GlobError {
 }
 
 #[derive(thiserror::Error, Debug)]
-#[error("io error for {path:?}")]
 pub struct IoError {
     #[source]
     pub source: std::io::Error,
-    pub path: PathBuf,
+    pub path: Option<PathBuf>,
+}
+
+impl IoError {
+    pub fn new(source: impl Into<std::io::Error>, path_or_stream: impl Into<PathBuf>) -> Self {
+        Self {
+            source: source.into(),
+            path: Some(path_or_stream.into()),
+        }
+    }
+}
+
+impl std::fmt::Display for IoError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.path {
+            Some(path) => write!(f, "io error for {path:?}"),
+            None => write!(f, "io error"),
+        }
+    }
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -221,9 +232,8 @@ fn resolve_glob_files(
         require_literal_separator: false,
         require_literal_leading_dot: false,
     };
-    let included: HashSet<PathBuf> = glob::glob_with(pattern, options)?
-        .map(|entry| entry)
-        .collect::<Result<_, _>>()?;
+    let included: HashSet<PathBuf> =
+        glob::glob_with(pattern, options)?.collect::<Result<_, _>>()?;
 
     let excluded: HashSet<PathBuf> = exclude_patterns
         .iter()
@@ -231,7 +241,6 @@ fn resolve_glob_files(
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
         .flat_map(std::iter::IntoIterator::into_iter)
-        .map(|entry| entry)
         .collect::<Result<_, _>>()?;
 
     Ok(included.difference(&excluded).cloned().collect())
@@ -257,7 +266,6 @@ pub fn resolve_files_from_config<'a>(
                 InputFile::Path(path) => Ok(vec![path.clone()]),
             }?;
 
-            let global = config.global.clone();
             let file_change = FileChange::new(file_config, parts);
             Ok(new_files
                 .into_iter()
@@ -267,7 +275,7 @@ pub fn resolve_files_from_config<'a>(
                     } else if let Some(base_dir) = base_dir {
                         let file = base_dir.join(&file);
                         file.canonicalize()
-                            .map_err(|source| IoError { source, path: file })
+                            .map_err(|source| IoError::new(source, file))
                     } else {
                         Ok(file)
                     }
@@ -288,9 +296,9 @@ pub fn resolve_files_from_config<'a>(
 }
 
 /// Return a list of files to modify
-pub fn files_to_modify<'a>(
-    config: &'a Config,
-    mut file_map: FileMap,
+pub fn files_to_modify(
+    config: &Config,
+    file_map: FileMap,
 ) -> impl Iterator<Item = (PathBuf, Vec<FileChange>)> + use<'_> {
     let excluded_paths_from_config: HashSet<&PathBuf> = config
         .global
@@ -300,7 +308,7 @@ pub fn files_to_modify<'a>(
         .iter()
         .collect();
 
-    let included_paths_from_config: HashSet<&'a PathBuf> = config
+    let included_paths_from_config: HashSet<&PathBuf> = config
         .global
         .included_paths
         .as_deref()

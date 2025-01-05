@@ -41,8 +41,8 @@ codespan-reporting = "0"
 # nom = "7"
 
 [dev-dependencies]
-color-eyre = "0"
-similar-asserts = "1"
+color-eyre.workspace = true
+similar-asserts.workspace = true
 indoc = "2"
 unindent = "0"
 lazy_static = "1"

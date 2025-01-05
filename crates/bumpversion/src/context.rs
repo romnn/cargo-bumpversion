@@ -1,4 +1,4 @@
-use crate::{config, vcs::TagAndRevision, version::Version};
+use crate::{vcs::TagAndRevision, version::Version};
 use std::collections::HashMap;
 
 pub type Env = HashMap<String, String>;

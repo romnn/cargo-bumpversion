@@ -1,13 +1,12 @@
 use crate::diagnostics::DiagnosticExt;
 use crate::spanned::{Span, Spanned};
 use crate::{
-    parse::{Config, Item, Parse, ParseState, Parser},
-    Error,
+    parse::{Item, Parse, ParseState, Parser},
+    Error, ParseConfig,
 };
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use indexmap::{Equivalent, IndexMap};
 use std::hash::Hash;
-use std::io::empty;
 
 #[derive(thiserror::Error, Debug)]
 #[error("invalid boolean: {0:?}")]
@@ -105,11 +104,13 @@ impl Section {
         self
     }
 
-    #[must_use] pub fn is_empty(&self) -> bool {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
 
-    #[must_use] pub fn lowercase_keys(self) -> Self {
+    #[must_use]
+    pub fn lowercase_keys(self) -> Self {
         self.into_iter()
             .map(|(mut k, v)| {
                 k.inner = k.inner.to_lowercase();
@@ -118,7 +119,8 @@ impl Section {
             .collect()
     }
 
-    #[must_use] pub fn span(&self) -> &Span {
+    #[must_use]
+    pub fn span(&self) -> &Span {
         &self.name.span
     }
 
@@ -132,17 +134,20 @@ impl Section {
         self.inner.drain(range)
     }
 
-    #[must_use] pub fn iter(
+    #[must_use]
+    pub fn iter(
         &self,
     ) -> indexmap::map::Iter<'_, Spanned<std::string::String>, Spanned<std::string::String>> {
         self.inner.iter()
     }
 
-    #[must_use] pub fn options(&self) -> indexmap::map::Keys<'_, Spanned<String>, Spanned<String>> {
+    #[must_use]
+    pub fn options(&self) -> indexmap::map::Keys<'_, Spanned<String>, Spanned<String>> {
         self.keys()
     }
 
-    #[must_use] pub fn keys(&self) -> indexmap::map::Keys<'_, Spanned<String>, Spanned<String>> {
+    #[must_use]
+    pub fn keys(&self) -> indexmap::map::Keys<'_, Spanned<String>, Spanned<String>> {
         self.inner.keys()
     }
 
@@ -381,7 +386,7 @@ impl std::ops::Index<&str> for SectionProxyMut<'_> {
     type Output = Spanned<String>;
 
     fn index(&self, index: &str) -> &Self::Output {
-        self.get_ref(index).unwrap()
+        self.get_by_ref(index).unwrap()
     }
 }
 
@@ -427,7 +432,7 @@ impl<'a> SectionProxyMut<'a> {
         self.section_mut().get_mut(&key)
     }
 
-    pub fn get_mut_owned<Q>(mut self, key: &'a Q) -> Option<&mut Spanned<String>>
+    pub fn get_mut_owned<Q>(self, key: &'a Q) -> Option<&'a mut Spanned<String>>
     where
         Q: ?Sized + Hash + Equivalent<Spanned<String>> + Lowercase,
     {
@@ -494,17 +499,19 @@ pub type OwnedKeys<'a> = std::iter::Chain<
 macro_rules! impl_section_proxy {
     ($name:ident) => {
         impl<'a> $name<'a> {
-            #[must_use] pub fn span(&self) -> &Span {
+            #[must_use]
+            pub fn span(&self) -> &Span {
                 &self.section.name.span
             }
 
-            #[must_use] pub fn section(&self) -> &RawSection {
+            #[must_use]
+            pub fn section(&self) -> &RawSection {
                 &self.section.inner
             }
 
             #[deprecated]
-            pub fn options_old(&self) -> Keys<'_> {
-                self.keys_old()
+            pub fn options_by_ref(&self) -> Keys<'_> {
+                self.keys_by_ref()
             }
 
             pub fn options(self) -> Keys<'a> {
@@ -522,7 +529,7 @@ macro_rules! impl_section_proxy {
             }
 
             pub fn keys(self) -> OwnedKeys<'a> {
-                let empty_section: &Section = &*EMPTY_SECTION;
+                // let empty_section: &Section = &*EMPTY_SECTION;
                 let section_keys: indexmap::map::Keys<'a, Spanned<String>, Spanned<String>> =
                     self.section.keys();
                 let default_section_keys: indexmap::map::Keys<
@@ -534,8 +541,7 @@ macro_rules! impl_section_proxy {
                 section_keys.chain(default_section_keys)
             }
 
-            #[deprecated]
-            pub fn keys_old(&self) -> Keys<'_> {
+            pub fn keys_by_ref(&self) -> Keys<'_> {
                 let empty_section: &Section = &*EMPTY_SECTION;
                 let default_section: Option<&Section> = self.defaults.as_deref();
 
@@ -565,8 +571,7 @@ macro_rules! impl_section_proxy {
             /// Arguments `raw`, `vars`, and `fallback` are keyword only.
             ///
             /// The section DEFAULT is special.
-            #[deprecated]
-            pub fn get_ref<'b, Q>(&self, key: &'b Q) -> Option<&Spanned<String>>
+            pub fn get_by_ref<'b, Q>(&self, key: &'b Q) -> Option<&Spanned<String>>
             where
                 'a: 'b,
                 Q: ?Sized + Hash + Equivalent<Spanned<String>> + Lowercase,
@@ -591,7 +596,7 @@ macro_rules! impl_section_proxy {
                 self.section.get_key_value(&key).map(|(k, _)| &k.span)
             }
 
-            pub fn get_owned<Q>(self, key: &'a Q) -> Option<&Spanned<String>>
+            pub fn get_owned<Q>(self, key: &'a Q) -> Option<&'a Spanned<String>>
             where
                 Q: ?Sized + Hash + Equivalent<Spanned<String>> + Lowercase,
             {
@@ -667,16 +672,18 @@ impl std::fmt::Display for SectionProxy<'_> {
 pub struct NoSectionError(pub String);
 
 impl Value {
-    #[must_use] pub fn is_empty(&self) -> bool {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
         self.sections.is_empty() && self.defaults.is_empty()
     }
 
-    pub fn replace_section(&mut self, mut key: Spanned<String>, section: Section) -> Section {
+    pub fn replace_section(&mut self, key: Spanned<String>, section: Section) -> Section {
         let old_section = self.sections.entry(key).or_default();
         std::mem::replace(old_section, section)
     }
 
-    #[must_use] pub fn with_defaults(defaults: Section) -> Self {
+    #[must_use]
+    pub fn with_defaults(defaults: Section) -> Self {
         Self {
             sections: Sections::default(),
             defaults: defaults.lowercase_keys(),
@@ -686,7 +693,7 @@ impl Value {
     pub fn add_section(
         &mut self,
         name: Spanned<String>,
-        mut section: impl Into<Section>,
+        section: impl Into<Section>,
     ) -> Option<Section> {
         let section: Section = section.into();
         let mut section = section.lowercase_keys();
@@ -703,7 +710,8 @@ impl Value {
             .and_then(|mut section| section.remove_option(option))
     }
 
-    #[must_use] pub fn defaults(&self) -> &Section {
+    #[must_use]
+    pub fn defaults(&self) -> &Section {
         &self.defaults
     }
 
@@ -711,7 +719,8 @@ impl Value {
         &mut self.defaults
     }
 
-    #[must_use] pub fn has_section(&self, section: &str) -> bool {
+    #[must_use]
+    pub fn has_section(&self, section: &str) -> bool {
         self.section(section).is_some()
     }
 
@@ -731,7 +740,8 @@ impl Value {
         self.remove_section(&first_section_name)
     }
 
-    #[must_use] pub fn section<'a>(&'a self, name: &str) -> Option<SectionProxy<'a>> {
+    #[must_use]
+    pub fn section<'a>(&'a self, name: &str) -> Option<SectionProxy<'a>> {
         self.sections.get(name).map(|section| SectionProxy {
             section,
             defaults: Some(&self.defaults),
@@ -749,7 +759,8 @@ impl Value {
     //
     // If the specified `section` is None or an empty string, DEFAULT is
     // assumed. If the specified `section` does not exist, returns False."""
-    #[must_use] pub fn has_option(&self, section: &str, option: &str) -> bool {
+    #[must_use]
+    pub fn has_option(&self, section: &str, option: &str) -> bool {
         self.section(section)
             .is_some_and(|section| section.has_option(option))
     }
@@ -772,7 +783,8 @@ impl Value {
         Ok(section.set(option, value))
     }
 
-    #[must_use] pub fn get<'a>(&'a self, section: &str, option: &'a str) -> Option<&'a Spanned<String>> {
+    #[must_use]
+    pub fn get<'a>(&'a self, section: &str, option: &'a str) -> Option<&'a Spanned<String>> {
         self.section(section)
             .and_then(|section| section.get_owned(option))
     }
@@ -783,7 +795,7 @@ impl Value {
         option: &'a str,
     ) -> Option<&'a mut Spanned<String>> {
         self.section_mut(section)
-            .and_then(move |mut section| section.get_mut_owned(option))
+            .and_then(move |section| section.get_mut_owned(option))
     }
     pub fn get_int(
         &self,
@@ -826,16 +838,19 @@ fn get_section<'a>(
     }
 }
 
-fn finalize_continuation_value(
-    current_option: &Option<Spanned<String>>,
-    section: &mut Section,
-) {
-    if let Some(mut current_value) = current_option.as_ref().and_then(|op| section.get_mut(op)) {
+fn finalize_continuation_value(current_option: &Option<Spanned<String>>, section: &mut Section) {
+    if let Some(current_value) = current_option.as_ref().and_then(|op| section.get_mut(op)) {
         // finalize previous
         crate::parse::trim_trailing_whitespace(&mut current_value.inner, &mut current_value.span);
     }
 }
 
+/// Parse a `serde_ini_spanned::Value` from a buffered reader.
+///
+/// # Errors
+/// - When custom delimiters configured in `Options` are not valid.
+/// - When an IO error is encountered while reading.
+/// - When the reader contains invalid INI syntax.
 pub fn from_reader<F: PartialEq + Copy>(
     reader: impl std::io::BufRead,
     options: Options,
@@ -878,7 +893,7 @@ pub fn from_reader<F: PartialEq + Copy>(
                     span,
                 } => {
                     let section = get_section(&current_section, &mut out);
-                    if let Some(mut current_value) =
+                    if let Some(current_value) =
                         current_option.as_ref().and_then(|op| section.get_mut(op))
                     {
                         current_value.inner += "\n";
@@ -921,12 +936,22 @@ pub fn from_reader<F: PartialEq + Copy>(
     Ok(out)
 }
 
+/// Options for parsing INI.
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Options {
+    /// Enable strict mode
+    ///
+    /// In strict mode, warnings are treated as errors.
+    /// For example, duplicate options will result in an error.  
     pub strict: bool,
-    pub parser_config: Config,
+    pub parser_config: ParseConfig,
 }
 
+/// Parse a `serde_ini_spanned::Value` from a buffered reader.
+///
+/// # Errors
+/// - When custom delimiters configured in `Options` are not valid.
+/// - When the reader contains invalid INI syntax.
 pub fn from_str<F: PartialEq + Copy>(
     value: &str,
     options: Options,

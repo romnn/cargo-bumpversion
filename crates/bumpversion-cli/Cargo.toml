@@ -31,7 +31,7 @@ color-eyre.workspace = true
 
 # cli
 clap = { version = "4", features = ["derive", "env", "color"] }
-clap-verbosity-flag = "3"
+# clap-verbosity-flag = "3"
 
 # logging
 tracing.workspace = true
@@ -47,3 +47,6 @@ tokio.workspace = true
 futures.workspace = true
 
 bumpversion.workspace = true
+
+# [dev-dependencies]
+# similar-asserts.workspace = true
