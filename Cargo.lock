@@ -246,6 +246,7 @@ dependencies = [
  "chrono",
  "codespan-reporting",
  "color-eyre",
+ "colored",
  "futures",
  "glob",
  "indexmap",

@@ -1,5 +1,4 @@
 #![forbid(unsafe_code)]
-#![forbid(unsafe_code)]
 
 pub mod command;
 pub mod config;
@@ -8,6 +7,7 @@ pub mod diagnostics;
 pub mod f_string;
 pub mod files;
 pub mod hooks;
+pub mod logging;
 pub mod vcs;
 pub mod version;
 
@@ -15,9 +15,11 @@ use crate::{
     files::FileMap,
     vcs::{TagAndRevision, VersionControlSystem},
 };
+use colored::{Color, Colorize};
 use files::IoError;
 use futures::stream::{StreamExt, TryStreamExt};
 use indexmap::IndexMap;
+use logging::{LogExt, Verbosity};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -25,32 +27,6 @@ use std::sync::Arc;
 pub enum Bump<'a> {
     Component(&'a str),
     NewVersion(&'a str),
-}
-
-/// Logging verbosity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[repr(u8)]
-pub enum Verbosity {
-    Off = 0,
-    Low = 1,
-    Medium = 2,
-    High = 3,
-}
-
-impl From<u8> for Verbosity {
-    fn from(value: u8) -> Self {
-        match value {
-            0 => Verbosity::Off,
-            1 => Verbosity::Low,
-            2 => Verbosity::Medium,
-            _ => Verbosity::High,
-        }
-    }
-}
-
-/// Logging implementation to use.
-pub trait Log {
-    fn log(&self, verbosity: Verbosity, message: &str);
 }
 
 /// Find config file in one of the default config file locations.
@@ -139,8 +115,8 @@ where
                         })
                     }
                     config::ConfigFile::CargoToml(_) => {
-                        // TODO: cargo
-                        Ok(None)
+                        todo!("cargo");
+                        // Ok(None)
                     }
                 };
 
@@ -213,7 +189,7 @@ pub struct BumpVersion<VCS, L> {
 impl<VCS, L> BumpVersion<VCS, L>
 where
     VCS: VersionControlSystem,
-    L: Log,
+    L: logging::Log,
 {
     /// Bump the desired version component to the next value or set the version to `new_version`.
     ///
@@ -253,35 +229,50 @@ where
         );
         let current_version = current_version.ok_or_else(|| BumpError::EmptyVersion)?;
 
-        let working_dir = self.repo.path();
-        hooks::run_setup_hooks(
-            &self.config,
-            working_dir,
-            &self.tag_and_revision,
-            Some(&current_version),
-            self.dry_run,
-        )
-        .await?;
+        self.logger
+            .log(Verbosity::Low, &format!("{}", "[current version]".blue()));
+        self.logger.log(
+            Verbosity::Low,
+            &format!("\t{}", current_version_serialized.yellow().bold()),
+        );
+        self.logger.log(
+            Verbosity::Medium,
+            &format!(
+                "\t{}",
+                crate::logging::format_version(&current_version, Color::Cyan)
+            ),
+        );
 
-        let next_version = match bump {
-            Bump::Component(component) => {
+        self.run_setup_hooks(Some(&current_version)).await?;
+
+        let new_version = match bump {
+            Bump::Component(comp_name) => {
                 tracing::info!(
-                    component = component.to_string(),
+                    component = comp_name.to_string(),
                     "attempting to increment version component"
                 );
-                current_version.bump(component).map(Some)
+                // self.logger.log(
+                //     Verbosity::Low,
+                //     &format!(
+                //         "incrementing component {}={}",
+                //         comp_name.to_string().yellow(),
+                //         current_version
+                //             .get(comp_name)
+                //             .and_then(|component| component.value())
+                //             .as_deref()
+                //             .unwrap_or("?")
+                //     ),
+                // );
+                current_version.bump(comp_name).map_err(Into::into)
             }
             Bump::NewVersion(new_version) => {
                 tracing::info!(new_version, "parse new version");
-                Ok(version::parse_version(
-                    new_version,
-                    parse_version_pattern,
-                    &version_spec,
-                ))
+                version::parse_version(new_version, parse_version_pattern, &version_spec)
+                    .ok_or_else(|| BumpError::EmptyVersion)
             }
         }?;
-        let next_version = next_version.ok_or_else(|| BumpError::EmptyVersion)?;
-        tracing::info!(next_version = next_version.to_string(), "next version");
+
+        tracing::info!(new_version = new_version.to_string(), "next version");
 
         let ctx_without_new_version: HashMap<String, String> = context::get_context(
             Some(&self.tag_and_revision),
@@ -298,13 +289,27 @@ where
             .serialize_version_patterns
             .as_deref()
             .unwrap_or_default();
-        let next_version_serialized =
-            next_version.serialize(serialize_version_patterns, &ctx_without_new_version)?;
-        tracing::info!(version = next_version_serialized, "next version");
+        let new_version_serialized =
+            new_version.serialize(serialize_version_patterns, &ctx_without_new_version)?;
+        tracing::info!(version = new_version_serialized, "next version");
 
-        if current_version_serialized == &next_version_serialized {
+        self.logger
+            .log(Verbosity::Low, &format!("{}", "[new version]".blue()));
+        self.logger.log(
+            Verbosity::Low,
+            &format!("\t{}", new_version_serialized.yellow().bold()),
+        );
+        self.logger.log(
+            Verbosity::Medium,
+            &format!(
+                "\t{}",
+                crate::logging::format_version(&new_version, Color::Cyan)
+            ),
+        );
+
+        if current_version_serialized == &new_version_serialized {
             tracing::info!(
-                version = next_version_serialized,
+                version = new_version_serialized,
                 "next version matches current version"
             );
             return Ok(());
@@ -328,115 +333,122 @@ where
         let ctx_with_new_version: HashMap<String, String> = context::get_context(
             Some(&self.tag_and_revision),
             Some(&current_version),
-            Some(&next_version),
+            Some(&new_version),
             Some(current_version_serialized),
-            Some(&next_version_serialized),
+            Some(&new_version_serialized),
         )
         .collect();
 
         let configured_files = Arc::new(configured_files);
 
-        futures::stream::iter(configured_files.iter())
-            .map(|file| async move { file })
-            .buffer_unordered(8)
-            .then(|(path, change)| {
-                let current_version = current_version.clone();
-                let next_version = next_version.clone();
-                let ctx_with_new_version = ctx_with_new_version.clone();
-                async move {
-                    debug_assert!(path.is_absolute());
-                    files::replace_version_in_file(
-                        path,
-                        change,
-                        &current_version,
-                        &next_version,
-                        &ctx_with_new_version,
-                        self.dry_run,
-                    )
-                    .await?;
-                    Ok::<_, BumpError<VCS>>(())
-                }
-            })
-            .try_collect::<()>()
-            .await?;
-
-        if let Some(ref config_file) = self.config_file {
-            let config_path = config_file.path();
-            // check if config file is inside repo
-            debug_assert!(working_dir.is_absolute());
-            debug_assert!(config_path.is_absolute());
-
-            if config_path.starts_with(working_dir) {
-                match config_file {
-                    config::ConfigFile::SetupCfg(_) | config::ConfigFile::BumpversionCfg(_) => {
-                        config::ini::replace_version(
-                            config_path,
-                            &self.config,
-                            current_version_serialized,
-                            &next_version_serialized,
+        let mut modifications: Vec<(&PathBuf, Option<files::Modification>)> =
+            futures::stream::iter(configured_files.iter())
+                .map(|file| async move { file })
+                .buffer_unordered(8)
+                .then(|(path, change)| {
+                    let current_version = current_version.clone();
+                    let new_version = new_version.clone();
+                    let ctx_with_new_version = ctx_with_new_version.clone();
+                    async move {
+                        debug_assert!(path.is_absolute());
+                        let modification = files::replace_version_in_file(
+                            path,
+                            change,
+                            &current_version,
+                            &new_version,
+                            &ctx_with_new_version,
                             self.dry_run,
                         )
-                        .await
-                        .map_err(files::ReplaceVersionError::from)
+                        .await?;
+                        Ok::<_, BumpError<VCS>>((path, modification))
                     }
-                    config::ConfigFile::PyProject(_) | config::ConfigFile::BumpversionToml(_) => {
-                        config::pyproject_toml::replace_version(
-                            config_path,
-                            &self.config,
-                            current_version_serialized,
-                            &next_version_serialized,
-                            self.dry_run,
-                        )
-                        .await
-                        .map_err(|err| match err {
-                            config::pyproject_toml::ReplaceVersionError::Io(err) => {
-                                files::ReplaceVersionError::from(err)
-                            }
-                            config::pyproject_toml::ReplaceVersionError::Toml(err) => {
-                                files::ReplaceVersionError::from(err)
-                            }
-                        })
-                    }
-                    config::ConfigFile::CargoToml(_) => {
-                        todo!("cargo support")
-                    }
-                }?;
-            } else {
-                tracing::warn!("config file {config_file:?} is outside of the repo {working_dir:?} and will not be modified");
-            }
+                })
+                .try_collect()
+                .await?;
+
+        modifications.sort_by_key(|(path, _)| path.to_path_buf());
+
+        for (path, modification) in modifications {
+            self.logger.log(Verbosity::Low, "");
+            self.logger.log_modification(path, modification);
         }
 
-        hooks::run_pre_commit_hooks(
-            &self.config,
-            working_dir,
-            &self.tag_and_revision,
+        if let Some(ref config_file) = self.config_file {
+            let modification = self
+                .update_config_file(config_file, &ctx_with_new_version)
+                .await?;
+            self.logger.log(Verbosity::Low, "");
+            self.logger
+                .log_modification(config_file.path(), modification);
+        }
+
+        self.run_pre_commit_hooks(
             Some(&current_version),
-            Some(&next_version),
-            &next_version_serialized,
-            self.dry_run,
+            Some(&new_version),
+            &new_version_serialized,
         )
         .await?;
 
         self.commit_changes(
             &configured_files,
             current_version_serialized.clone(),
-            next_version_serialized.clone(),
+            new_version_serialized.clone(),
             &ctx_with_new_version,
         )
         .await?;
 
-        hooks::run_post_commit_hooks(
-            &self.config,
-            working_dir,
-            &self.tag_and_revision,
+        self.run_post_commit_hooks(
             Some(&current_version),
-            Some(&next_version),
-            &next_version_serialized,
-            self.dry_run,
+            Some(&new_version),
+            &new_version_serialized,
         )
         .await?;
 
         Ok(())
+    }
+
+    pub async fn update_config_file<K, V>(
+        &self,
+        config_file: &config::ConfigFile,
+        ctx: &HashMap<K, V>,
+    ) -> Result<Option<files::Modification>, BumpError<VCS>>
+    where
+        K: std::borrow::Borrow<str> + std::hash::Hash + Eq + std::fmt::Debug,
+        V: AsRef<str> + std::fmt::Debug,
+    {
+        let config_path = config_file.path();
+
+        // check if config file is inside repo
+        let working_dir = self.repo.path();
+        debug_assert!(working_dir.is_absolute());
+        debug_assert!(config_path.is_absolute());
+
+        if config_path.starts_with(working_dir) {
+            let modification = match config_file {
+                config::ConfigFile::SetupCfg(_) | config::ConfigFile::BumpversionCfg(_) => {
+                    config::ini::replace_version(config_path, &self.config, ctx, self.dry_run)
+                        .await
+                        .map_err(files::ReplaceVersionError::from)
+                }
+                config::ConfigFile::PyProject(_) | config::ConfigFile::BumpversionToml(_) => {
+                    config::pyproject_toml::replace_version(
+                        config_path,
+                        &self.config,
+                        ctx,
+                        self.dry_run,
+                    )
+                    .await
+                }
+                config::ConfigFile::CargoToml(_) => {
+                    todo!("cargo support")
+                }
+            }?;
+
+            Ok(modification)
+        } else {
+            tracing::warn!("config file {config_file:?} is outside of the repo {working_dir:?} and will not be modified");
+            Ok(None)
+        }
     }
 
     pub async fn commit_changes(
@@ -462,17 +474,15 @@ where
 
         let commit = self.config.global.commit.unwrap_or(true);
         if commit {
-            if self.dry_run {
-                tracing::info!("would prepare commit");
-            } else {
-                tracing::info!("prepare commit");
-            }
+            self.logger
+                .log(Verbosity::Low, &format!("{}", "[commit]".magenta()));
 
             for path in files_to_commit {
-                if self.dry_run {
-                    tracing::info!(?path, "would add changes");
-                } else {
-                    tracing::info!(?path, "adding changes");
+                self.logger.log(
+                    Verbosity::Low,
+                    &format!("\t{} {}", "   add".dimmed(), path.to_string_lossy().cyan()),
+                );
+                if !self.dry_run {
                     self.repo.add(&[path]).await.map_err(BumpError::VCS)?;
                 }
             }
@@ -486,6 +496,11 @@ where
 
             let commit_message = commit_message.format(ctx, true)?;
             tracing::info!(msg = commit_message, "commit");
+
+            self.logger.log(
+                Verbosity::Low,
+                &format!("\t{} {}", "commit".dimmed(), commit_message.cyan()),
+            );
 
             if !self.dry_run {
                 let env = std::env::vars().chain([
@@ -538,15 +553,37 @@ where
 
             let existing_tags = self.repo.tags().await.map_err(BumpError::VCS)?;
 
+            self.logger
+                .log(Verbosity::Low, &format!("{}", "[tag]".magenta()));
+
             if existing_tags.contains(&tag_name) {
+                self.logger.log(
+                    Verbosity::Low,
+                    &format!(
+                        "\t{}",
+                        format!("tag {} already exists and will not be created", tag_name).dimmed()
+                    ),
+                );
                 tracing::warn!("tag {tag_name:?} already exists and will not be created");
-            } else if self.dry_run {
-                tracing::info!(msg = tag_message, sign = sign_tag, "would tag {tag_name:?}",);
             } else {
-                self.repo
-                    .tag(tag_name.as_str(), Some(&tag_message), sign_tag)
-                    .await
-                    .map_err(BumpError::VCS)?;
+                self.logger.log(
+                    Verbosity::Low,
+                    &format!("\t{}{}", "tag = ".dimmed(), tag_name.yellow()),
+                );
+                self.logger.log(
+                    Verbosity::Low,
+                    &format!("\t{}{}", "message = ".dimmed(), tag_message.yellow()),
+                );
+                self.logger.log(
+                    Verbosity::Low,
+                    &format!("\t{}{}", "sign = ".dimmed(), sign_tag.to_string().yellow()),
+                );
+                if !self.dry_run {
+                    self.repo
+                        .tag(tag_name.as_str(), Some(&tag_message), sign_tag)
+                        .await
+                        .map_err(BumpError::VCS)?;
+                }
             }
         }
         Ok(())

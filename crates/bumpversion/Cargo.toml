@@ -57,6 +57,7 @@ toml_edit = "0"
 indexmap = { version = "2", features = ["serde"] }
 
 # diagnostics
+colored = "2"
 codespan-reporting = "0"
 unindent = "0"
 

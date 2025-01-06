@@ -138,6 +138,20 @@ pub enum RegexTemplate {
     Escaped(PythonFormatString),
 }
 
+impl std::fmt::Display for RegexTemplate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_ref().to_string())
+    }
+}
+
+impl AsRef<PythonFormatString> for RegexTemplate {
+    fn as_ref(&self) -> &PythonFormatString {
+        match self {
+            Self::Regex(s) | Self::Escaped(s) => &s,
+        }
+    }
+}
+
 impl RegexTemplate {
     #[must_use]
     pub fn is_regex(&self) -> bool {

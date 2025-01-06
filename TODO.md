@@ -1,6 +1,6 @@
 #### short-term
 
-- implement pretty verbose mode
+- final config that has all the values set...
 - lint
 - read configuration from Cargo.toml
 - rename repo to bumpversion only
@@ -9,11 +9,12 @@
 
 #### long-term
 
-- remove different log formats
 - test and improve nom error messages
 - include spans in all the configs
 - publish serde-ini-spanend as a separate crate
 
+- DONE: implement pretty verbose mode
+- DONE: remove different log formats
 - DONE: remove deprecated code
 - DONE: proper error types
 - DONE: reduce confusion: remove version config, version spec, component spec, component, etc.

@@ -5,10 +5,11 @@ use crate::{
     },
     diagnostics::{DiagnosticExt, FileId, Span},
     f_string::{self, PythonFormatString},
-    files::IoError,
+    files::{self, IoError},
 };
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use serde_ini_spanned as ini;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub use ini::value::Options;
@@ -601,44 +602,49 @@ static CONFIG_CURRENT_VERSION_REGEX: once_cell::sync::Lazy<regex::Regex> =
 /// it will use a regular expression to just replace the `current_version` value.
 /// The idea is it will avoid unintentional changes (like formatting) to the
 /// config file.
-pub async fn replace_version(
+pub async fn replace_version<K, V>(
     path: &Path,
     _config: &Config,
-    current_version: &str,
-    new_version: &str,
+    _ctx: &HashMap<K, V>,
+    // current_version: &str,
+    // new_version: &str,
     dry_run: bool,
-) -> Result<bool, IoError> {
+) -> Result<Option<files::Modification>, IoError>
+where
+    K: std::borrow::Borrow<str> + std::hash::Hash + Eq + std::fmt::Debug,
+    V: AsRef<str> + std::fmt::Debug,
+{
     let as_io_error = |source: std::io::Error| -> IoError { IoError::new(source, path) };
-    let existing_config = tokio::fs::read_to_string(path).await.map_err(as_io_error)?;
+    let before = tokio::fs::read_to_string(path).await.map_err(as_io_error)?;
     // let extension = path.extension().and_then(|ext| ext.to_str());
-    let matches = CONFIG_CURRENT_VERSION_REGEX.find_iter(&existing_config);
+    let _matches = CONFIG_CURRENT_VERSION_REGEX.find_iter(&before);
     // let new_config = if extension == Some("cfg") && matches.count() > 0 {
-    let new_config = if matches.count() > 0 {
-        let replacement = format!(r#"\g<section_prefix>{new_version}"#);
-        CONFIG_CURRENT_VERSION_REGEX.replace_all(&existing_config, replacement)
-    } else {
-        tracing::info!("could not find current version ({current_version}) in {path:?}");
-        return Ok(false);
-    };
 
-    if dry_run {
-        tracing::info!("Would write to config file {path:?}");
-    } else {
-        tracing::info!("Writing to config file {path:?}");
-    }
+    // let new_config = if matches.count() > 0 {
+    //     let replacement = format!(r#"\g<section_prefix>{new_version}"#);
+    //     CONFIG_CURRENT_VERSION_REGEX.replace_all(&existing_config, replacement)
+    // } else {
+    //     tracing::info!("could not find current version ({current_version}) in {path:?}");
+    //     return Ok(None);
+    // };
 
-    let label_existing = format!("{path:?} (before)");
-    let label_new = format!("{path:?} (after)");
-    let diff = similar_asserts::SimpleDiff::from_str(
-        &existing_config,
-        &new_config,
-        &label_existing,
-        &label_new,
-    );
+    // if dry_run {
+    //     tracing::info!("Would write to config file {path:?}");
+    // } else {
+    //     tracing::info!("Writing to config file {path:?}");
+    // }
 
-    if dry_run {
-        println!("{diff}");
-    } else {
+    // let label_existing = format!("{path:?} (before)");
+    // let label_new = format!("{path:?} (after)");
+    // let diff = similar_asserts::SimpleDiff::from_str(
+    //     &existing_config,
+    //     &new_config,
+    //     &label_existing,
+    //     &label_new,
+    // );
+    let after = before.clone();
+
+    if !dry_run {
         use tokio::io::AsyncWriteExt;
         let file = tokio::fs::OpenOptions::new()
             .write(true)
@@ -649,12 +655,17 @@ pub async fn replace_version(
             .map_err(as_io_error)?;
         let mut writer = tokio::io::BufWriter::new(file);
         writer
-            .write_all(new_config.as_bytes())
+            .write_all(after.as_bytes())
             .await
             .map_err(as_io_error)?;
         writer.flush().await.map_err(as_io_error)?;
     }
-    Ok(true)
+    let modification = files::Modification {
+        before,
+        after,
+        replacements: vec![],
+    };
+    Ok(Some(modification))
 }
 
 #[cfg(test)]

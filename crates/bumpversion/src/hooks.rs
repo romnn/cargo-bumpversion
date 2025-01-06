@@ -1,6 +1,6 @@
-use crate::command::{self, Error as CommandError, Output};
 use crate::{
-    config::Config,
+    command::{self, Error as CommandError, Output},
+    logging::LogExt,
     vcs::{RevisionInfo, TagAndRevision},
     version::Version,
 };
@@ -28,16 +28,13 @@ fn base_env() -> impl Iterator<Item = (String, String)> {
 /// Provide the VCS environment variables.
 fn vcs_env(tag_and_revision: &TagAndRevision) -> impl Iterator<Item = (String, String)> {
     let TagAndRevision { tag, revision } = tag_and_revision;
-    let tag = tag
-        // .and_then(|t| t.tag)
-        .clone()
-        .unwrap_or(crate::vcs::TagInfo {
-            dirty: false,
-            commit_sha: String::new(),
-            distance_to_latest_tag: 0,
-            current_tag: String::new(),
-            current_version: String::new(),
-        });
+    let tag = tag.clone().unwrap_or(crate::vcs::TagInfo {
+        dirty: false,
+        commit_sha: String::new(),
+        distance_to_latest_tag: 0,
+        current_tag: String::new(),
+        current_version: String::new(),
+    });
     let revision = revision.clone().unwrap_or(RevisionInfo {
         branch_name: String::new(),
         short_branch_name: String::new(),
@@ -77,18 +74,9 @@ fn version_env<'a>(
 
 /// Provide the environment dictionary for `new_version` serialized and tag name.
 fn new_version_env<'a>(
-    // new_version: &SerializedVersion,
     new_version_serialized: &str,
     tag: Option<&str>,
-    // version: &'a str,
-    // tag: &'a str,
 ) -> impl Iterator<Item = (String, String)> + use<'a> {
-    // ctx = get_context(config, current_version, new_version)
-    // new_version_string = config.version_config.serialize(new_version, ctx)
-    // ctx["new_version"] = new_version_string
-    // new_version_tag = config.tag_name.format(**ctx)
-    // return {f"{PREFIX}NEW_VERSION": new_version_string, f"{PREFIX}NEW_VERSION_TAG": new_version_tag}
-    // return {f"{PREFIX}NEW_VERSION": new_version_string, f"{PREFIX}NEW_VERSION_TAG": new_version_tag}
     vec![
         (
             format!("{ENV_PREFIX}NEW_VERSION"),
@@ -132,82 +120,85 @@ fn pre_and_post_commit_hook_env<'a>(
         .chain(new_version_env(new_version_serialized, tag))
 }
 
-/// Run the pre-commit hooks
-///
-/// # Errors
-/// When one of the user-provided pre-commit hooks exits with a non-zero exit code.
-pub async fn run_pre_commit_hooks(
-    config: &Config,
-    working_dir: &Path,
-    tag_and_revision: &TagAndRevision,
-    current_version: Option<&Version>,
-    new_version: Option<&Version>,
-    new_version_serialized: &str,
-    dry_run: bool,
-) -> Result<(), Error> {
-    let env = pre_and_post_commit_hook_env(
-        tag_and_revision,
-        current_version,
-        new_version,
-        new_version_serialized,
-    );
+impl<VCS, L> crate::BumpVersion<VCS, L>
+where
+    VCS: crate::vcs::VersionControlSystem,
+    L: crate::logging::Log,
+{
+    /// Run the setup hooks
+    ///
+    /// # Errors
+    /// When one of the user-provided setup hooks exits with a non-zero exit code.
+    pub async fn run_setup_hooks(&self, current_version: Option<&Version>) -> Result<(), Error> {
+        let env = setup_hook_env(&self.tag_and_revision, current_version);
+        let setup_hooks = self
+            .config
+            .global
+            .setup_hooks
+            .as_deref()
+            .unwrap_or_default();
 
-    let pre_commit_hooks = config
-        .global
-        .pre_commit_hooks
-        .as_deref()
-        .unwrap_or_default();
-
-    if pre_commit_hooks.is_empty() {
-        tracing::info!("no pre commit hooks defined");
-        return Ok(());
-    } else if dry_run {
-        tracing::info!("would run {} pre commit hooks", pre_commit_hooks.len());
-        return Ok(());
-    } else {
-        tracing::info!("running pre commit hooks");
+        self.logger.log_hooks("setup", setup_hooks);
+        run_hooks(setup_hooks, self.repo.path(), env, self.dry_run).await
     }
 
-    run_hooks(pre_commit_hooks, working_dir, env, dry_run).await
-}
+    /// Run the pre-commit hooks
+    ///
+    /// # Errors
+    /// When one of the user-provided pre-commit hooks exits with a non-zero exit code.
+    pub async fn run_pre_commit_hooks(
+        &self,
+        current_version: Option<&Version>,
+        new_version: Option<&Version>,
+        new_version_serialized: &str,
+    ) -> Result<(), Error> {
+        let env = pre_and_post_commit_hook_env(
+            &self.tag_and_revision,
+            current_version,
+            new_version,
+            new_version_serialized,
+        );
 
-/// Run the post-commit hooks
-///
-/// # Errors
-/// When one of the user-provided post-commit hooks exits with a non-zero exit code.
-pub async fn run_post_commit_hooks(
-    config: &Config,
-    working_dir: &Path,
-    tag_and_revision: &TagAndRevision,
-    current_version: Option<&Version>,
-    new_version: Option<&Version>,
-    new_version_serialized: &str,
-    dry_run: bool,
-) -> Result<(), Error> {
-    let env = pre_and_post_commit_hook_env(
-        tag_and_revision,
-        current_version,
-        new_version,
-        new_version_serialized,
-    );
+        let pre_commit_hooks = self
+            .config
+            .global
+            .pre_commit_hooks
+            .as_deref()
+            .unwrap_or_default();
 
-    let post_commit_hooks = config
-        .global
-        .post_commit_hooks
-        .as_deref()
-        .unwrap_or_default();
+        self.logger.log_hooks("pre-commit", pre_commit_hooks);
 
-    if post_commit_hooks.is_empty() {
-        tracing::info!("no post commit hooks defined");
-        return Ok(());
-    } else if dry_run {
-        tracing::info!("would run {} post commit hooks", post_commit_hooks.len());
-        return Ok(());
-    } else {
-        tracing::info!("running post commit hooks");
+        run_hooks(pre_commit_hooks, self.repo.path(), env, self.dry_run).await
     }
 
-    run_hooks(post_commit_hooks, working_dir, env, dry_run).await
+    /// Run the post-commit hooks
+    ///
+    /// # Errors
+    /// When one of the user-provided post-commit hooks exits with a non-zero exit code.
+    pub async fn run_post_commit_hooks(
+        &self,
+        current_version: Option<&Version>,
+        new_version: Option<&Version>,
+        new_version_serialized: &str,
+    ) -> Result<(), Error> {
+        let env = pre_and_post_commit_hook_env(
+            &self.tag_and_revision,
+            current_version,
+            new_version,
+            new_version_serialized,
+        );
+
+        let post_commit_hooks = self
+            .config
+            .global
+            .post_commit_hooks
+            .as_deref()
+            .unwrap_or_default();
+
+        self.logger.log_hooks("post-commit", post_commit_hooks);
+
+        run_hooks(post_commit_hooks, self.repo.path(), env, self.dry_run).await
+    }
 }
 
 /// An Error that can occur when executing hooks
@@ -264,30 +255,6 @@ async fn run_hooks(
         };
     }
     Ok(())
-}
-
-/// Run the setup hooks
-///
-/// # Errors
-/// When one of the user-provided setup hooks exits with a non-zero exit code.
-pub async fn run_setup_hooks(
-    config: &Config,
-    working_dir: &Path,
-    tag_and_revision: &TagAndRevision,
-    current_version: Option<&Version>,
-    dry_run: bool,
-) -> Result<(), Error> {
-    let env = setup_hook_env(tag_and_revision, current_version);
-    let setup_hooks = config.global.setup_hooks.as_deref().unwrap_or_default();
-    if setup_hooks.is_empty() {
-        tracing::trace!("no setup hooks defined");
-        return Ok(());
-    } else if dry_run {
-        tracing::info!("would run {} setup hooks", setup_hooks.len());
-    } else {
-        tracing::info!("running setup hooks");
-    }
-    run_hooks(setup_hooks, working_dir, env, dry_run).await
 }
 
 #[cfg(test)]

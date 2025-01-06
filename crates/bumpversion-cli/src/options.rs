@@ -96,13 +96,6 @@ pub struct Options {
     )]
     pub log_level: Option<tracing::metadata::Level>,
 
-    #[arg(
-        long = "log-format",
-        env = "BUMPVERSION_LOG_FORMAT",
-        help = "log format (json or pretty)"
-    )]
-    pub log_format: Option<crate::logging::LogFormat>,
-
     #[clap(
         long = "allow-dirty",
         help = "don't abort if working directory is dirty",

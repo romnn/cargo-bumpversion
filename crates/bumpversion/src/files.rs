@@ -45,17 +45,18 @@ pub enum ReplaceVersionError {
 
 /// Replace version in file
 pub fn replace_version<'a, K, V>(
-    before: &'a str,
+    before: String,
     changes: &'a [FileChange],
     current_version: &'a Version,
     new_version: &'a Version,
     ctx: &'a HashMap<K, V>,
-) -> Result<String, ReplaceVersionError>
+) -> Result<Modification, ReplaceVersionError>
 where
     K: std::borrow::Borrow<str> + std::hash::Hash + Eq + std::fmt::Debug,
     V: AsRef<str> + std::fmt::Debug,
 {
     let mut after = before.to_string();
+    let mut replacements = vec![];
     for change in changes {
         tracing::debug!(
             search = ?change.search,
@@ -78,10 +79,12 @@ where
             ])
             .collect();
 
-        let search_regex = change.search.format(&ctx, true)?;
-        let replace = PythonFormatString::parse(&change.replace)?;
-        let replacement = replace.format(&ctx, true)?;
-        // .wrap_err_with(|| eyre::eyre!("invalid replace format string"))?;
+        let search_pattern = &change.search;
+        let search_regex = search_pattern.format(&ctx, true)?;
+
+        let replace_pattern = &change.replace;
+        let replacement = PythonFormatString::parse(replace_pattern)?;
+        let replacement = replacement.format(&ctx, true)?;
 
         // TODO(roman): i don't think we need to check if the change pattern is present?
         // // does the file contain the change pattern?
@@ -115,9 +118,61 @@ where
         //     return Ok(());
         // }
 
-        after = search_regex.replace_all(&after, replacement).to_string();
+        after = search_regex.replace_all(&after, &replacement).to_string();
+
+        replacements.push(Replacement {
+            search_pattern: search_pattern.to_string(),
+            search: search_regex.as_str().to_string(),
+            replace_pattern: replace_pattern.clone(),
+            replace: replacement,
+        });
     }
-    Ok(after)
+
+    let modification = Modification {
+        before,
+        after,
+        replacements,
+    };
+    Ok(modification)
+}
+
+/// A file modification.
+#[derive(Debug)]
+pub struct Replacement {
+    pub search: String,
+    pub search_pattern: String,
+    pub replace: String,
+    pub replace_pattern: String,
+}
+
+/// A file modification.
+#[derive(Debug)]
+pub struct Modification {
+    pub before: String,
+    pub after: String,
+    pub replacements: Vec<Replacement>,
+}
+
+impl Modification {
+    /// Render a diff of the modification.
+    pub fn diff(&self, path: Option<&Path>) -> Option<String> {
+        if self.before == self.after {
+            None
+        } else {
+            let (label_before, label_after) = if let Some(path) = path {
+                (format!("{path:?} (before)"), format!("{path:?} (after)"))
+            } else {
+                ("before".to_string(), "after".to_string())
+            };
+            let diff = similar_asserts::SimpleDiff::from_str(
+                &self.before,
+                &self.after,
+                &label_before,
+                &label_after,
+            );
+            Some(diff.to_string())
+        }
+    }
 }
 
 /// Replace version in file
@@ -128,7 +183,7 @@ pub async fn replace_version_in_file<K, V>(
     new_version: &Version,
     ctx: &HashMap<K, V>,
     dry_run: bool,
-) -> Result<(), ReplaceVersionError>
+) -> Result<Option<Modification>, ReplaceVersionError>
 where
     K: std::borrow::Borrow<str> + std::hash::Hash + Eq + std::fmt::Debug,
     V: AsRef<str> + std::fmt::Debug,
@@ -137,16 +192,17 @@ where
     if !path.is_file() {
         if changes.iter().all(|change| change.ignore_missing_file) {
             tracing::info!(?path, "file not found");
-            return Ok(());
+            return Ok(None);
         }
         let not_found = std::io::Error::new(std::io::ErrorKind::NotFound, "not found");
         return Err(ReplaceVersionError::from(as_io_error(not_found)));
     }
 
     let before = tokio::fs::read_to_string(path).await.map_err(as_io_error)?;
-    let after = replace_version(&before, changes, current_version, new_version, ctx)?;
-    if before == after {
-        tracing::warn!(?path, "no change after version replacement");
+    let modification = replace_version(before, changes, current_version, new_version, ctx)?;
+
+    if modification.before == modification.after {
+        // tracing::warn!(?path, "no change after version replacement");
         // TODO(roman): can we also not do this?
         // && current_version.original {
         // og_context = deepcopy(context)
@@ -156,13 +212,7 @@ where
         // return Ok(());
     };
 
-    let label_existing = format!("{path:?} (before)");
-    let label_new = format!("{path:?} (after)");
-    let diff = similar_asserts::SimpleDiff::from_str(&before, &after, &label_existing, &label_new);
-
-    if dry_run {
-        println!("{diff}");
-    } else {
+    if !dry_run {
         use tokio::io::AsyncWriteExt;
         let file = tokio::fs::OpenOptions::new()
             .write(true)
@@ -173,12 +223,12 @@ where
             .map_err(as_io_error)?;
         let mut writer = tokio::io::BufWriter::new(file);
         writer
-            .write_all(after.as_bytes())
+            .write_all(modification.after.as_bytes())
             .await
             .map_err(as_io_error)?;
         writer.flush().await.map_err(as_io_error)?;
     }
-    Ok(())
+    Ok(Some(modification))
 }
 
 #[derive(thiserror::Error, Debug)]

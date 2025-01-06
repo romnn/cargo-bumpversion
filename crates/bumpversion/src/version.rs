@@ -311,7 +311,12 @@ impl<'a> IntoIterator for &'a Version {
 }
 
 impl Version {
-    /// Serialize a version to a string.
+    /// Serialize the version using one of the given serialization patterns.
+    ///
+    /// Patterns that tried in order, except for incompatible patterns, which are attempted at last.
+    ///
+    /// # Errors
+    /// If the version cannot be serialized using the first pattern.
     pub fn serialize<'a, K, V>(
         &self,
         serialize_version_patterns: impl IntoIterator<Item = &'a PythonFormatString>,
@@ -324,20 +329,28 @@ impl Version {
         serialize_version(self, serialize_version_patterns, ctx)
     }
 
-    // Return the values of the parts
+    /// Get version component by name.
+    pub fn get<Q>(&self, component: &Q) -> Option<&Component>
+    where
+        Q: ?Sized + std::hash::Hash + indexmap::Equivalent<String>,
+    {
+        self.components.get(component)
+    }
+
+    // Iterate over the components of the version.
     #[must_use]
     pub fn iter(&self) -> indexmap::map::Iter<String, Component> {
         self.components.iter()
     }
 
-    // Return the names of the parts that are required
+    // Iterator over the required (non-optional) components of the version.
     pub fn required_component_names(&self) -> impl Iterator<Item = &str> {
         self.iter()
             .filter(|(_, v)| v.value() != v.spec.optional_value.as_deref())
             .map(|(k, _)| k.as_str())
     }
 
-    /// Return the components that always increment and depend on the given component
+    /// The version components that depend on the given component and are always incremented.
     fn always_incr_dependencies(&self) -> HashMap<&str, HashSet<&str>> {
         self.spec
             .components_to_always_increment
@@ -346,7 +359,7 @@ impl Version {
             .collect()
     }
 
-    /// Increase the values of the components that always increment
+    /// The version components that always increment.
     fn increment_always_incr(&self) -> Result<HashMap<&str, Component>, BumpError> {
         let components = self
             .spec

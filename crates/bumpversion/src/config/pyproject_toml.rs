@@ -4,10 +4,11 @@ use crate::{
     },
     diagnostics::{FileId, Span},
     f_string::PythonFormatString,
-    files::IoError,
+    files::{self, IoError},
 };
 use codespan_reporting::diagnostic::Diagnostic;
 use indexmap::IndexMap;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use toml_span as toml;
 
@@ -629,27 +630,31 @@ fn replace_version_of_document(
     true
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum ReplaceVersionError {
-    #[error(transparent)]
-    Io(#[from] IoError),
-    #[error(transparent)]
-    Toml(#[from] toml_edit::TomlError),
-}
+// #[derive(thiserror::Error, Debug)]
+// pub enum ReplaceVersionError {
+//     #[error(transparent)]
+//     Io(#[from] IoError),
+//     #[error(transparent)]
+//     Toml(#[from] toml_edit::TomlError),
+// }
 
 /// Update the `current_version` key in the configuration file
-pub async fn replace_version(
+pub async fn replace_version<K, V>(
     path: &Path,
-    _config: &Config,
-    _current_version: &str,
-    _next_version: &str,
+    config: &Config,
+    ctx: &HashMap<K, V>,
+    // _current_version: &str,
+    // _next_version: &str,
     dry_run: bool,
-) -> Result<bool, ReplaceVersionError> {
+) -> Result<Option<files::Modification>, files::ReplaceVersionError>
+where
+    K: std::borrow::Borrow<str> + std::hash::Hash + Eq + std::fmt::Debug,
+    V: AsRef<str> + std::fmt::Debug,
+{
     tracing::info!(config = ?path, "processing config file");
 
     let as_io_error = |source: std::io::Error| IoError::new(source, path);
 
-    let existing_config = tokio::fs::read_to_string(path).await.map_err(as_io_error)?;
     let extension = path.extension().and_then(|ext| ext.to_str());
 
     if extension.is_some_and(|ext| !ext.eq_ignore_ascii_case("toml")) {
@@ -657,47 +662,63 @@ pub async fn replace_version(
             "cannot update TOML config file with extension {:?}",
             extension.unwrap_or_default()
         );
-        return Ok(false);
+        return Ok(None);
     }
 
-    if dry_run {
-        tracing::info!(?path, "would write to config file");
-    } else {
-        tracing::info!(?path, "writing to config file");
-    }
+    // if dry_run {
+    //     tracing::info!(?path, "would write to config file");
+    // } else {
+    //     tracing::info!(?path, "writing to config file");
+    // }
 
     // parse the document
-    let raw_config = tokio::fs::read_to_string(path).await.map_err(as_io_error)?;
-    let mut document = raw_config.parse::<toml_edit::DocumentMut>()?;
-    let search = &config::defaults::PARSE_VERSION_REGEX; // TODO: change
-    let replacement = "<new-version>";
+    let before = tokio::fs::read_to_string(path).await.map_err(as_io_error)?;
+    let mut document = before.parse::<toml_edit::DocumentMut>()?;
 
-    let updated = replace_version_of_document(
+    // let search = &config::defaults::PARSE_VERSION_REGEX; // TODO: change
+    // let replacement = "<new-version>";
+
+    let default_search_pattern: &config::RegexTemplate = &config::defaults::SEARCH;
+    let search_pattern = config
+        .global
+        .search
+        .as_ref()
+        .unwrap_or(default_search_pattern);
+    let search_regex = search_pattern.format(&ctx, true)?;
+
+    let replace_pattern = &config
+        .global
+        .replace
+        .as_deref()
+        .unwrap_or(&config::defaults::REPLACE);
+
+    let replacement = PythonFormatString::parse(replace_pattern)?;
+    let replacement = replacement.format(&ctx, true)?;
+
+    let _ = replace_version_of_document(
         &mut document,
         &["tool", "bumpversion", "current_version"],
-        search,
-        replacement,
+        &search_regex,
+        &replacement,
     );
 
-    if updated {
-        tracing::info!("updated TOML config");
-    } else {
-        tracing::info!("TOML config was not updated");
-    }
-    let new_config = document.to_string();
+    // if updated {
+    //     tracing::info!("updated TOML config");
+    // } else {
+    //     tracing::info!("TOML config was not updated");
+    // }
+    let after = document.to_string();
 
-    let label_existing = format!("{path:?} (before)");
-    let label_new = format!("{path:?} (after)");
-    let diff = similar_asserts::SimpleDiff::from_str(
-        &existing_config,
-        &new_config,
-        &label_existing,
-        &label_new,
-    );
+    // let label_existing = format!("{path:?} (before)");
+    // let label_new = format!("{path:?} (after)");
+    // let diff = similar_asserts::SimpleDiff::from_str(
+    //     &existing_config,
+    //     &new_config,
+    //     &label_existing,
+    //     &label_new,
+    // );
 
-    if dry_run {
-        println!("{diff}");
-    } else {
+    if !dry_run {
         use tokio::io::AsyncWriteExt;
         let file = tokio::fs::OpenOptions::new()
             .write(true)
@@ -708,12 +729,23 @@ pub async fn replace_version(
             .map_err(as_io_error)?;
         let mut writer = tokio::io::BufWriter::new(file);
         writer
-            .write_all(new_config.as_bytes())
+            .write_all(after.as_bytes())
             .await
             .map_err(as_io_error)?;
         writer.flush().await.map_err(as_io_error)?;
     }
-    Ok(true)
+
+    let modification = files::Modification {
+        before,
+        after,
+        replacements: vec![files::Replacement {
+            search_pattern: search_pattern.to_string(),
+            search: search_regex.as_str().to_string(),
+            replace_pattern: replace_pattern.to_string(),
+            replace: replacement.to_string(),
+        }],
+    };
+    Ok(Some(modification))
 }
 
 #[cfg(test)]

@@ -39,6 +39,14 @@ fn parse_positional_arguments(
         .as_ref()
         .map(AsRef::as_ref)
         .map(ToString::to_string);
+
+    // first, check for invalid flags
+    for arg in options.args.iter() {
+        if arg.starts_with("--") {
+            eyre::bail!("unknown flag {arg:?}");
+        }
+    }
+
     if !options.args.is_empty() {
         if options.bump.is_none() {
             // first argument must be version component to bump
@@ -100,8 +108,8 @@ async fn main() -> eyre::Result<()> {
     let mut options = options::Options::parse();
     fix_options(&mut options);
     let color_choice = options.color_choice.unwrap_or(termcolor::ColorChoice::Auto);
-    let (_log_format, _use_color) =
-        logging::setup(options.log_level, options.log_format, color_choice)?;
+    let use_color = logging::setup(options.log_level, color_choice)?;
+    colored::control::set_override(use_color);
 
     let cwd = std::env::current_dir().wrap_err("could not determine current working dir")?;
     let dir = options.dir.as_deref().unwrap_or(&cwd).canonicalize()?;
@@ -185,13 +193,13 @@ async fn main() -> eyre::Result<()> {
         bumpversion::Bump::Component(bump)
     };
 
-    let verbosity: bumpversion::Verbosity = if options.verbosity.quiet > 0 {
-        bumpversion::Verbosity::Off
+    let verbosity: bumpversion::logging::Verbosity = if options.verbosity.quiet > 0 {
+        bumpversion::logging::Verbosity::Off
     } else {
         options.verbosity.verbose.into()
     };
 
-    let logger = verbose::Logger::new(verbosity);
+    let logger = verbose::Logger::new(verbosity).dry_run(dry_run);
     let manager = bumpversion::BumpVersion {
         repo,
         config,
