@@ -51,8 +51,7 @@ tasks:
     env:
       RUSTDOCFLAGS: "--cfg docsrs"
     cmds:
-      - cargo +nightly watchdoc {{.CLI_ARGS}}
-      # - cargo +nightly doc --all-features {{.CLI_ARGS}}
+      - cargo +nightly watchdoc --all-features {{.CLI_ARGS}}
 
   outdated:
     desc: "check for outdated cargo workspace dependencies"

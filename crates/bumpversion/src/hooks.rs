@@ -131,14 +131,10 @@ where
     /// When one of the user-provided setup hooks exits with a non-zero exit code.
     pub async fn run_setup_hooks(&self, current_version: Option<&Version>) -> Result<(), Error> {
         let env = setup_hook_env(&self.tag_and_revision, current_version);
-        let setup_hooks = self
-            .config
-            .global
-            .setup_hooks
-            .as_deref()
-            .unwrap_or_default();
 
+        let setup_hooks = &self.config.global.setup_hooks;
         self.logger.log_hooks("setup", setup_hooks);
+
         run_hooks(setup_hooks, self.repo.path(), env, self.dry_run).await
     }
 
@@ -159,13 +155,7 @@ where
             new_version_serialized,
         );
 
-        let pre_commit_hooks = self
-            .config
-            .global
-            .pre_commit_hooks
-            .as_deref()
-            .unwrap_or_default();
-
+        let pre_commit_hooks = &self.config.global.pre_commit_hooks;
         self.logger.log_hooks("pre-commit", pre_commit_hooks);
 
         run_hooks(pre_commit_hooks, self.repo.path(), env, self.dry_run).await
@@ -188,13 +178,7 @@ where
             new_version_serialized,
         );
 
-        let post_commit_hooks = self
-            .config
-            .global
-            .post_commit_hooks
-            .as_deref()
-            .unwrap_or_default();
-
+        let post_commit_hooks = &self.config.global.post_commit_hooks;
         self.logger.log_hooks("post-commit", post_commit_hooks);
 
         run_hooks(post_commit_hooks, self.repo.path(), env, self.dry_run).await

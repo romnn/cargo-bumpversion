@@ -1,5 +1,5 @@
 use crate::{
-    config::{Config, FileChange, InputFile, VersionComponentConfigs},
+    config::{self, FileChange, InputFile, VersionComponentConfigs},
     f_string::{self, PythonFormatString},
     version::{self, Version},
 };
@@ -38,7 +38,7 @@ pub enum ReplaceVersionError {
     InvalidFormatString(#[from] f_string::ParseError),
 
     #[error(transparent)]
-    RegexTemplate(#[from] crate::config::RegexTemplateError),
+    RegexTemplate(#[from] config::regex::RegexTemplateError),
     #[error(transparent)]
     Toml(#[from] toml_edit::TomlError),
 }
@@ -300,7 +300,7 @@ pub type FileMap = IndexMap<PathBuf, Vec<FileChange>>;
 
 /// Return a map of filenames to file configs, expanding any globs
 pub fn resolve_files_from_config<'a>(
-    config: &mut Config,
+    config: &mut config::FinalizedConfig,
     parts: &VersionComponentConfigs,
     base_dir: Option<&Path>,
 ) -> Result<FileMap, Error> {
@@ -347,7 +347,7 @@ pub fn resolve_files_from_config<'a>(
 
 /// Return a list of files to modify
 pub fn files_to_modify(
-    config: &Config,
+    config: &config::FinalizedConfig,
     file_map: FileMap,
 ) -> impl Iterator<Item = (PathBuf, Vec<FileChange>)> + use<'_> {
     let excluded_paths_from_config: HashSet<&PathBuf> = config

@@ -1,16 +1,246 @@
+use crate::f_string::PythonFormatString;
+use crate::files::{self, IoError};
+use std::collections::HashMap;
+use std::path::Path;
+
+/// Update version in TOML document
+pub(crate) fn replace_version_of_document(
+    document: &mut toml_edit::DocumentMut,
+    key_path: &[&str],
+    search: &regex::Regex,
+    replacement: &str,
+    // allow_missing:
+    // search_for: re.Pattern,
+    // raw_search_pattern: str,
+    // dry_run: bool = False
+) -> bool {
+    use toml_edit::{Formatted, Item, Value};
+    // document.path
+    // assert_eq!(doc.to_string(), expected);
+
+    let mut item: Option<&mut Item> = Some(document.as_item_mut());
+    for k in key_path {
+        item = item.and_then(|doc| doc.get_mut(k));
+    }
+    // let Some(item) = item else {
+    //     return Ok(false);
+    // };
+    // Formatted<String>
+    // let Some(Value::String(Formatted{value: before, ..})) = item.and_then(Item::as_value_mut) else {
+    let Some(Value::String(before)) = item.and_then(Item::as_value_mut) else {
+        return false;
+    };
+
+    // let before = before.ok_or_else("").map()
+    // let Some(item_str) = item.and_then(|before| before.as_str()) else {
+    //     // value not found
+    //     return Ok(false);
+    // };
+    // let item_str = item.as_value_mut();
+
+    // String(Formatted<String>),
+    // dbg!(&item_str);
+
+    // toml_data = tomlkit.parse(self.path.read_text(encoding="utf-8"))
+    // value_before = get_nested_value(toml_data, self.file_change.key_path)
+    //
+    let matches = search.find_iter(before.value());
+    let new_value = if matches.count() > 0 {
+        // let replacement = format!(r#"\g<section_prefix>{new_version}"#);
+        search.replace_all(before.value(), replacement)
+    } else {
+        tracing::warn!(
+            "key {:?} does not match {}",
+            key_path.to_vec().join("."),
+            search.as_str(),
+        );
+        // tracing::info!("could not find current version ({current_version}) in {path:?}");
+        return false;
+    };
+
+    // if contains_pattern(search, value_before)
+    //
+    // if not contains_pattern(search_for, value_before) and not self.file_change.ignore_missing_version:
+    //     raise ValueError(
+    //         f"Key '{self.file_change.key_path}' in {self.path} does not contain the correct contents: "
+    //         f"{raw_search_pattern}"
+    //     )
+    //
+    // new_value = search_for.sub(replace_with, value_before)
+    // log_changes(f"{self.path}:{self.file_change.key_path}", value_before, new_value, dry_run)
+    //
+    *before = Formatted::new(new_value.to_string());
+    // set_nested_value(toml_data, new_value, self.file_change.key_path)
+    //
+    // self.path.write_text(tomlkit.dumps(toml_data), encoding="utf-8")
+    true
+}
+
+// #[derive(thiserror::Error, Debug)]
+// pub enum ReplaceVersionError {
+//     #[error(transparent)]
+//     Io(#[from] IoError),
+//     #[error(transparent)]
+//     Toml(#[from] toml_edit::TomlError),
+// }
+
+/// Update the `current_version` key in the configuration file
+pub(crate) async fn replace_version<K, V>(
+    path: &Path,
+    config: &super::FinalizedConfig,
+    ctx: &HashMap<K, V>,
+    // _current_version: &str,
+    // _next_version: &str,
+    dry_run: bool,
+) -> Result<Option<files::Modification>, files::ReplaceVersionError>
+where
+    K: std::borrow::Borrow<str> + std::hash::Hash + Eq + std::fmt::Debug,
+    V: AsRef<str> + std::fmt::Debug,
+{
+    tracing::info!(config = ?path, "processing config file");
+
+    let as_io_error = |source: std::io::Error| IoError::new(source, path);
+
+    let extension = path.extension().and_then(|ext| ext.to_str());
+
+    if extension.is_some_and(|ext| !ext.eq_ignore_ascii_case("toml")) {
+        tracing::warn!(
+            "cannot update TOML config file with extension {:?}",
+            extension.unwrap_or_default()
+        );
+        return Ok(None);
+    }
+
+    // if dry_run {
+    //     tracing::info!(?path, "would write to config file");
+    // } else {
+    //     tracing::info!(?path, "writing to config file");
+    // }
+
+    // parse the document
+    let before = tokio::fs::read_to_string(path).await.map_err(as_io_error)?;
+    let mut document = before.parse::<toml_edit::DocumentMut>()?;
+
+    // let search = &config::defaults::PARSE_VERSION_REGEX; // TODO: change
+    // let replacement = "<new-version>";
+
+    // let default_search_pattern: &super::regex::RegexTemplate = &super::defaults::SEARCH;
+    let search_pattern = &config.global.search;
+    // .as_ref()
+    // .unwrap_or(default_search_pattern);
+    let search_regex = search_pattern.format(&ctx, true)?;
+
+    let replace_pattern = &config.global.replace;
+    // .as_deref()
+    // .unwrap_or(&super::defaults::REPLACE);
+
+    let replacement = PythonFormatString::parse(replace_pattern)?;
+    let replacement = replacement.format(&ctx, true)?;
+
+    let _ = replace_version_of_document(
+        &mut document,
+        &["tool", "bumpversion", "current_version"],
+        &search_regex,
+        &replacement,
+    );
+
+    let after = document.to_string();
+
+    if !dry_run {
+        use tokio::io::AsyncWriteExt;
+        let file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create(false)
+            .truncate(true)
+            .open(path)
+            .await
+            .map_err(as_io_error)?;
+        let mut writer = tokio::io::BufWriter::new(file);
+        writer
+            .write_all(after.as_bytes())
+            .await
+            .map_err(as_io_error)?;
+        writer.flush().await.map_err(as_io_error)?;
+    }
+
+    let modification = files::Modification {
+        before,
+        after,
+        replacements: vec![files::Replacement {
+            search_pattern: search_pattern.to_string(),
+            search: search_regex.as_str().to_string(),
+            replace_pattern: replace_pattern.to_string(),
+            replace: replacement.to_string(),
+        }],
+    };
+    Ok(Some(modification))
+}
+
 #[cfg(test)]
 #[allow(clippy::too_many_lines, clippy::unnecessary_wraps)]
 mod tests {
     use crate::{
         config::{
-            pyproject_toml::tests::parse_toml, Config, FileConfig, GlobalConfig, InputFile,
-            RegexTemplate, VersionComponentSpec,
+            self, file::FileConfig, global::GlobalConfig, pyproject_toml::tests::parse_toml,
+            regex::RegexTemplate, version::VersionComponentSpec, Config, InputFile,
         },
         diagnostics::Printer,
         f_string::{PythonFormatString, Value},
     };
-
     use color_eyre::eyre;
+    use similar_asserts::assert_eq as sim_assert_eq;
+
+    #[test]
+    fn test_replace_version() -> eyre::Result<()> {
+        crate::tests::init();
+
+        let pyproject_toml = indoc::indoc! {r#"
+            [tool.bumpversion]
+            current_version = "1.2.3"
+
+            [[tool.bumpversion.files]]
+            filename = "config.ini"
+
+            search = """
+            [myproject]
+            version={current_version}"""
+
+            replace = """
+            [myproject]
+            version={new_version}"""
+        "#};
+
+        let mut document = pyproject_toml.parse::<toml_edit::DocumentMut>()?;
+        dbg!(&document);
+        let config = config::FinalizedFileConfig::default();
+        let replacement = "<new-version>";
+        super::replace_version_of_document(
+            &mut document,
+            &["tool", "bumpversion", "current_version"],
+            &config.parse_version_pattern,
+            replacement,
+        );
+
+        let have = document.to_string();
+        println!("{have}");
+        let want = indoc::indoc! {r#"
+            [tool.bumpversion]
+            current_version = "<new-version>"
+
+            [[tool.bumpversion.files]]
+            filename = "config.ini"
+
+            search = """
+            [myproject]
+            version={current_version}"""
+
+            replace = """
+            [myproject]
+            version={new_version}"""
+        "#};
+        sim_assert_eq!(have, want);
+        Ok(())
+    }
 
     #[test]
     fn test_invalid_bumpversion_toml() -> eyre::Result<()> {
@@ -34,8 +264,8 @@ mod tests {
         let printer = Printer::default();
         let (config, _file_id, diagnostics) = parse_toml(bumpversion_toml, &printer);
         let err = config.unwrap_err();
-        similar_asserts::assert_eq!(&err.to_string(), "expected newline, found a period");
-        similar_asserts::assert_eq!(printer.lines(&diagnostics[0]).ok(), Some(vec![1]));
+        sim_assert_eq!(&err.to_string(), "expected newline, found a period");
+        sim_assert_eq!(printer.lines(&diagnostics[0]).ok(), Some(vec![1]));
         Ok(())
     }
 
@@ -71,7 +301,7 @@ mod tests {
             components: [].into_iter().collect(),
         };
         let config = parse_toml(bumpversion_toml, &Printer::default()).0?;
-        similar_asserts::assert_eq!(config, Some(expected));
+        sim_assert_eq!(config, Some(expected));
 
         Ok(())
     }
@@ -209,7 +439,7 @@ mod tests {
             .into_iter()
             .collect(),
         };
-        similar_asserts::assert_eq!(config, Some(expected));
+        sim_assert_eq!(config, Some(expected));
         Ok(())
     }
 
@@ -327,7 +557,7 @@ mod tests {
             ],
             components: [].into_iter().collect(),
         };
-        similar_asserts::assert_eq!(config, Some(expected));
+        sim_assert_eq!(config, Some(expected));
         Ok(())
     }
 
@@ -383,7 +613,7 @@ mod tests {
             files: vec![].into_iter().collect(),
             components: [].into_iter().collect(),
         };
-        similar_asserts::assert_eq!(config, Some(expected));
+        sim_assert_eq!(config, Some(expected));
         Ok(())
     }
 
@@ -627,7 +857,7 @@ mod tests {
             .into_iter()
             .collect(),
         };
-        similar_asserts::assert_eq!(config, Some(expected));
+        sim_assert_eq!(config, Some(expected));
         Ok(())
     }
 
@@ -671,7 +901,7 @@ mod tests {
             )],
             components: [].into_iter().collect(),
         };
-        similar_asserts::assert_eq!(config, Some(expected));
+        sim_assert_eq!(config, Some(expected));
         Ok(())
     }
 
@@ -716,7 +946,7 @@ mod tests {
             )],
             components: [].into_iter().collect(),
         };
-        similar_asserts::assert_eq!(config, Some(expected));
+        sim_assert_eq!(config, Some(expected));
         Ok(())
     }
 
@@ -764,7 +994,7 @@ mod tests {
             ],
             components: [].into_iter().collect(),
         };
-        similar_asserts::assert_eq!(config, Some(expected));
+        sim_assert_eq!(config, Some(expected));
         Ok(())
     }
 }

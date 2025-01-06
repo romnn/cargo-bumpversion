@@ -73,13 +73,12 @@ fn parse_positional_arguments(
 async fn check_is_dirty(
     repo: &GitRepository,
     options: &options::Options,
-    config: &config::Config,
+    config: &config::FinalizedConfig,
 ) -> eyre::Result<()> {
     let allow_dirty = options
         .allow_dirty
         .or(options.no_allow_dirty.invert())
-        .or(config.global.allow_dirty)
-        .unwrap_or(false);
+        .unwrap_or(config.global.allow_dirty);
 
     let dirty_files = repo.dirty_files().await?;
     if !allow_dirty && !dirty_files.is_empty() {
@@ -121,30 +120,20 @@ async fn main() -> eyre::Result<()> {
         .await?
         .ok_or(eyre::eyre!("missing config file"))?;
 
-    // build list of parts
-    let components = crate::config::version_component_configs(&config);
+    let components = config::version::version_component_configs(&config);
     let (bump, cli_files) = parse_positional_arguments(&mut options, &components)?;
 
-    let tag_name = config
-        .global
-        .tag_name
-        .as_ref()
-        .unwrap_or(&config::defaults::TAG_NAME);
-
-    let parse_version_pattern = config
-        .global
-        .parse_version_pattern
-        .as_deref()
-        .unwrap_or(&config::defaults::PARSE_VERSION_REGEX);
-
     let TagAndRevision { tag, revision } = repo
-        .latest_tag_and_revision(tag_name, parse_version_pattern)
+        .latest_tag_and_revision(
+            &config.global.tag_name,
+            &config.global.parse_version_pattern,
+        )
         .await?;
 
     tracing::debug!(?tag, "current");
     tracing::debug!(?revision, "current");
 
-    let dry_run = options.dry_run.or(config.global.dry_run).unwrap_or(false);
+    let dry_run = options.dry_run.unwrap_or(config.global.dry_run);
 
     let configured_version = options
         .current_version

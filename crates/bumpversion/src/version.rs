@@ -1,5 +1,5 @@
 use crate::{
-    config::{self, VersionComponentSpec},
+    config::version::{VersionComponentConfigs, VersionComponentSpec},
     f_string::PythonFormatString,
 };
 use indexmap::IndexMap;
@@ -28,6 +28,7 @@ pub type RawVersion<'a> = HashMap<&'a str, &'a str>;
 //     }
 // }
 
+// TODO: refactor this
 pub mod numeric {
     pub static FIRST_NUMERIC_REGEX: once_cell::sync::Lazy<regex::Regex> =
         once_cell::sync::Lazy::new(|| {
@@ -434,14 +435,14 @@ impl Version {
 #[derive(Debug, Clone, Default)]
 #[allow(clippy::module_name_repetitions)]
 pub struct VersionSpec {
-    components: config::VersionComponentConfigs,
+    components: VersionComponentConfigs,
     dependency_map: HashMap<String, Vec<String>>,
     components_to_always_increment: Vec<String>,
 }
 
 impl VersionSpec {
     #[must_use]
-    pub fn from_components(components: config::VersionComponentConfigs) -> Self {
+    pub fn from_components(components: VersionComponentConfigs) -> Self {
         let mut dependency_map: HashMap<String, Vec<String>> = HashMap::new();
         // let mut previous_component: &String = components
         //     .keys()

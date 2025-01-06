@@ -36,7 +36,7 @@ pub enum Bump<'a> {
 pub async fn find_config<W>(
     dir: &Path,
     printer: &diagnostics::Printer<W>,
-) -> Result<Option<(config::ConfigFile, config::Config)>, config::Error>
+) -> Result<Option<(config::ConfigFile, config::FinalizedConfig)>, config::Error>
 where
     W: codespan_reporting::term::termcolor::WriteColor + Send + Sync + 'static,
 {
@@ -133,19 +133,18 @@ where
         .next()
         .await
         .transpose()?
-        .map(|(config_file, mut config, diagnostics)| {
+        .map(|(config_file, config, diagnostics)| {
             // emit diagnostics
             for diagnostic in &diagnostics {
                 printer.emit(diagnostic).map_err(diagnostics::Error::from)?;
             }
 
-            // the order is important here
-            config.merge_global_config();
+            // config.merge_file_configs_with_global_config();
 
-            let defaults = config::GlobalConfig::default();
-            config.apply_defaults(&defaults);
+            // let defaults = config::global::GlobalConfig::default();
+            // config.apply_defaults(&defaults);
 
-            Ok::<_, config::Error>((config_file, config))
+            Ok::<_, config::Error>((config_file, config.finalize()))
         })
         .transpose()
 }
@@ -177,11 +176,11 @@ where
 #[derive(Debug)]
 pub struct BumpVersion<VCS, L> {
     pub repo: VCS,
-    pub config: config::Config,
+    pub config: config::FinalizedConfig,
     pub logger: L,
     pub tag_and_revision: TagAndRevision,
     pub file_map: FileMap,
-    pub components: config::VersionComponentConfigs,
+    pub components: config::version::VersionComponentConfigs,
     pub config_file: Option<config::ConfigFile>,
     pub dry_run: bool,
 }
@@ -213,13 +212,7 @@ where
             "parsing current version"
         );
 
-        let parse_version_pattern = self
-            .config
-            .global
-            .parse_version_pattern
-            .as_deref()
-            .unwrap_or(&config::defaults::PARSE_VERSION_REGEX);
-
+        let parse_version_pattern = &self.config.global.parse_version_pattern;
         let version_spec = version::VersionSpec::from_components(self.components.clone());
 
         let current_version = version::parse_version(
@@ -283,12 +276,7 @@ where
         )
         .collect();
 
-        let serialize_version_patterns = self
-            .config
-            .global
-            .serialize_version_patterns
-            .as_deref()
-            .unwrap_or_default();
+        let serialize_version_patterns = &self.config.global.serialize_version_patterns;
         let new_version_serialized =
             new_version.serialize(serialize_version_patterns, &ctx_without_new_version)?;
         tracing::info!(version = new_version_serialized, "next version");
@@ -319,7 +307,7 @@ where
             tracing::info!("dry run active, won't touch any files.");
         }
 
-        let mut configured_files: IndexMap<PathBuf, Vec<config::FileChange>> =
+        let mut configured_files: IndexMap<PathBuf, Vec<config::change::FileChange>> =
             files::files_to_modify(&self.config, self.file_map.clone()).collect();
 
         // filter the files that are not valid for this bump
@@ -431,13 +419,8 @@ where
                         .map_err(files::ReplaceVersionError::from)
                 }
                 config::ConfigFile::PyProject(_) | config::ConfigFile::BumpversionToml(_) => {
-                    config::pyproject_toml::replace_version(
-                        config_path,
-                        &self.config,
-                        ctx,
-                        self.dry_run,
-                    )
-                    .await
+                    config::toml::replace_version(config_path, &self.config, ctx, self.dry_run)
+                        .await
                 }
                 config::ConfigFile::CargoToml(_) => {
                     todo!("cargo support")
@@ -453,7 +436,7 @@ where
 
     pub async fn commit_changes(
         &self,
-        configured_files: &IndexMap<PathBuf, Vec<config::FileChange>>,
+        configured_files: &IndexMap<PathBuf, Vec<config::change::FileChange>>,
         current_version_serialized: String,
         next_version_serialized: String,
         ctx: &HashMap<String, String>,
@@ -472,8 +455,8 @@ where
             files_to_commit.insert(config_file.path());
         }
 
-        let commit = self.config.global.commit.unwrap_or(true);
-        if commit {
+        // let commit = self.config.global.commit.unwrap_or(true);
+        if self.config.global.commit {
             self.logger
                 .log(Verbosity::Low, &format!("{}", "[commit]".magenta()));
 
@@ -487,12 +470,9 @@ where
                 }
             }
 
-            let commit_message = self
-                .config
-                .global
-                .commit_message
-                .as_ref()
-                .unwrap_or(&config::defaults::COMMIT_MESSAGE);
+            let commit_message = &self.config.global.commit_message;
+            // .as_ref()
+            // .unwrap_or(&config::defaults::COMMIT_MESSAGE);
 
             let commit_message = commit_message.format(ctx, true)?;
             tracing::info!(msg = commit_message, "commit");
@@ -521,33 +501,10 @@ where
             }
         }
 
-        let tag = self
-            .config
-            .global
-            .tag
-            .unwrap_or(config::defaults::CREATE_TAG);
-        if tag {
-            let sign_tag = self
-                .config
-                .global
-                .sign_tags
-                .unwrap_or(config::defaults::SIGN_TAGS);
-
-            let tag_name = self
-                .config
-                .global
-                .tag_name
-                .as_ref()
-                .unwrap_or(&config::defaults::TAG_NAME)
-                .format(ctx, true)?;
-
-            let tag_message = self
-                .config
-                .global
-                .tag_message
-                .as_ref()
-                .unwrap_or(&config::defaults::TAG_MESSAGE)
-                .format(ctx, true)?;
+        if self.config.global.tag {
+            let sign_tag = self.config.global.sign_tags;
+            let tag_name = self.config.global.tag_name.format(ctx, true)?;
+            let tag_message = self.config.global.tag_message.format(ctx, true)?;
 
             tracing::info!(msg = tag_message, name = tag_name, "tag");
 

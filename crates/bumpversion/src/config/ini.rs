@@ -1,7 +1,7 @@
 use crate::{
     config::{
-        self, pyproject_toml::ValueKind, Config, FileConfig, GlobalConfig, InputFile,
-        RegexTemplate, VersionComponentSpec,
+        self, pyproject_toml::ValueKind, FileConfig, GlobalConfig, InputFile, RegexTemplate,
+        VersionComponentSpec,
     },
     diagnostics::{DiagnosticExt, FileId, Span},
     f_string::{self, PythonFormatString},
@@ -466,7 +466,7 @@ pub(crate) fn parse_file_config(
     })
 }
 
-impl Config {
+impl config::Config {
     pub fn from_ini_value(
         mut config: ini::Value,
         file_id: FileId,
@@ -604,7 +604,7 @@ static CONFIG_CURRENT_VERSION_REGEX: once_cell::sync::Lazy<regex::Regex> =
 /// config file.
 pub async fn replace_version<K, V>(
     path: &Path,
-    _config: &Config,
+    _config: &config::FinalizedConfig,
     _ctx: &HashMap<K, V>,
     // current_version: &str,
     // new_version: &str,
