@@ -11,6 +11,13 @@ impl std::ops::Deref for Regex {
     }
 }
 
+impl<'a> TryFrom<&'a str> for Regex {
+    type Error = regex::Error;
+    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+        regex::RegexBuilder::new(value).build().map(Self)
+    }
+}
+
 impl std::fmt::Display for Regex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(&self.0, f)

@@ -67,7 +67,6 @@ static FLAG_PATTERN: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy
 /// The tuple `(pattern_without flags, flags)`.
 fn extract_regex_flags(pattern: &str) -> (&str, &str) {
     let bits: Vec<_> = FLAG_PATTERN.split(pattern).collect();
-    // dbg!(&bits);
     if bits.len() < 2 {
         (pattern, "")
     } else {
@@ -88,9 +87,7 @@ fn get_version_from_tag<'a>(
     let parse_pattern = parse_version_regex.as_str();
     let version_pattern = parse_pattern.replace("\\\\", "\\");
     let (version_pattern, regex_flags) = extract_regex_flags(&version_pattern);
-    // dbg!(&version_pattern, &regex_flags);
     let PythonFormatString(values) = tag_name;
-    // dbg!(&values);
     let (prefix, suffix) = values
         .iter()
         .position(|value| value == &Value::Argument("new_version".to_string()))
@@ -101,8 +98,6 @@ fn get_version_from_tag<'a>(
         })
         .unwrap_or_default();
 
-    // dbg!(&prefix, &suffix);
-
     let prefix = prefix.iter().fold(String::new(), |mut acc, value| {
         acc.push_str(&value.to_string());
         acc
@@ -111,8 +106,6 @@ fn get_version_from_tag<'a>(
         acc.push_str(&value.to_string());
         acc
     });
-
-    // dbg!(&prefix, &suffix);
 
     let pattern = format!(
         "{regex_flags}{}(?P<current_version>{version_pattern}){}",
@@ -198,7 +191,6 @@ impl GitRepository {
             Ok(tag_info) => {
                 let raw_tag = tag_info.stdout;
                 let mut tag_parts: Vec<&str> = raw_tag.split('-').collect();
-                // dbg!(&tag_parts);
 
                 let dirty = tag_parts
                     .last()
@@ -298,6 +290,7 @@ impl VersionControlSystem for GitRepository {
             .await?;
         let mut writer = tokio::io::BufWriter::new(tmp_file);
         writer.write_all(message.as_bytes()).await?;
+        writer.flush().await?;
 
         let mut cmd = Command::new("git");
         cmd.arg("commit");
@@ -306,22 +299,20 @@ impl VersionControlSystem for GitRepository {
         cmd.args(extra_args);
         cmd.envs(env);
         cmd.current_dir(&self.path);
-        let commit_output = run_command(&mut cmd).await?;
-        dbg!(&commit_output);
+        let _commit_output = run_command(&mut cmd).await?;
         Ok(())
     }
 
-    async fn add(&self, files: &[impl AsRef<Path>]) -> Result<(), Error> {
-        let files = files
-            .iter()
-            .map(|f| f.as_ref().to_string_lossy().to_string());
+    async fn add<P>(&self, files: impl IntoIterator<Item = P>) -> Result<(), Error>
+    where
+        P: AsRef<std::ffi::OsStr>,
+    {
         let mut cmd = Command::new("git");
         cmd.arg("add")
             .arg("--update")
             .args(files)
             .current_dir(&self.path);
-        let add_output = run_command(&mut cmd).await?;
-        dbg!(&add_output);
+        let _add_output = run_command(&mut cmd).await?;
         Ok(())
     }
 
@@ -353,8 +344,7 @@ impl VersionControlSystem for GitRepository {
         if let Some(message) = message {
             cmd.args(["--message", message]);
         }
-        let tag_output = run_command(&mut cmd).await?;
-        dbg!(&tag_output);
+        let _tag_output = run_command(&mut cmd).await?;
         Ok(())
     }
 

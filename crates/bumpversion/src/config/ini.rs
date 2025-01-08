@@ -389,6 +389,12 @@ pub(crate) fn parse_global_config(
         .map(|value| as_string_array(value, true))
         .transpose()?
         .map(|values| values.into_iter().map(PathBuf::from).collect());
+    let additional_files = value
+        .remove_option("additional_files")
+        .and_then(as_optional)
+        .map(|value| as_string_array(value, true))
+        .transpose()?
+        .map(|values| values.into_iter().map(PathBuf::from).collect());
 
     Ok((
         search_is_regex_compat,
@@ -416,6 +422,7 @@ pub(crate) fn parse_global_config(
             post_commit_hooks,
             included_paths,
             excluded_paths,
+            additional_files,
         },
     ))
 }

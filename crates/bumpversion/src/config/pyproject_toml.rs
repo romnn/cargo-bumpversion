@@ -398,6 +398,11 @@ pub(crate) fn parse_global_config<'de>(
         .map(as_string_array)
         .transpose()?
         .map(|values| values.into_iter().map(PathBuf::from).collect());
+    let additional_files = table
+        .get("additional_files")
+        .map(as_string_array)
+        .transpose()?
+        .map(|values| values.into_iter().map(PathBuf::from).collect());
 
     Ok((
         is_regex,
@@ -425,6 +430,7 @@ pub(crate) fn parse_global_config<'de>(
             post_commit_hooks,
             included_paths,
             excluded_paths,
+            additional_files,
         },
     ))
 }
@@ -1515,6 +1521,8 @@ pub mod tests {
 
     #[test]
     fn parse_pyproject_toml_of_bump_my_version() -> eyre::Result<()> {
+        use crate::config::MergeWith;
+
         crate::tests::init();
         let pyproject_toml = include_str!("../../test-data/bump-my-version.pyproject.toml");
         let mut config = parse_toml(pyproject_toml, &BufferedPrinter::default())
@@ -1652,8 +1660,9 @@ pub mod tests {
         sim_assert_eq!(&config, &expected);
 
         // the order is important here
+        config.global.merge_with(&GlobalConfig::default());
         config.merge_file_configs_with_global_config();
-        config.apply_defaults(&GlobalConfig::default());
+        // config.apply_defaults(&GlobalConfig::default());
 
         sim_assert_eq!(
             &config.global,

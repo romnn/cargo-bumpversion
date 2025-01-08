@@ -35,6 +35,7 @@ pub enum Bump<'a> {
 /// When the config file cannot be read or parsed.
 pub async fn find_config<W>(
     dir: &Path,
+    config_overrides: &config::GlobalConfig,
     printer: &diagnostics::Printer<W>,
 ) -> Result<Option<(config::ConfigFile, config::FinalizedConfig)>, config::Error>
 where
@@ -133,16 +134,17 @@ where
         .next()
         .await
         .transpose()?
-        .map(|(config_file, config, diagnostics)| {
+        .map(|(config_file, mut config, diagnostics)| {
+            use crate::config::MergeWith;
+
             // emit diagnostics
             for diagnostic in &diagnostics {
                 printer.emit(diagnostic).map_err(diagnostics::Error::from)?;
             }
 
-            // config.merge_file_configs_with_global_config();
-
-            // let defaults = config::global::GlobalConfig::default();
-            // config.apply_defaults(&defaults);
+            let mut global_config = config_overrides.clone();
+            global_config.merge_with(&config.global);
+            config.global = global_config;
 
             Ok::<_, config::Error>((config_file, config.finalize()))
         })
@@ -182,7 +184,6 @@ pub struct BumpVersion<VCS, L> {
     pub file_map: FileMap,
     pub components: config::version::VersionComponentConfigs,
     pub config_file: Option<config::ConfigFile>,
-    pub dry_run: bool,
 }
 
 impl<VCS, L> BumpVersion<VCS, L>
@@ -303,7 +304,7 @@ where
             return Ok(());
         }
 
-        if self.dry_run {
+        if self.config.global.dry_run {
             tracing::info!("dry run active, won't touch any files.");
         }
 
@@ -345,7 +346,7 @@ where
                             &current_version,
                             &new_version,
                             &ctx_with_new_version,
-                            self.dry_run,
+                            self.config.global.dry_run,
                         )
                         .await?;
                         Ok::<_, BumpError<VCS>>((path, modification))
@@ -377,8 +378,27 @@ where
         )
         .await?;
 
+        let additional_files: Vec<_> = self
+            .config
+            .global
+            .additional_files
+            .as_deref()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|path| {
+                if path.is_absolute() {
+                    path.to_path_buf()
+                } else {
+                    self.repo.path().join(path)
+                }
+            })
+            .collect();
+
+        // TODO: warn for files that dirty but not in either configured or additional
+        // files
         self.commit_changes(
             &configured_files,
+            &additional_files,
             current_version_serialized.clone(),
             new_version_serialized.clone(),
             &ctx_with_new_version,
@@ -414,13 +434,23 @@ where
         if config_path.starts_with(working_dir) {
             let modification = match config_file {
                 config::ConfigFile::SetupCfg(_) | config::ConfigFile::BumpversionCfg(_) => {
-                    config::ini::replace_version(config_path, &self.config, ctx, self.dry_run)
-                        .await
-                        .map_err(files::ReplaceVersionError::from)
+                    config::ini::replace_version(
+                        config_path,
+                        &self.config,
+                        ctx,
+                        self.config.global.dry_run,
+                    )
+                    .await
+                    .map_err(files::ReplaceVersionError::from)
                 }
                 config::ConfigFile::PyProject(_) | config::ConfigFile::BumpversionToml(_) => {
-                    config::toml::replace_version(config_path, &self.config, ctx, self.dry_run)
-                        .await
+                    config::toml::replace_version(
+                        config_path,
+                        &self.config,
+                        ctx,
+                        self.config.global.dry_run,
+                    )
+                    .await
                 }
                 config::ConfigFile::CargoToml(_) => {
                     todo!("cargo support")
@@ -437,6 +467,7 @@ where
     pub async fn commit_changes(
         &self,
         configured_files: &IndexMap<PathBuf, Vec<config::change::FileChange>>,
+        additional_files: &[impl AsRef<Path>],
         current_version_serialized: String,
         next_version_serialized: String,
         ctx: &HashMap<String, String>,
@@ -449,32 +480,35 @@ where
             .and_then(shlex::split)
             .unwrap_or_default();
 
-        let mut files_to_commit: HashSet<&Path> =
-            configured_files.keys().map(PathBuf::as_path).collect();
+        let mut files_to_commit: HashSet<&Path> = configured_files
+            .keys()
+            .map(PathBuf::as_path)
+            .chain(additional_files.into_iter().map(|path| path.as_ref()))
+            .collect();
+
         if let Some(ref config_file) = self.config_file {
+            // add config file
             files_to_commit.insert(config_file.path());
         }
 
-        // let commit = self.config.global.commit.unwrap_or(true);
         if self.config.global.commit {
             self.logger
                 .log(Verbosity::Low, &format!("{}", "[commit]".magenta()));
 
-            for path in files_to_commit {
+            for path in &files_to_commit {
                 self.logger.log(
                     Verbosity::Low,
                     &format!("\t{} {}", "   add".dimmed(), path.to_string_lossy().cyan()),
                 );
-                if !self.dry_run {
-                    self.repo.add(&[path]).await.map_err(BumpError::VCS)?;
-                }
+            }
+            if !self.config.global.dry_run {
+                self.repo
+                    .add(&files_to_commit)
+                    .await
+                    .map_err(BumpError::VCS)?;
             }
 
-            let commit_message = &self.config.global.commit_message;
-            // .as_ref()
-            // .unwrap_or(&config::defaults::COMMIT_MESSAGE);
-
-            let commit_message = commit_message.format(ctx, true)?;
+            let commit_message = self.config.global.commit_message.format(ctx, true)?;
             tracing::info!(msg = commit_message, "commit");
 
             self.logger.log(
@@ -482,7 +516,7 @@ where
                 &format!("\t{} {}", "commit".dimmed(), commit_message.cyan()),
             );
 
-            if !self.dry_run {
+            if !self.config.global.dry_run {
                 let env = std::env::vars().chain([
                     ("HGENCODING".to_string(), "utf-8".to_string()),
                     (
@@ -535,7 +569,7 @@ where
                     Verbosity::Low,
                     &format!("\t{}{}", "sign = ".dimmed(), sign_tag.to_string().yellow()),
                 );
-                if !self.dry_run {
+                if !self.config.global.dry_run {
                     self.repo
                         .tag(tag_name.as_str(), Some(&tag_message), sign_tag)
                         .await

@@ -129,32 +129,28 @@ pub struct Options {
     #[clap(
         long = "parse",
         help = "regex parsing the version string",
-        env = "BUMPVERSION_PARSE",
-        // default_value = r"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)"
+        env = "BUMPVERSION_PARSE"
     )]
-    pub parse_pattern: Option<String>,
+    pub parse_version_pattern: Option<String>,
 
     #[clap(
         long = "serialize",
         help = "how to format what is parsed back to a version",
-        env = "BUMPVERSION_SERIALIZE",
-        // default_value = "{major}.{minor}.{patch}"
+        env = "BUMPVERSION_SERIALIZE"
     )]
-    pub serialize: Vec<String>,
+    pub serialize_version_patterns: Option<Vec<String>>,
 
     #[clap(
         long = "search",
         help = "template for complete string to search",
-        env = "BUMPVERSION_SEARCH",
-        // default_value = "{current_version}"
+        env = "BUMPVERSION_SEARCH"
     )]
     pub search: Option<String>,
 
     #[clap(
         long = "replace",
         help = "template for complete string to replace",
-        env = "BUMPVERSION_REPLACE",
-        // default_value = "{new_version}"
+        env = "BUMPVERSION_REPLACE"
     )]
     pub replace: Option<String>,
 
@@ -272,16 +268,14 @@ pub struct Options {
     #[clap(
         long = "tag-name",
         help = "tag name (only works with --tag)",
-        env = "BUMPVERSION_TAG_NAME",
-        // default_value = "v{new_version}"
+        env = "BUMPVERSION_TAG_NAME"
     )]
     pub tag_name: Option<String>,
 
     #[clap(
         long = "tag-message",
         help = "tag message",
-        env = "BUMPVERSION_TAG_MESSAGE",
-        // default_value = "bump: {current_version} → {new_version}"
+        env = "BUMPVERSION_TAG_MESSAGE"
     )]
     pub tag_message: Option<String>,
 
@@ -289,8 +283,7 @@ pub struct Options {
         short = 'm',
         long = "message",
         help = "commit message",
-        env = "BUMPVERSION_MESSAGE",
-        // default_value = "bump: {current_version} → {new_version}"
+        env = "BUMPVERSION_MESSAGE"
     )]
     pub commit_message: Option<String>,
 

@@ -56,7 +56,12 @@ pub trait VersionControlSystem {
     fn path(&self) -> &Path;
 
     /// Add files to the staging area of the VCS.
-    fn add(&self, files: &[impl AsRef<Path>]) -> impl Future<Output = Result<(), Self::Error>>;
+    fn add<P>(
+        &self,
+        files: impl IntoIterator<Item = P>,
+    ) -> impl Future<Output = Result<(), Self::Error>>
+    where
+        P: AsRef<std::ffi::OsStr>;
 
     /// Commit current changes to the VCS.
     fn commit<A, E, AS, EK, EV>(

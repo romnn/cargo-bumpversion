@@ -156,13 +156,13 @@ impl Config {
         }
     }
 
-    /// Apply defaults.
-    pub fn apply_defaults(&mut self, defaults: &global::GlobalConfig) {
-        self.global.merge_with(defaults);
-        for (_, file_config) in &mut self.files {
-            file_config.merge_with(defaults);
-        }
-    }
+    // /// Apply defaults.
+    // pub fn apply_defaults(&mut self, defaults: &global::GlobalConfig) {
+    //     self.global.merge_with(defaults);
+    //     for (_, file_config) in &mut self.files {
+    //         file_config.merge_with(defaults);
+    //     }
+    // }
 
     /// Finalize the configuration
     ///

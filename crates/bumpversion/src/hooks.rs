@@ -135,7 +135,13 @@ where
         let setup_hooks = &self.config.global.setup_hooks;
         self.logger.log_hooks("setup", setup_hooks);
 
-        run_hooks(setup_hooks, self.repo.path(), env, self.dry_run).await
+        run_hooks(
+            setup_hooks,
+            self.repo.path(),
+            env,
+            self.config.global.dry_run,
+        )
+        .await
     }
 
     /// Run the pre-commit hooks
@@ -158,7 +164,13 @@ where
         let pre_commit_hooks = &self.config.global.pre_commit_hooks;
         self.logger.log_hooks("pre-commit", pre_commit_hooks);
 
-        run_hooks(pre_commit_hooks, self.repo.path(), env, self.dry_run).await
+        run_hooks(
+            pre_commit_hooks,
+            self.repo.path(),
+            env,
+            self.config.global.dry_run,
+        )
+        .await
     }
 
     /// Run the post-commit hooks
@@ -181,7 +193,13 @@ where
         let post_commit_hooks = &self.config.global.post_commit_hooks;
         self.logger.log_hooks("post-commit", post_commit_hooks);
 
-        run_hooks(post_commit_hooks, self.repo.path(), env, self.dry_run).await
+        run_hooks(
+            post_commit_hooks,
+            self.repo.path(),
+            env,
+            self.config.global.dry_run,
+        )
+        .await
     }
 }
 

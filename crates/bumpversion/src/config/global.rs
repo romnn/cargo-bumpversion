@@ -51,6 +51,11 @@ pub struct GlobalConfig {
     pub included_paths: Option<Vec<PathBuf>>,
     /// Excluded paths
     pub excluded_paths: Option<Vec<PathBuf>>,
+    /// Additional files
+    ///
+    /// This is useful for files such as lockfiles, which should be regenerated after the version
+    /// bump in a pre-commit hook.
+    pub additional_files: Option<Vec<PathBuf>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -103,6 +108,11 @@ pub struct GlobalConfigFinalized {
     pub included_paths: Option<Vec<PathBuf>>,
     /// Excluded paths
     pub excluded_paths: Option<Vec<PathBuf>>,
+    /// Additional files to add.
+    ///
+    /// This is useful for files such as lockfiles, which should be regenerated after the version
+    /// bump in a pre-commit hook.
+    pub additional_files: Option<Vec<PathBuf>>,
 }
 
 impl GlobalConfig {
@@ -131,6 +141,7 @@ impl GlobalConfig {
             post_commit_hooks: None,
             included_paths: None,
             excluded_paths: None,
+            additional_files: None,
         }
     }
 }
@@ -181,6 +192,7 @@ impl Default for GlobalConfigFinalized {
             post_commit_hooks: vec![],
             included_paths: None,
             excluded_paths: None,
+            additional_files: None,
         }
     }
 }
@@ -211,6 +223,7 @@ impl Default for GlobalConfig {
             post_commit_hooks: Some(default.post_commit_hooks),
             included_paths: default.included_paths,
             excluded_paths: default.excluded_paths,
+            additional_files: default.additional_files,
         }
     }
 }
@@ -254,6 +267,7 @@ impl GlobalConfig {
             post_commit_hooks: self.post_commit_hooks.unwrap_or(default.post_commit_hooks),
             included_paths: self.included_paths.or(default.included_paths),
             excluded_paths: self.excluded_paths.or(default.excluded_paths),
+            additional_files: self.additional_files.or(default.additional_files),
         }
     }
 }
@@ -293,5 +307,7 @@ impl<'a> super::MergeWith<&'a GlobalConfig> for GlobalConfig {
             .merge_with(other.included_paths.as_ref());
         self.excluded_paths
             .merge_with(other.excluded_paths.as_ref());
+        self.additional_files
+            .merge_with(other.additional_files.as_ref());
     }
 }

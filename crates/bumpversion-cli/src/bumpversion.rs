@@ -21,11 +21,27 @@ fn fix_options(options: &mut options::Options) {
     //
     // It's fine to check for these cases, since `clap::ArgAction::SetTrue` does not allow
     // users to set `--allow-dirty=false`.
-    if options.allow_dirty != Some(true) {
-        options.allow_dirty = None;
-    }
-    if options.no_allow_dirty != Some(true) {
-        options.no_allow_dirty = None;
+    for boolean_option in [
+        &mut options.allow_dirty,
+        &mut options.no_allow_dirty,
+        &mut options.regex,
+        &mut options.no_regex,
+        &mut options.no_configured_files,
+        &mut options.ignore_missing_files,
+        &mut options.no_ignore_missing_files,
+        &mut options.ignore_missing_version,
+        &mut options.no_ignore_missing_version,
+        &mut options.dry_run,
+        &mut options.commit,
+        &mut options.no_commit,
+        &mut options.tag,
+        &mut options.no_tag,
+        &mut options.sign_tags,
+        &mut options.no_sign_tag,
+    ] {
+        if *boolean_option != Some(true) {
+            *boolean_option = None;
+        }
     }
 }
 
@@ -72,16 +88,10 @@ fn parse_positional_arguments(
 
 async fn check_is_dirty(
     repo: &GitRepository,
-    options: &options::Options,
     config: &config::FinalizedConfig,
 ) -> eyre::Result<()> {
-    let allow_dirty = options
-        .allow_dirty
-        .or(options.no_allow_dirty.invert())
-        .unwrap_or(config.global.allow_dirty);
-
     let dirty_files = repo.dirty_files().await?;
-    if !allow_dirty && !dirty_files.is_empty() {
+    if !config.global.allow_dirty && !dirty_files.is_empty() {
         eyre::bail!(
             "Working directory is not clean:\n\n{}",
             dirty_files
@@ -93,6 +103,91 @@ async fn check_is_dirty(
     }
 
     Ok(())
+}
+
+fn global_cli_config(
+    options: &options::Options,
+) -> eyre::Result<bumpversion::config::GlobalConfig> {
+    let search_as_regex = options
+        .allow_dirty
+        .or(options.no_allow_dirty.invert())
+        .unwrap_or(false);
+
+    let search = options
+        .search
+        .as_ref()
+        .map(|search| {
+            let format_string = bumpversion::f_string::PythonFormatString::parse(search)?;
+            let search = if search_as_regex {
+                bumpversion::config::RegexTemplate::Regex(format_string)
+            } else {
+                bumpversion::config::RegexTemplate::Escaped(format_string)
+            };
+            Ok::<_, eyre::Report>(search)
+        })
+        .transpose()?;
+
+    let parse_version_pattern = options
+        .parse_version_pattern
+        .as_deref()
+        .map(bumpversion::config::Regex::try_from)
+        .transpose()?;
+
+    let serialize_version_patterns = options
+        .serialize_version_patterns
+        .as_ref()
+        .map(|patterns| {
+            patterns
+                .into_iter()
+                .map(String::as_str)
+                .map(bumpversion::f_string::PythonFormatString::parse)
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?;
+
+    let tag_name = options
+        .tag_name
+        .as_deref()
+        .map(bumpversion::f_string::PythonFormatString::parse)
+        .transpose()?;
+
+    let tag_message = options
+        .tag_name
+        .as_deref()
+        .map(bumpversion::f_string::PythonFormatString::parse)
+        .transpose()?;
+
+    let commit_message = options
+        .commit_message
+        .as_deref()
+        .map(bumpversion::f_string::PythonFormatString::parse)
+        .transpose()?;
+
+    let cli_overrides = bumpversion::config::GlobalConfig {
+        allow_dirty: options.allow_dirty.or(options.no_allow_dirty.invert()),
+        current_version: options.current_version.clone(),
+        parse_version_pattern,
+        serialize_version_patterns,
+        search,
+        replace: options.replace.clone(),
+        no_configured_files: options.no_configured_files,
+        ignore_missing_files: options
+            .ignore_missing_files
+            .or(options.no_ignore_missing_files.invert()),
+        ignore_missing_version: options
+            .ignore_missing_version
+            .or(options.no_ignore_missing_version.invert()),
+        dry_run: options.dry_run,
+        commit: options.commit.or(options.no_commit.invert()),
+        tag: options.tag.or(options.no_tag.invert()),
+        sign_tags: options.sign_tags.or(options.no_sign_tag.invert()),
+        tag_name,
+        tag_message,
+        commit_message,
+        commit_args: options.commit_args.clone(),
+        ..bumpversion::config::GlobalConfig::empty()
+    };
+    Ok(cli_overrides)
 }
 
 #[tokio::main]
@@ -116,7 +211,8 @@ async fn main() -> eyre::Result<()> {
 
     let printer = bumpversion::diagnostics::Printer::stderr(color_choice);
 
-    let (config_file_path, mut config) = bumpversion::find_config(&dir, &printer)
+    let cli_overrides = global_cli_config(&options)?;
+    let (config_file_path, mut config) = bumpversion::find_config(&dir, &cli_overrides, &printer)
         .await?
         .ok_or(eyre::eyre!("missing config file"))?;
 
@@ -133,13 +229,7 @@ async fn main() -> eyre::Result<()> {
     tracing::debug!(?tag, "current");
     tracing::debug!(?revision, "current");
 
-    let dry_run = options.dry_run.unwrap_or(config.global.dry_run);
-
-    let configured_version = options
-        .current_version
-        .as_ref()
-        .or(config.global.current_version.as_ref())
-        .cloned();
+    let configured_version = &config.global.current_version;
     let actual_version = tag.as_ref().map(|tag| &tag.current_version).cloned();
 
     // if both versions are present, they should match
@@ -153,11 +243,7 @@ async fn main() -> eyre::Result<()> {
         }
     }
 
-    // let current_version: String = configured_version
-    //     .or(actual_version)
-    //     .ok_or(eyre::eyre!("Unable to determine the current version"))?;
-
-    check_is_dirty(&repo, &options, &config).await?;
+    check_is_dirty(&repo, &config).await?;
 
     // build resolved file map
     let file_map =
@@ -188,7 +274,7 @@ async fn main() -> eyre::Result<()> {
         options.verbosity.verbose.into()
     };
 
-    let logger = verbose::Logger::new(verbosity).dry_run(dry_run);
+    let logger = verbose::Logger::new(verbosity).dry_run(config.global.dry_run);
     let manager = bumpversion::BumpVersion {
         repo,
         config,
@@ -197,7 +283,6 @@ async fn main() -> eyre::Result<()> {
         file_map,
         components,
         config_file: Some(config_file_path),
-        dry_run,
     };
     manager.bump(bump).await?;
 
