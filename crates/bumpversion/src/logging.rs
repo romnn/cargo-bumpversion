@@ -52,7 +52,7 @@ where
         );
 
         let Some(modification) = modification else {
-            self.log(Verbosity::Low, &format!("\tnot modified"));
+            self.log(Verbosity::Low, "\tnot modified");
             return;
         };
         let (search_color, replace_color) = (Color::Red, Color::Green);
@@ -109,10 +109,7 @@ pub(crate) fn unescape(value: String) -> String {
     let mut chars = value.chars();
     while let Some(c) = chars.next() {
         match c {
-            '\\' => match chars.next() {
-                Some(c) => n.push(c),
-                None => {}
-            },
+            '\\' => if let Some(c) = chars.next() { n.push(c) },
             c => n.push(c),
         }
     }
@@ -126,7 +123,7 @@ pub(crate) fn format_version(version: &Version, color: Color) -> String {
             format!(
                 "{}={}",
                 comp_name.color(color),
-                value.value().as_deref().unwrap_or("?")
+                value.value().unwrap_or("?")
             )
         })
         .collect::<Vec<_>>()

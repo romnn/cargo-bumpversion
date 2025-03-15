@@ -28,7 +28,7 @@ impl bumpversion::logging::Log for Logger {
         if self.dry_run {
             println!("{}{}", " [DRY-RUN] ".blue(), message);
         } else {
-            println!("{}", message);
+            println!("{message}");
         }
     }
 }

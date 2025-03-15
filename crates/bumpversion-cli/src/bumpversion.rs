@@ -6,7 +6,7 @@ mod verbose;
 
 use bumpversion::{
     config,
-    vcs::{git::GitRepository, TagAndRevision, VersionControlSystem},
+    vcs::{TagAndRevision, VersionControlSystem, git::GitRepository},
 };
 use clap::Parser;
 use color_eyre::eyre::{self, WrapErr};
@@ -57,7 +57,7 @@ fn parse_positional_arguments(
         .map(ToString::to_string);
 
     // first, check for invalid flags
-    for arg in options.args.iter() {
+    for arg in &options.args {
         if arg.starts_with("--") {
             eyre::bail!("unknown flag {arg:?}");
         }
@@ -138,7 +138,7 @@ fn global_cli_config(
         .as_ref()
         .map(|patterns| {
             patterns
-                .into_iter()
+                .iter()
                 .map(String::as_str)
                 .map(bumpversion::f_string::PythonFormatString::parse)
                 .collect::<Result<Vec<_>, _>>()
@@ -192,10 +192,6 @@ fn global_cli_config(
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
-    if std::env::var("RUST_SPANTRACE").is_err() {
-        std::env::set_var("RUST_SPANTRACE", "0");
-    }
-
     let start = std::time::Instant::now();
     color_eyre::install()?;
 

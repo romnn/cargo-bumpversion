@@ -72,14 +72,14 @@ pub enum RegexTemplate {
 
 impl std::fmt::Display for RegexTemplate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_ref().to_string())
+        write!(f, "{}", self.as_ref())
     }
 }
 
 impl AsRef<PythonFormatString> for RegexTemplate {
     fn as_ref(&self) -> &PythonFormatString {
         match self {
-            Self::Regex(s) | Self::Escaped(s) => &s,
+            Self::Regex(s) | Self::Escaped(s) => s,
         }
     }
 }

@@ -232,7 +232,7 @@ impl GlobalConfig {
     /// Finalize the global config.
     ///
     /// All unset configuration options will be set to their default value.
-    pub fn finalize(self) -> GlobalConfigFinalized {
+    #[must_use] pub fn finalize(self) -> GlobalConfigFinalized {
         let default = GlobalConfigFinalized::default();
         GlobalConfigFinalized {
             allow_dirty: self.allow_dirty.unwrap_or(default.allow_dirty),

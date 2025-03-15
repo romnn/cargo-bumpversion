@@ -501,7 +501,6 @@ impl VersionSpec {
             .get(comp_name)
             .map(|deps| deps.iter())
             .unwrap_or_default()
-            .into_iter()
             .collect();
         let mut visited: HashSet<&str> = HashSet::new();
 

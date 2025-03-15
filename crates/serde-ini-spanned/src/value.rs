@@ -1,8 +1,8 @@
 use crate::diagnostics::DiagnosticExt;
 use crate::spanned::{Span, Spanned};
 use crate::{
-    parse::{Item, Parse, ParseState, Parser},
     Error, ParseConfig,
+    parse::{Item, Parse, ParseState, Parser},
 };
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use indexmap::{Equivalent, IndexMap};
@@ -833,7 +833,7 @@ fn get_section<'a>(
     out: &'a mut Value,
 ) -> &'a mut Section {
     match current_section {
-        Some(ref name) => out.sections.entry(name.clone()).or_default(),
+        Some(name) => out.sections.entry(name.clone()).or_default(),
         None => &mut out.defaults,
     }
 }

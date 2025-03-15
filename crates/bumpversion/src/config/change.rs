@@ -17,7 +17,7 @@ pub struct FileChange {
 }
 
 impl FileChange {
-    pub fn new(
+    #[must_use] pub fn new(
         file_config: file::FinalizedFileConfig,
         components: &super::VersionComponentConfigs,
     ) -> Self {

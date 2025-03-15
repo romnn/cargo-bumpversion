@@ -355,7 +355,7 @@ where
                 .try_collect()
                 .await?;
 
-        modifications.sort_by_key(|(path, _)| path.to_path_buf());
+        modifications.sort_by_key(|(path, _)| (*path).clone());
 
         for (path, modification) in modifications {
             self.logger.log(Verbosity::Low, "");
@@ -384,10 +384,10 @@ where
             .additional_files
             .as_deref()
             .unwrap_or_default()
-            .into_iter()
+            .iter()
             .map(|path| {
                 if path.is_absolute() {
-                    path.to_path_buf()
+                    path.clone()
                 } else {
                     self.repo.path().join(path)
                 }
@@ -483,7 +483,7 @@ where
         let mut files_to_commit: HashSet<&Path> = configured_files
             .keys()
             .map(PathBuf::as_path)
-            .chain(additional_files.into_iter().map(|path| path.as_ref()))
+            .chain(additional_files.iter().map(std::convert::AsRef::as_ref))
             .collect();
 
         if let Some(ref config_file) = self.config_file {
@@ -552,7 +552,7 @@ where
                     Verbosity::Low,
                     &format!(
                         "\t{}",
-                        format!("tag {} already exists and will not be created", tag_name).dimmed()
+                        format!("tag {tag_name} already exists and will not be created").dimmed()
                     ),
                 );
                 tracing::warn!("tag {tag_name:?} already exists and will not be created");

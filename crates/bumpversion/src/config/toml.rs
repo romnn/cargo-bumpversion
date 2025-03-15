@@ -128,14 +128,14 @@ where
     let search_pattern = &config.global.search;
     // .as_ref()
     // .unwrap_or(default_search_pattern);
-    let search_regex = search_pattern.format(&ctx, true)?;
+    let search_regex = search_pattern.format(ctx, true)?;
 
     let replace_pattern = &config.global.replace;
     // .as_deref()
     // .unwrap_or(&super::defaults::REPLACE);
 
     let replacement = PythonFormatString::parse(replace_pattern)?;
-    let replacement = replacement.format(&ctx, true)?;
+    let replacement = replacement.format(ctx, true)?;
 
     let _ = replace_version_of_document(
         &mut document,

@@ -41,11 +41,10 @@ impl<'a> From<parser::Value<'a>> for Value {
 }
 
 pub mod parser {
-    
     use winnow::combinator::{alt, delimited, repeat};
     use winnow::error::InputError;
     use winnow::prelude::*;
-    
+
     use winnow::token::take_while;
 
     #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -54,13 +53,13 @@ pub mod parser {
         Argument(&'a str),
     }
 
-    fn any_except_curly_bracket0<'a>(s: &mut &'a str) -> PResult<&'a str, InputError<&'a str>> {
+    fn any_except_curly_bracket0<'a>(s: &mut &'a str) -> ModalResult<&'a str, InputError<&'a str>> {
         take_while(0.., |c| c != '{' && c != '}')
             .context("any_except_curly_bracket0")
             .parse_next(s)
     }
 
-    fn any_except_curly_bracket1<'a>(s: &mut &'a str) -> PResult<&'a str, InputError<&'a str>> {
+    fn any_except_curly_bracket1<'a>(s: &mut &'a str) -> ModalResult<&'a str, InputError<&'a str>> {
         take_while(1.., |c| c != '{' && c != '}')
             .context("any_except_curly_bracket1")
             .parse_next(s)
@@ -68,7 +67,7 @@ pub mod parser {
 
     fn text_including_escaped_brackets<'a>(
         s: &mut &'a str,
-    ) -> PResult<String, InputError<&'a str>> {
+    ) -> ModalResult<String, InputError<&'a str>> {
         repeat(
             1..,
             alt((any_except_curly_bracket1, "{{".value("{"), "}}".value("}"))),
@@ -83,14 +82,14 @@ pub mod parser {
 
     fn non_escaped_bracket_argument<'a>(
         s: &mut &'a str,
-    ) -> PResult<Value<'a>, InputError<&'a str>> {
+    ) -> ModalResult<Value<'a>, InputError<&'a str>> {
         delimited("{", any_except_curly_bracket0, "}")
             .map(Value::Argument)
             .context("non_escaped_bracket_argument")
             .parse_next(s)
     }
 
-    fn text_or_argument<'a>(s: &mut &'a str) -> PResult<Value<'a>, InputError<&'a str>> {
+    fn text_or_argument<'a>(s: &mut &'a str) -> ModalResult<Value<'a>, InputError<&'a str>> {
         alt((
             text_including_escaped_brackets.map(Value::String),
             non_escaped_bracket_argument,
@@ -128,7 +127,6 @@ pub mod parser {
         use super::*;
         use color_eyre::eyre;
         use similar_asserts::assert_eq as sim_assert_eq;
-        
 
         #[test]
         fn parses_complex_arguments() -> eyre::Result<()> {

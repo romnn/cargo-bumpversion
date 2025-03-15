@@ -155,7 +155,7 @@ pub struct Modification {
 
 impl Modification {
     /// Render a diff of the modification.
-    pub fn diff(&self, path: Option<&Path>) -> Option<String> {
+    #[must_use] pub fn diff(&self, path: Option<&Path>) -> Option<String> {
         if self.before == self.after {
             None
         } else {

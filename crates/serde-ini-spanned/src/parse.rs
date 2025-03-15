@@ -1132,10 +1132,10 @@ mod tests {
 
         // SF bug #561822:
         let config = unindent::unindent(&format!(
-            r#"
+            r"
             [section]
             nekey{}nevalue\n
-            "#,
+            ",
             DEFAULT_ASSIGNMENT_DELIMITERS[0],
         ));
         let config = parse(&config, Options::default(), &Printer::default()).0?;
@@ -1523,14 +1523,14 @@ mod tests {
         crate::tests::init();
 
         let config = unindent(&format!(
-            r#"
+            r"
             default {delim0} <default>
 
             [section]
             name {delim0} %(value)s
             key{delim1} |%(name)s|
             getdefault{delim1} |%(default)s|
-            "#,
+            ",
             delim0 = DEFAULT_ASSIGNMENT_DELIMITERS[0],
             delim1 = DEFAULT_ASSIGNMENT_DELIMITERS[1],
         ));
@@ -1553,14 +1553,14 @@ mod tests {
         crate::tests::init();
 
         let config = unindent(&format!(
-            r#"
+            r"
             [section1]
             name1 {delim0} value1
             [section2]
             name2 {delim0} value2
             [section3]
             name3 {delim0} value3
-            "#,
+            ",
             delim0 = DEFAULT_ASSIGNMENT_DELIMITERS[0],
         ));
         let mut config = parse(&config, Options::default(), &Printer::default()).0?;
@@ -1630,7 +1630,7 @@ mod tests {
         crate::tests::init();
 
         let config = unindent(&format!(
-            r#"
+            r"
             nameD {equals} valueD
             [section1]
             name1 {equals} value1
@@ -1638,7 +1638,7 @@ mod tests {
             name2 {equals} value2
             [section3]
             name3 {equals} value3
-            "#,
+            ",
             equals = DEFAULT_ASSIGNMENT_DELIMITERS[0],
         ));
         let mut config = parse(&config, Options::default(), &Printer::default()).0?;
@@ -2145,7 +2145,7 @@ mod tests {
         crate::tests::init();
 
         let config = unindent::unindent(&format!(
-            r#"
+            r"
             [Foo Bar]
             foo{d0}bar1
             [Spacey Bar]
@@ -2175,7 +2175,7 @@ mod tests {
             123 {d1} strange but acceptable
             [This One Has A ] In It]
               forks {d0} spoons
-            "#,
+            ",
             d0 = DEFAULT_ASSIGNMENT_DELIMITERS[0],
             d1 = DEFAULT_ASSIGNMENT_DELIMITERS[1],
             c0 = DEFAULT_COMMENT_PREFIXES[0],

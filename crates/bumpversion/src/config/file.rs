@@ -74,7 +74,7 @@ impl Default for FinalizedFileConfig {
         ])];
 
         Self {
-            parse_version_pattern: PARSE_VERSION_REGEX.clone().into(),
+            parse_version_pattern: PARSE_VERSION_REGEX.clone(),
             serialize_version_patterns,
             search,
             replace: "{new_version}".to_string(),
@@ -102,7 +102,7 @@ impl FileConfig {
     /// Finalize the file config.
     ///
     /// All unset configuration options will be set to their default value.
-    pub fn finalize(self) -> FinalizedFileConfig {
+    #[must_use] pub fn finalize(self) -> FinalizedFileConfig {
         let default = FinalizedFileConfig::default();
         FinalizedFileConfig {
             parse_version_pattern: self

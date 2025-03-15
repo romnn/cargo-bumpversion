@@ -167,7 +167,7 @@ impl Config {
     /// Finalize the configuration
     ///
     /// All unset configuration options will be set to their default value.
-    pub fn finalize(mut self) -> FinalizedConfig {
+    #[must_use] pub fn finalize(mut self) -> FinalizedConfig {
         self.merge_file_configs_with_global_config();
         FinalizedConfig {
             global: self.global.finalize(),

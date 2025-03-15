@@ -5,8 +5,8 @@ use std::path::Path;
 use tempfile::TempDir;
 
 fn random_string_of_length(length: usize) -> String {
-    use rand::{distributions::Alphanumeric, Rng};
-    rand::thread_rng()
+    use rand::{Rng, distr::Alphanumeric};
+    rand::rng()
         .sample_iter(&Alphanumeric)
         .take(length)
         .map(char::from)
