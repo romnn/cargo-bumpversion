@@ -25,8 +25,8 @@ mod tests {
 
     use pest_test::PestTester;
 
-    static TESTER: once_cell::sync::Lazy<pest_test::PestTester<Rule, IniParser>> =
-        once_cell::sync::Lazy::new(|| {
+    static TESTER: std::sync::LazyLock<pest_test::PestTester<Rule, IniParser>> =
+        std::sync::LazyLock::new(|| {
             let skip_rules = HashSet::new();
             let test_dir = pest_test::default_test_dir();
             dbg!(&test_dir);

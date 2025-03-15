@@ -167,7 +167,8 @@ impl Config {
     /// Finalize the configuration
     ///
     /// All unset configuration options will be set to their default value.
-    #[must_use] pub fn finalize(mut self) -> FinalizedConfig {
+    #[must_use]
+    pub fn finalize(mut self) -> FinalizedConfig {
         self.merge_file_configs_with_global_config();
         FinalizedConfig {
             global: self.global.finalize(),
@@ -184,9 +185,8 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::{
-        global,
+        Config, global,
         version::{self, VersionComponentConfigs, VersionComponentSpec},
-        Config,
     };
     use color_eyre::eyre;
     use indexmap::IndexMap;

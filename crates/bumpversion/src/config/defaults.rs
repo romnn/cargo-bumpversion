@@ -1,5 +1,4 @@
 // use crate::f_string::{PythonFormatString, Value};
-// use once_cell::sync::Lazy;
 // use regex::{Regex, RegexBuilder};
 
 // const PARSE_VERSION_PATTERN: &str = r"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)";

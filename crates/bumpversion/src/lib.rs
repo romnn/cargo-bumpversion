@@ -459,7 +459,9 @@ where
 
             Ok(modification)
         } else {
-            tracing::warn!("config file {config_file:?} is outside of the repo {working_dir:?} and will not be modified");
+            tracing::warn!(
+                "config file {config_file:?} is outside of the repo {working_dir:?} and will not be modified"
+            );
             Ok(None)
         }
     }

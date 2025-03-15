@@ -8,13 +8,13 @@ pub mod value;
 
 pub use parse::{Config as ParseConfig, Error};
 pub use spanned::{DerefInner, Span, Spanned};
-pub use value::{from_reader, from_str, Options, Section, SectionProxy, SectionProxyMut, Value};
+pub use value::{Options, Section, SectionProxy, SectionProxyMut, Value, from_reader, from_str};
 
 #[cfg(test)]
 pub mod tests {
     use crate::{
-        value::{Options, Value},
         SectionProxy, Spanned,
+        value::{Options, Value},
     };
     use codespan_reporting::{diagnostic::Diagnostic, files, term};
     use std::sync::{Mutex, RwLock};

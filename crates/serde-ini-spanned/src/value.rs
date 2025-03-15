@@ -483,8 +483,7 @@ impl Lowercase for &Spanned<String> {
     }
 }
 
-pub static EMPTY_SECTION: once_cell::sync::Lazy<Section> =
-    once_cell::sync::Lazy::new(Section::default);
+pub static EMPTY_SECTION: std::sync::LazyLock<Section> = std::sync::LazyLock::new(Section::default);
 
 pub type Keys<'a> = std::iter::Chain<
     indexmap::map::Keys<'a, Spanned<String>, Spanned<String>>,

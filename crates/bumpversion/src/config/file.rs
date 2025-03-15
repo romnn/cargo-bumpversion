@@ -50,7 +50,7 @@ impl FileConfig {
     }
 }
 
-pub static PARSE_VERSION_REGEX: once_cell::sync::Lazy<Regex> = once_cell::sync::Lazy::new(|| {
+pub static PARSE_VERSION_REGEX: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
     regex::RegexBuilder::new(r"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)")
         .build()
         .unwrap()
@@ -102,7 +102,8 @@ impl FileConfig {
     /// Finalize the file config.
     ///
     /// All unset configuration options will be set to their default value.
-    #[must_use] pub fn finalize(self) -> FinalizedFileConfig {
+    #[must_use]
+    pub fn finalize(self) -> FinalizedFileConfig {
         let default = FinalizedFileConfig::default();
         FinalizedFileConfig {
             parse_version_pattern: self

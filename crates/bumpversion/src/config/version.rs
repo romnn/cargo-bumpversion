@@ -36,7 +36,8 @@ pub struct VersionComponentSpec {
 }
 
 /// Make sure all version components are included
-#[must_use] pub fn version_component_configs(config: &super::FinalizedConfig) -> VersionComponentConfigs {
+#[must_use]
+pub fn version_component_configs(config: &super::FinalizedConfig) -> VersionComponentConfigs {
     let parsing_groups = config
         .global
         .parse_version_pattern

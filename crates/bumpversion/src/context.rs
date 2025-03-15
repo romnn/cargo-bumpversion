@@ -44,12 +44,10 @@ fn base_context(
         ),
         ("dirty".to_string(), tag.dirty.to_string()),
     ])
-    .chain(
-        [
-            ("#".to_string(), "#".to_string()),
-            (";".to_string(), ";".to_string()),
-        ],
-    )
+    .chain([
+        ("#".to_string(), "#".to_string()),
+        (";".to_string(), ";".to_string()),
+    ])
 }
 
 /// Return the context for rendering messages and tags
@@ -61,18 +59,16 @@ pub fn get_context(
     new_version_serialized: Option<&str>,
 ) -> impl Iterator<Item = (String, String)> {
     base_context(tag_and_revision)
-        .chain(
-            [
-                (
-                    "current_version".to_string(),
-                    current_version_serialized.unwrap_or_default().to_string(),
-                ),
-                (
-                    "new_version".to_string(),
-                    new_version_serialized.unwrap_or_default().to_string(),
-                ),
-            ],
-        )
+        .chain([
+            (
+                "current_version".to_string(),
+                current_version_serialized.unwrap_or_default().to_string(),
+            ),
+            (
+                "new_version".to_string(),
+                new_version_serialized.unwrap_or_default().to_string(),
+            ),
+        ])
         .chain(
             current_version
                 .map(|version| version.clone().into_iter())

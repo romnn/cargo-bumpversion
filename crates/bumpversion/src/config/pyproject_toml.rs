@@ -1,7 +1,7 @@
 use crate::{
     config::{
-        self, file::FileConfig, global::GlobalConfig, regex::RegexTemplate,
-        version::VersionComponentSpec, Config, InputFile,
+        self, Config, InputFile, file::FileConfig, global::GlobalConfig, regex::RegexTemplate,
+        version::VersionComponentSpec,
     },
     diagnostics::{FileId, Span},
     f_string::PythonFormatString,
@@ -67,52 +67,62 @@ mod diagnostics {
                     message,
                     span,
                     ..
-                } => vec![Diagnostic::error()
-                    .with_message("invalid format string".to_string())
-                    .with_labels(vec![
-                        Label::primary(file_id, span.clone()).with_message(source.to_string()),
-                        Label::secondary(file_id, span.clone()).with_message(message),
-                    ])],
+                } => vec![
+                    Diagnostic::error()
+                        .with_message("invalid format string".to_string())
+                        .with_labels(vec![
+                            Label::primary(file_id, span.clone()).with_message(source.to_string()),
+                            Label::secondary(file_id, span.clone()).with_message(message),
+                        ]),
+                ],
                 Self::InvalidRegex {
                     source,
                     message,
                     span,
                     ..
-                } => vec![Diagnostic::error()
-                    .with_message("invalid regular expression".to_string())
-                    .with_labels(vec![
-                        Label::primary(file_id, span.clone()).with_message(source.to_string()),
-                        Label::secondary(file_id, span.clone()).with_message(message),
-                    ])],
+                } => vec![
+                    Diagnostic::error()
+                        .with_message("invalid regular expression".to_string())
+                        .with_labels(vec![
+                            Label::primary(file_id, span.clone()).with_message(source.to_string()),
+                            Label::secondary(file_id, span.clone()).with_message(message),
+                        ]),
+                ],
 
-                Self::InvalidConfiguration { message, span, .. } => vec![Diagnostic::error()
-                    .with_message("invalid configuration".to_string())
-                    .with_labels(vec![
-                        Label::secondary(file_id, span.clone()).with_message(message)
-                    ])],
+                Self::InvalidConfiguration { message, span, .. } => vec![
+                    Diagnostic::error()
+                        .with_message("invalid configuration".to_string())
+                        .with_labels(vec![
+                            Label::secondary(file_id, span.clone()).with_message(message),
+                        ]),
+                ],
                 Self::MissingKey {
                     message, key, span, ..
-                } => vec![Diagnostic::error()
-                    .with_message(format!("missing required key `{key}`"))
-                    .with_labels(vec![
-                        Label::secondary(file_id, span.clone()).with_message(message)
-                    ])],
+                } => vec![
+                    Diagnostic::error()
+                        .with_message(format!("missing required key `{key}`"))
+                        .with_labels(vec![
+                            Label::secondary(file_id, span.clone()).with_message(message),
+                        ]),
+                ],
                 Self::MissingOneOf {
                     message,
                     keys,
                     span,
                     ..
-                } => vec![Diagnostic::error()
-                    .with_message(format!(
-                        "missing one of {}",
-                        keys.iter()
-                            .map(|key| format!("`{key}`"))
-                            .collect::<Vec<_>>()
-                            .join(" or ")
-                    ))
-                    .with_labels(vec![
-                        Label::secondary(file_id, span.clone()).with_message(message)
-                    ])],
+                } => vec![
+                    Diagnostic::error()
+                        .with_message(format!(
+                            "missing one of {}",
+                            keys.iter()
+                                .map(|key| format!("`{key}`"))
+                                .collect::<Vec<_>>()
+                                .join(" or ")
+                        ))
+                        .with_labels(vec![
+                            Label::secondary(file_id, span.clone()).with_message(message),
+                        ]),
+                ],
                 Self::UnexpectedType {
                     expected,
                     found,
@@ -126,8 +136,10 @@ mod diagnostics {
                         .join(", or ");
                     let diagnostic = Diagnostic::error()
                         .with_message(self.to_string())
-                        .with_labels(vec![Label::primary(file_id, span.clone())
-                            .with_message(format!("expected {expected}"))])
+                        .with_labels(vec![
+                            Label::primary(file_id, span.clone())
+                                .with_message(format!("expected {expected}")),
+                        ])
                         .with_notes(vec![unindent::unindent(&format!(
                             "
                         expected type {expected}
@@ -516,7 +528,7 @@ impl Config {
                         expected: vec![ValueKind::Table],
                         found: value.into(),
                         span: value.span.into(),
-                    })
+                    });
                 }
             },
         };
@@ -539,7 +551,7 @@ impl Config {
                         expected: vec![ValueKind::Table],
                         found: value.into(),
                         span: value.span.into(),
-                    })
+                    });
                 }
             },
         };
@@ -567,8 +579,8 @@ impl Config {
 pub mod tests {
     use crate::{
         config::{
-            self, change::FileChange, file::FileConfig, global::GlobalConfig, regex::RegexTemplate,
-            version::VersionComponentSpec, Config, InputFile,
+            self, Config, InputFile, change::FileChange, file::FileConfig, global::GlobalConfig,
+            regex::RegexTemplate, version::VersionComponentSpec,
         },
         diagnostics::{BufferedPrinter, ToDiagnostics},
         f_string::{PythonFormatString, Value},

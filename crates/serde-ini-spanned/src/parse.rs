@@ -69,16 +69,20 @@ impl SyntaxError {
             Self::SectionNotClosed { span } => Diagnostic::error()
                 .with_message(self.to_string())
                 .with_labels(vec![
-                    Label::primary(file_id, span.clone()).with_message("missing `]`")
+                    Label::primary(file_id, span.clone()).with_message("missing `]`"),
                 ]),
             Self::InvalidSectionName { span } => Diagnostic::error()
                 .with_message(self.to_string())
-                .with_labels(vec![Label::primary(file_id, span.clone())
-                    .with_message("section must not contain `]`")]),
+                .with_labels(vec![
+                    Label::primary(file_id, span.clone())
+                        .with_message("section must not contain `]`"),
+                ]),
             Self::EmptyOptionName { span } => Diagnostic::error()
                 .with_message(self.to_string())
-                .with_labels(vec![Label::primary(file_id, span.clone())
-                    .with_message("option name must not be empty")]),
+                .with_labels(vec![
+                    Label::primary(file_id, span.clone())
+                        .with_message("option name must not be empty"),
+                ]),
             Self::MissingAssignmentDelimiter {
                 span,
                 assignment_delimiters,
@@ -270,12 +274,14 @@ impl Config {
         self
     }
 
-    #[must_use] pub fn empty_lines_in_values(mut self, enabled: bool) -> Self {
+    #[must_use]
+    pub fn empty_lines_in_values(mut self, enabled: bool) -> Self {
         self.allow_empty_lines_in_values = enabled;
         self
     }
 
-    #[must_use] pub fn brackets_in_section_names(mut self, enabled: bool) -> Self {
+    #[must_use]
+    pub fn brackets_in_section_names(mut self, enabled: bool) -> Self {
         self.allow_brackets_in_section_name = enabled;
         self
     }
@@ -514,11 +520,11 @@ where
 #[allow(clippy::too_many_lines, clippy::unnecessary_wraps)]
 mod tests {
     use crate::{
+        ParseConfig,
         parse::{DEFAULT_ASSIGNMENT_DELIMITERS, DEFAULT_COMMENT_PREFIXES},
         spanned::{DerefInner, Spanned},
-        tests::{parse, Printer, SectionProxyExt},
+        tests::{Printer, SectionProxyExt, parse},
         value::{ClearSpans, NoSectionError, Options, RawSection, Section, Value},
-        ParseConfig,
     };
     use color_eyre::eyre;
     use similar_asserts::assert_eq as sim_assert_eq;
@@ -1416,11 +1422,13 @@ mod tests {
                     .map(Spanned::into_inner),
                 Some(false)
             );
-            assert!(config
-                .get_bool("BOOLTEST", &format!("e{x}"))
-                .unwrap_err()
-                .to_string()
-                .starts_with("invalid boolean: "));
+            assert!(
+                config
+                    .get_bool("BOOLTEST", &format!("e{x}"))
+                    .unwrap_err()
+                    .to_string()
+                    .starts_with("invalid boolean: ")
+            );
         }
         Ok(())
     }
@@ -2079,7 +2087,10 @@ mod tests {
 
             nor the indentation"};
 
-        sim_assert_eq!(multiline_expected, "that is\n\n\nactually still here\n\n\nand holds all these weird newlines\n\n\nnor the indentation");
+        sim_assert_eq!(
+            multiline_expected,
+            "that is\n\n\nactually still here\n\n\nand holds all these weird newlines\n\n\nnor the indentation"
+        );
         sim_assert_eq!(
             config.section("corruption").unwrap().items_vec(),
             vec![

@@ -109,7 +109,11 @@ pub(crate) fn unescape(value: String) -> String {
     let mut chars = value.chars();
     while let Some(c) = chars.next() {
         match c {
-            '\\' => if let Some(c) = chars.next() { n.push(c) },
+            '\\' => {
+                if let Some(c) = chars.next() {
+                    n.push(c)
+                }
+            }
             c => n.push(c),
         }
     }

@@ -5,6 +5,7 @@ use crate::{
 };
 use async_process::Command;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -55,7 +56,7 @@ pub struct GitRepository {
     path: PathBuf,
 }
 
-static FLAG_PATTERN: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
+static FLAG_PATTERN: LazyLock<regex::Regex> = LazyLock::new(|| {
     regex::RegexBuilder::new(r"^(\(\?[aiLmsux]+\))")
         .build()
         .unwrap()
@@ -121,12 +122,11 @@ fn get_version_from_tag<'a>(
     Ok(version)
 }
 
-pub static BRANCH_NAME_REGEX: once_cell::sync::Lazy<regex::Regex> =
-    once_cell::sync::Lazy::new(|| {
-        regex::RegexBuilder::new(r"([^a-zA-Z0-9]*)")
-            .build()
-            .unwrap()
-    });
+pub static BRANCH_NAME_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::RegexBuilder::new(r"([^a-zA-Z0-9]*)")
+        .build()
+        .unwrap()
+});
 
 impl GitRepository {
     /// Returns a dictionary containing revision information.
@@ -385,7 +385,7 @@ mod tests {
         command::run_command,
         f_string::PythonFormatString,
         tests::sim_assert_eq_sorted,
-        vcs::{git, temp::EphemeralRepository, VersionControlSystem},
+        vcs::{VersionControlSystem, git, temp::EphemeralRepository},
     };
     use async_process::Command;
     use color_eyre::eyre;

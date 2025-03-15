@@ -30,8 +30,8 @@ pub type RawVersion<'a> = HashMap<&'a str, &'a str>;
 
 // TODO: refactor this
 pub mod numeric {
-    pub static FIRST_NUMERIC_REGEX: once_cell::sync::Lazy<regex::Regex> =
-        once_cell::sync::Lazy::new(|| {
+    pub static FIRST_NUMERIC_REGEX: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| {
             regex::RegexBuilder::new(r"(?P<prefix>[^-0-9]*)(?P<number>-?\d+)(?P<suffix>.*)")
                 .build()
                 .unwrap()

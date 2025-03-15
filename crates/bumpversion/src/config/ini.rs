@@ -1,7 +1,7 @@
 use crate::{
     config::{
-        self, pyproject_toml::ValueKind, FileConfig, GlobalConfig, InputFile, RegexTemplate,
-        VersionComponentSpec,
+        self, FileConfig, GlobalConfig, InputFile, RegexTemplate, VersionComponentSpec,
+        pyproject_toml::ValueKind,
     },
     diagnostics::{DiagnosticExt, FileId, Span},
     f_string::{self, PythonFormatString},
@@ -62,30 +62,36 @@ mod diagnostics {
                     message,
                     span,
                     ..
-                } => vec![Diagnostic::error()
-                    .with_message("invalid regular expression".to_string())
-                    .with_labels(vec![
-                        Label::primary(file_id, span.clone()).with_message(source.to_string()),
-                        Label::secondary(file_id, span.clone()).with_message(message),
-                    ])],
+                } => vec![
+                    Diagnostic::error()
+                        .with_message("invalid regular expression".to_string())
+                        .with_labels(vec![
+                            Label::primary(file_id, span.clone()).with_message(source.to_string()),
+                            Label::secondary(file_id, span.clone()).with_message(message),
+                        ]),
+                ],
                 Self::InvalidFormatString {
                     source,
                     message,
                     span,
                     ..
-                } => vec![Diagnostic::error()
-                    .with_message("invalid format string".to_string())
-                    .with_labels(vec![
-                        Label::primary(file_id, span.clone()).with_message(source.to_string()),
-                        Label::secondary(file_id, span.clone()).with_message(message),
-                    ])],
+                } => vec![
+                    Diagnostic::error()
+                        .with_message("invalid format string".to_string())
+                        .with_labels(vec![
+                            Label::primary(file_id, span.clone()).with_message(source.to_string()),
+                            Label::secondary(file_id, span.clone()).with_message(message),
+                        ]),
+                ],
                 Self::MissingKey {
                     message, key, span, ..
-                } => vec![Diagnostic::error()
-                    .with_message(format!("missing required key `{key}`"))
-                    .with_labels(vec![
-                        Label::secondary(file_id, span.clone()).with_message(message)
-                    ])],
+                } => vec![
+                    Diagnostic::error()
+                        .with_message(format!("missing required key `{key}`"))
+                        .with_labels(vec![
+                            Label::secondary(file_id, span.clone()).with_message(message),
+                        ]),
+                ],
                 Self::UnexpectedType {
                     expected,
                     // found,
@@ -106,8 +112,10 @@ mod diagnostics {
                     ));
                     let diagnostic = Diagnostic::error()
                         .with_message(self.to_string())
-                        .with_labels(vec![Label::primary(file_id, span.clone())
-                            .with_message(format!("expected {expected}"))])
+                        .with_labels(vec![
+                            Label::primary(file_id, span.clone())
+                                .with_message(format!("expected {expected}")),
+                        ])
                         .with_notes(vec![note]);
                     vec![diagnostic]
                 }
@@ -486,8 +494,10 @@ impl config::Config {
                 // emit warnings for ignored global values
                 let diagnostic = Diagnostic::warning_or_error(strict)
                     .with_message("global config values have no effect")
-                    .with_labels(vec![Label::primary(file_id, key.span.clone())
-                        .with_message("this configuration will be ignored")]);
+                    .with_labels(vec![
+                        Label::primary(file_id, key.span.clone())
+                            .with_message("this configuration will be ignored"),
+                    ]);
                 diagnostics.push(diagnostic);
             }
         }
@@ -564,11 +574,7 @@ impl config::Config {
             };
         }
 
-        if found {
-            Ok(Some(out))
-        } else {
-            Ok(None)
-        }
+        if found { Ok(Some(out)) } else { Ok(None) }
     }
 
     pub fn from_ini(
@@ -598,10 +604,11 @@ impl config::Config {
     }
 }
 
-static CONFIG_CURRENT_VERSION_REGEX: once_cell::sync::Lazy<regex::Regex> =
-    once_cell::sync::Lazy::new(|| {
+static CONFIG_CURRENT_VERSION_REGEX: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(
+    || {
         regex::RegexBuilder::new(r"(?P<section_prefix>\\[bumpversion]\n[^[]*current_version\\s*=\\s*)(?P<version>{current_version})").multi_line(true).build().unwrap()
-    });
+    },
+);
 
 /// Update the `current_version` key in the configuration file.
 ///
@@ -906,15 +913,17 @@ mod tests {
                             regex::Regex::new(r"(?P<major>\d+)-(?P<minor>\d+)-(?P<patch>\d+)")?
                                 .into(),
                         ),
-                        serialize_version_patterns: Some(vec![[
-                            Value::Argument("major".to_string()),
-                            Value::String("-".to_string()),
-                            Value::Argument("minor".to_string()),
-                            Value::String("-".to_string()),
-                            Value::Argument("patch".to_string()),
-                        ]
-                        .into_iter()
-                        .collect()]),
+                        serialize_version_patterns: Some(vec![
+                            [
+                                Value::Argument("major".to_string()),
+                                Value::String("-".to_string()),
+                                Value::Argument("minor".to_string()),
+                                Value::String("-".to_string()),
+                                Value::Argument("patch".to_string()),
+                            ]
+                            .into_iter()
+                            .collect(),
+                        ]),
                         ..FileConfig::empty()
                     },
                 ),

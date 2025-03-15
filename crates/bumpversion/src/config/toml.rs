@@ -181,8 +181,8 @@ where
 mod tests {
     use crate::{
         config::{
-            self, file::FileConfig, global::GlobalConfig, pyproject_toml::tests::parse_toml,
-            regex::RegexTemplate, version::VersionComponentSpec, Config, InputFile,
+            self, Config, InputFile, file::FileConfig, global::GlobalConfig,
+            pyproject_toml::tests::parse_toml, regex::RegexTemplate, version::VersionComponentSpec,
         },
         diagnostics::Printer,
         f_string::{PythonFormatString, Value},
@@ -527,11 +527,9 @@ mod tests {
                 (
                     InputFile::Path("should_override_serialize.txt".into()),
                     FileConfig {
-                        serialize_version_patterns: Some(vec![[Value::Argument(
-                            "major".to_string(),
-                        )]
-                        .into_iter()
-                        .collect()]),
+                        serialize_version_patterns: Some(vec![
+                            [Value::Argument("major".to_string())].into_iter().collect(),
+                        ]),
                         ..FileConfig::empty()
                     },
                 ),
