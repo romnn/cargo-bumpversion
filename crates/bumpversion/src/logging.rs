@@ -111,7 +111,7 @@ pub(crate) fn unescape(value: String) -> String {
         match c {
             '\\' => {
                 if let Some(c) = chars.next() {
-                    n.push(c)
+                    n.push(c);
                 }
             }
             c => n.push(c),

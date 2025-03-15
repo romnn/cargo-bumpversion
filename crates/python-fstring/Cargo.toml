@@ -22,10 +22,10 @@ color-eyre.workspace = true
 
 # rustpython-parser = "0"
 
-nom = "7"
+nom = "8"
 
 # optional: winnow parser
-winnow = "0.6"
+winnow = "0.7"
 
 # optional: pest parser
 pest = { version = "2", optional = true }

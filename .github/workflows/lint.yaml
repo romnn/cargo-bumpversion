@@ -37,7 +37,6 @@ jobs:
       - uses: arduino/setup-task@v2
       - uses: Homebrew/actions/setup-homebrew@master
       - uses: dtolnay/rust-toolchain@stable
-      # - run: cargo install cargo-audit
       - run: brew install cargo-audit
       - name: Audit
         run: task audit
@@ -49,8 +48,7 @@ jobs:
       - uses: arduino/setup-task@v2
       - uses: Homebrew/actions/setup-homebrew@master
       - uses: dtolnay/rust-toolchain@stable
-      # - run: cargo install cargo-outdated
-      - run: brew install cargo-outdated
+      - run: cargo install cargo-outdated
       - name: Check for outdated dependencies
         run: task outdated
 

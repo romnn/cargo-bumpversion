@@ -43,7 +43,7 @@ shlex = "^1.3"
 async-process = "2"
 
 # parse python f-strings
-winnow = "0.6"
+winnow = "0.7"
 
 # regex
 regex = "^1.11"
