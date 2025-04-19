@@ -1,6 +1,13 @@
+//! Parsing support for Python-style format strings used in version templates.
+//!
+//! Provides utilities to split format strings into literal text and argument placeholders,
+//! and to unescape double curly braces.
 pub use parser::ParseError;
 use std::collections::HashMap;
 
+/// A segment of a format string: either literal text or a placeholder.
+///
+/// `Value::String` holds literal content, while `Value::Argument` represents `{name}`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Value {
     String(String),
@@ -17,6 +24,14 @@ impl std::fmt::Display for Value {
 }
 
 impl Value {
+    /// If this is an argument placeholder, return its name, otherwise `None`.
+    ///
+    /// # Examples
+    /// ```
+    /// use bumpversion::f_string::Value;
+    /// assert_eq!(Value::Argument("x".to_string()).as_argument(), Some("x"));
+    /// assert_eq!(Value::String("x".to_string()).as_argument(), None);
+    /// ```
     #[must_use]
     pub fn as_argument(&self) -> Option<&str> {
         match self {
@@ -25,6 +40,14 @@ impl Value {
         }
     }
 
+    /// Returns `true` if this value is a placeholder (`Argument`).
+    ///
+    /// # Examples
+    /// ```
+    /// use bumpversion::f_string::Value;
+    /// assert!(Value::Argument("y".to_string()).is_argument());
+    /// assert!(!Value::String("y".to_string()).is_argument());
+    /// ```
     #[must_use]
     pub fn is_argument(&self) -> bool {
         matches!(self, Self::Argument(_))
@@ -41,6 +64,9 @@ impl<'a> From<parser::Value<'a>> for Value {
 }
 
 pub mod parser {
+    //! Internal module implementing the parser for format strings.
+    //!
+    //! Users should call `escape_double_curly_braces` or `parse_format_arguments`.
     use winnow::combinator::{alt, delimited, repeat};
     use winnow::error::InputError;
     use winnow::prelude::*;
@@ -104,6 +130,10 @@ pub mod parser {
         pub format_string: String,
     }
 
+    /// Unescape doubled braces (`{{` -> `{`, `}}` -> `}`) in `value`.
+    ///
+    /// # Errors
+    /// Returns `ParseError` if the input is not valid.
     pub fn escape_double_curly_braces(value: &str) -> Result<String, ParseError> {
         let test = text_including_escaped_brackets
             .parse(value)
@@ -113,6 +143,14 @@ pub mod parser {
         Ok(test)
     }
 
+    /// Parse a format string into a sequence of `Value` segments.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use bumpversion::f_string::parser::parse_format_arguments;
+    /// let parts = parse_format_arguments("v{major}.{minor}.{patch}")?;
+    /// # Ok::<(), bumpversion::f_string::ParseError>(())
+    /// ```
     pub fn parse_format_arguments(value: &str) -> Result<Vec<Value>, ParseError> {
         let test = repeat(0.., text_or_argument)
             .parse(value)

@@ -1,6 +1,12 @@
+//! Helpers for constructing template contexts used in version serialization and tags.
+//! Context construction for template rendering of version strings and tags.
+//!
+//! Builds a map of variables from environment, VCS info, and version data.
 use crate::{vcs::TagAndRevision, version::Version};
 use std::collections::HashMap;
 
+/// A simple environment mapping of variable names to values.
+/// A mapping of variable names to their string values.
 pub type Env = HashMap<String, String>;
 
 /// Return a dict of the environment with keys prefixed with `$`

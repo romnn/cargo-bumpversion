@@ -1,9 +1,13 @@
+//! Command-line options and parsing for bumpversion CLI.
+//!
+//! Defines flags, positional arguments, and configuration overrides via environment.
 use bumpversion::config;
-use clap::Parser;
 use color_eyre::eyre;
 use std::path::PathBuf;
 
+/// Trait to invert an `Option<bool>`, used for negatable flags (e.g., --flag/--no-flag).
 pub trait Invert {
+    /// Flip the contained boolean if present.
     fn invert(self) -> Self;
 }
 
@@ -13,7 +17,8 @@ impl Invert for Option<bool> {
     }
 }
 
-#[derive(Parser, Debug, Clone)]
+/// Which version component to bump: `major`, `minor`, or `patch`.
+#[derive(clap::Parser, Debug, Clone)]
 pub enum BumpCommand {
     #[clap(name = "major")]
     Major,
@@ -58,7 +63,8 @@ pub struct Verbosity {
     pub quiet: u8,
 }
 
-#[derive(Parser, Debug, Clone)]
+/// CLI options for the `bumpversion` command.
+#[derive(clap::Parser, Debug, Clone)]
 #[clap(
     name = "bumpversion",
     version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown"),

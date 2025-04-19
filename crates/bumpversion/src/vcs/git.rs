@@ -1,3 +1,6 @@
+//! Git backend for version control operations.
+//!
+//! Implements the `VersionControlSystem` trait using git commands.
 use crate::{
     command::run_command,
     f_string::{PythonFormatString, Value},
@@ -7,6 +10,7 @@ use async_process::Command;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
+/// Git VCS error type.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("io error: {0}")]
@@ -32,6 +36,7 @@ pub enum Error {
     },
 }
 
+/// Errors parsing git tag strings into version metadata.
 #[derive(thiserror::Error, Debug)]
 pub enum InvalidTagError {
     #[error("tag {0:?} is missing commit SHA")]
@@ -50,6 +55,7 @@ pub enum InvalidTagError {
     MissingVersion(String),
 }
 
+/// Represents a git repository at a given filesystem path.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[allow(clippy::module_name_repetitions)]
 pub struct GitRepository {

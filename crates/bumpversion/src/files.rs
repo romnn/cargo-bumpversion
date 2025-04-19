@@ -1,3 +1,6 @@
+//! File operations for searching and replacing version strings in project files.
+//!
+//! Handles reading, modifying, and writing files based on configuration.
 use crate::{
     config::{self, FileChange, InputFile, VersionComponentConfigs},
     f_string::{self, PythonFormatString},
@@ -26,6 +29,7 @@ use std::path::{Path, PathBuf};
 //     true
 // }
 
+/// Errors that can occur when replacing version strings in files.
 #[derive(thiserror::Error, Debug)]
 pub enum ReplaceVersionError {
     #[error(transparent)]
@@ -43,7 +47,11 @@ pub enum ReplaceVersionError {
     Toml(#[from] toml_edit::TomlError),
 }
 
-/// Replace version in file
+/// Apply a list of `changes` to the input `before` content,
+/// producing the modified text and a record of replacements.
+///
+/// # Errors
+/// Returns `ReplaceVersionError` if serialization, I/O, or formatting fails.
 pub fn replace_version<'a, K, V>(
     before: String,
     changes: &'a [FileChange],
@@ -136,25 +144,34 @@ where
     Ok(modification)
 }
 
-/// A file modification.
+/// A single substitution made during version replacement.
 #[derive(Debug)]
 pub struct Replacement {
+    /// The regex string used to search for the existing version.
     pub search: String,
+    /// Original search template from configuration before formatting.
     pub search_pattern: String,
+    /// Replacement string generated with the new version.
     pub replace: String,
+    /// Template used for replacement before formatting.
     pub replace_pattern: String,
 }
 
-/// A file modification.
+/// Represents the overall result of modifying a file.
 #[derive(Debug)]
 pub struct Modification {
+    /// Original file content before any replacements.
     pub before: String,
+    /// File content after applying all replacements.
     pub after: String,
+    /// Detailed list of individual replacements performed.
     pub replacements: Vec<Replacement>,
 }
 
 impl Modification {
-    /// Render a diff of the modification.
+    /// Generate a unified diff between original and modified content.
+    ///
+    /// If `path` is provided, include labels in the diff header.
     #[must_use]
     pub fn diff(&self, path: Option<&Path>) -> Option<String> {
         if self.before == self.after {
@@ -176,7 +193,9 @@ impl Modification {
     }
 }
 
-/// Replace version in file
+/// Read a file at `path`, apply version replacement, and write back if changed.
+///
+/// Honors `dry_run` to skip writing. Returns `None` if file unchanged or missing (when allowed).
 pub async fn replace_version_in_file<K, V>(
     path: &Path,
     changes: &[FileChange],
@@ -232,6 +251,7 @@ where
     Ok(Some(modification))
 }
 
+/// Errors encountered when resolving glob patterns to file paths.
 #[derive(thiserror::Error, Debug)]
 pub enum GlobError {
     #[error(transparent)]
@@ -240,10 +260,13 @@ pub enum GlobError {
     Glob(#[from] glob::GlobError),
 }
 
+/// I/O error with optional path context.
 #[derive(thiserror::Error, Debug)]
 pub struct IoError {
+    /// Underlying I/O error.
     #[source]
     pub source: std::io::Error,
+    /// Path of the file that caused the error, if available.
     pub path: Option<PathBuf>,
 }
 
@@ -265,6 +288,7 @@ impl std::fmt::Display for IoError {
     }
 }
 
+/// Combined error type for file resolution operations.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]
@@ -297,9 +321,12 @@ fn resolve_glob_files(
     Ok(included.difference(&excluded).cloned().collect())
 }
 
+/// Mapping from file paths to the list of version `FileChange`s to apply.
 pub type FileMap = IndexMap<PathBuf, Vec<FileChange>>;
 
-/// Return a map of filenames to file configs, expanding any globs
+/// Build the file map from `config`, expanding glob patterns and relative paths.
+///
+/// Applies `parts` (version component configs) and resolves paths under `base_dir`.
 pub fn resolve_files_from_config<'a>(
     config: &mut config::FinalizedConfig,
     parts: &VersionComponentConfigs,
@@ -346,7 +373,7 @@ pub fn resolve_files_from_config<'a>(
     Ok(new_files)
 }
 
-/// Return a list of files to modify
+/// Filter the `file_map` based on `config` include/exclude settings.
 pub fn files_to_modify(
     config: &config::FinalizedConfig,
     file_map: FileMap,

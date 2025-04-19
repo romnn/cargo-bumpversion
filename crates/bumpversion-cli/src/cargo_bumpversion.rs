@@ -1,3 +1,6 @@
+//! `cargo-bumpversion` subcommand integration for bumpversion CLI.
+//!
+//! Skips leading `cargo` arguments and invokes the bumpversion logic.
 #![forbid(unsafe_code)]
 
 mod common;
@@ -8,6 +11,9 @@ mod verbose;
 use clap::Parser;
 use color_eyre::eyre;
 
+/// Main entry point for `cargo-bumpversion`.
+///
+/// Parses arguments after `cargo bumpversion` and delegates to common logic.
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     color_eyre::install()?;

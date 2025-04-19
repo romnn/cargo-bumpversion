@@ -1,3 +1,6 @@
+//! CLI logging setup for bumpversion and related tools.
+//!
+//! Configures `tracing` subscriber with compact formatting and color choice.
 use color_eyre::eyre;
 use termcolor::ColorChoice;
 use tracing_subscriber::layer::SubscriberExt;

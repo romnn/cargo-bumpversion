@@ -1,3 +1,7 @@
+//! Configuration parsing and merging.
+//!
+//! Provides support for reading bumpversion configuration from various file formats (TOML, INI),
+//! applying defaults, and finalizing settings for version bump operations.
 pub mod change;
 pub mod defaults;
 pub mod file;
@@ -18,44 +22,60 @@ use crate::files::IoError;
 use std::path::{Path, PathBuf};
 
 #[derive(thiserror::Error, Debug)]
+/// Errors that can occur while reading or parsing configuration files.
 pub enum Error {
+    /// I/O error accessing config file.
     #[error(transparent)]
     IoError(#[from] IoError),
+    /// TOML parsing error for a config file.
     #[error("failed to parse {path:?}")]
     Toml {
+        /// Path to the problematic config file.
         path: PathBuf,
         #[source]
         source: pyproject_toml::ParseError,
     },
+    /// INI parsing error for a config file.
     #[error("failed to parse {path:?}")]
     Ini {
+        /// Path to the problematic config file.
         path: PathBuf,
         #[source]
         source: ini::ParseError,
     },
+    /// Cargo.toml parsing not yet supported or failed.
     #[error("failed to parse {path:?}")]
     CargoToml {
+        /// Path to the Cargo.toml file.
         path: PathBuf,
         // #[source]
         // source: ini::ParseError,
     },
+    /// Background task join error.
     #[error("failed to join spawned task")]
     Join(#[from] tokio::task::JoinError),
     #[error(transparent)]
     Diagnostics(#[from] crate::diagnostics::Error),
 }
 
+/// Enumeration of recognized configuration file types for bumpversion.
+/// Supported configuration file types and their paths.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ConfigFile {
     // A `bumpversion.toml` configuration file (TOML)
+    /// `.bumpversion.toml` file.
     BumpversionToml(PathBuf),
     // A `pyproject.toml` configuration file (TOML)
+    /// `pyproject.toml` file.
     PyProject(PathBuf),
     // A `bumpverison.cfg` configuration file (ini)
+    /// `bumpversion.cfg` INI config.
     BumpversionCfg(PathBuf),
     // A `setup.cfg` configuration file (ini)
+    /// `setup.cfg` INI config.
     SetupCfg(PathBuf),
     // A `Cargo.toml` configuration file (TOML)
+    /// `Cargo.toml` file for workspace/package metadata.
     CargoToml(PathBuf),
 }
 
@@ -72,6 +92,9 @@ impl ConfigFile {
     }
 }
 
+/// Return the list of config files to search in `dir` in order.
+///
+/// Yields each candidate `ConfigFile` type with its expected path.
 pub fn config_file_locations(dir: &Path) -> impl Iterator<Item = ConfigFile> + use<'_> {
     [
         ConfigFile::BumpversionToml(dir.join(".bumpversion.toml")),
@@ -98,11 +121,16 @@ where
     }
 }
 
+/// Specifies an input file path or glob pattern to include in version replacement.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum InputFile {
+    /// A specific file path.
     Path(PathBuf),
+    /// A glob pattern matching multiple files.
     GlobPattern {
+        /// Glob pattern string, e.g., `src/**/*.rs`.
         pattern: String,
+        /// Optional list of patterns to exclude.
         exclude_patterns: Option<Vec<String>>,
     },
 }
@@ -125,16 +153,24 @@ impl InputFile {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Mutable configuration collected from parsing sources, before defaults are applied.
 pub struct Config {
+    /// Global configuration settings.
     pub global: global::GlobalConfig,
+    /// File-specific configuration entries.
     pub files: Vec<(InputFile, file::FileConfig)>,
+    /// Version components to parse and serialize.
     pub components: version::VersionComponentConfigs,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Finalized configuration with defaults applied, ready for version bump operations.
 pub struct FinalizedConfig {
+    /// Fully resolved global configuration with defaults applied.
     pub global: global::GlobalConfigFinalized,
+    /// Finalized per-file configurations.
     pub files: Vec<(InputFile, file::FinalizedFileConfig)>,
+    /// Version component specifications.
     pub components: version::VersionComponentConfigs,
 }
 
@@ -149,7 +185,7 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Merge global config with per-file configurations
+    /// Merge global settings into each file-specific configuration.
     pub fn merge_file_configs_with_global_config(&mut self) {
         for (_, file_config) in &mut self.files {
             file_config.merge_with(&self.global);
@@ -164,9 +200,9 @@ impl Config {
     //     }
     // }
 
-    /// Finalize the configuration
+    /// Finalize and resolve all configuration options.
     ///
-    /// All unset configuration options will be set to their default value.
+    /// Unset values are filled with defaults from global settings.
     #[must_use]
     pub fn finalize(mut self) -> FinalizedConfig {
         self.merge_file_configs_with_global_config();

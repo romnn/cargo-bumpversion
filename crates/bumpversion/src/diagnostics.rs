@@ -1,3 +1,7 @@
+//! Diagnostics utilities for reporting and emitting parsing errors with source spans.
+//! Diagnostics utilities for reporting parsing and emitting errors with source spans.
+//!
+// Module provides traits and types for capturing and rendering diagnostics.
 use codespan_reporting::{
     diagnostic::{Diagnostic, Severity},
     files, term,
@@ -5,22 +9,31 @@ use codespan_reporting::{
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, RwLock};
 
+/// Identifier for a source file in the diagnostics registry.
 pub type FileId = usize;
+/// A byte-offset span in a source file.
 pub type Span = std::ops::Range<usize>;
 
 /// A diagnostics error.
+/// Diagnostics error kinds.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    /// Failed to lookup or access a registered source file.
     #[error("failed to lookup file")]
     FileLookup(#[from] codespan_reporting::files::Error),
 }
 
+/// Convert an item into a sequence of diagnostics associated with a file.
 pub trait ToDiagnostics {
+    /// Generate diagnostics for this item, tagged with `file_id`.
     fn to_diagnostics<F: Copy + PartialEq>(&self, file_id: F) -> Vec<Diagnostic<F>>;
 }
 
+/// Extension methods for `Diagnostic` to simplify severity checks.
 pub trait DiagnosticExt {
+    /// Returns `true` if the diagnostic severity is error or bug.
     fn is_error(&self) -> bool;
+    /// Returns an error-level or warning-level diagnostic builder depending on `strict`.
     fn warning_or_error(strict: bool) -> Self;
 }
 
@@ -41,9 +54,12 @@ impl<F> DiagnosticExt for Diagnostic<F> {
     }
 }
 
+/// Associates a value with its source span for error reporting.
 #[derive(Debug, Clone)]
 pub struct Spanned<T> {
+    /// The inner value.
     pub inner: T,
+    /// The byte-offset span where `inner` was found.
     pub span: Span,
 }
 
@@ -186,16 +202,27 @@ where
     }
 }
 
+/// A diagnostics printer that buffers messages for later emission.
 pub type BufferedPrinter = Printer<term::termcolor::Buffer>;
+/// A diagnostics printer that writes formatted messages to stderr.
 pub type StderrPrinter = Printer<term::termcolor::StandardStream>;
 
+/// Manages source files and emits formatted diagnostics to a writer.
+///
+/// Tracks registered source content and renders messages with spans.
+/// Printer that tracks source files and emits formatted diagnostics.
 pub struct Printer<W> {
+    /// Underlying writer protected by a mutex for thread safety.
     writer: Mutex<W>,
+    /// Configuration for diagnostic formatting (colors, styles).
     diagnostic_config: term::Config,
+    /// In-memory registry of source files and their content.
     files: RwLock<files::SimpleFiles<String, String>>,
 }
 
+/// Convert an object into a diagnostics source name (e.g., file path or id).
 pub trait ToSourceName {
+    /// Transform to a string used as a source name in diagnostics.
     fn to_source_name(self) -> String;
 }
 
@@ -225,7 +252,7 @@ impl ToSourceName for PathBuf {
 
 impl Default for Printer<term::termcolor::StandardStream> {
     fn default() -> Self {
-        Self::stderr(term::termcolor::ColorChoice::Auto)
+        Self::stderr(None)
     }
 }
 
@@ -264,7 +291,8 @@ impl Printer<term::termcolor::Buffer> {
 
 impl Printer<term::termcolor::StandardStream> {
     #[must_use]
-    pub fn stderr(color_choice: term::termcolor::ColorChoice) -> Self {
+    pub fn stderr(color_choice: Option<term::termcolor::ColorChoice>) -> Self {
+        let color_choice = color_choice.unwrap_or(term::termcolor::ColorChoice::Auto);
         let writer = term::termcolor::StandardStream::stderr(color_choice);
 
         let diagnostic_config = term::Config {

@@ -1,4 +1,66 @@
+//! # Bumpversion
+//!
+//! A library for bumping version numbers in projects based on configuration files
+//! and version control metadata.
+//!
+//! # Examples
+//!
+//! ```no_run
+//! use bumpversion::{
+//!   BumpVersion,
+//!   Bump,
+//!   diagnostics::Printer,
+//!   vcs::{TagAndRevision, VersionControlSystem, git::GitRepository},
+//!   logging,
+//!   config,
+//! };
+//! use std::path::PathBuf;
+//!
+//! # async fn example() -> color_eyre::eyre::Result<()> {
+//!   // Locate and parse the configuration
+//!   let repo_path: PathBuf = ".".into();
+//!   let printer = Printer::stderr(None);
+//!
+//!   // find and parse configuration
+//!   let (config_file, mut config) = bumpversion::find_config(
+//!     &repo_path,
+//!     &Default::default(),
+//!     &printer,
+//!   ).await?.unwrap();
+//!
+//!   // open version control system
+//!   let repo = GitRepository::open(&repo_path)?;
+//!   let components = config::version::version_component_configs(&config);
+//!
+//!   // build resolved file map
+//!   let file_map = bumpversion::files::resolve_files_from_config(
+//!     &mut config,
+//!     &components,
+//!     Some(repo.path()),
+//!   )?;
+//!
+//!   let TagAndRevision { tag, revision } = repo.latest_tag_and_revision(
+//!     &config.global.tag_name,
+//!     &config.global.parse_version_pattern,
+//!   )
+//!   .await?;
+//!
+//!   let logger = logging::TracingLogger::new(logging::Verbosity::High);
+//!   let manager = BumpVersion {
+//!     repo,
+//!     config,
+//!     logger,
+//!     tag_and_revision: TagAndRevision { tag, revision },
+//!     file_map,
+//!     components,
+//!     config_file: Some(config_file),
+//!   };
+//!   manager.bump(Bump::Component("patch")).await?;
+//!   # Ok(())
+//! # }
+//! ```
 #![forbid(unsafe_code)]
+// #![warn(missing_docs)]
 
 pub mod command;
 pub mod config;
@@ -24,8 +86,15 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+/// Specifies which version bump to perform.
+///
+/// Variants:
+/// - `Component(name)`: increment the named component (e.g., "major", "minor", "patch").
+/// - `NewVersion(version)`: set the version to the given value.
 pub enum Bump<'a> {
+    /// Increment the named version component (e.g., "major", "minor", "patch").
     Component(&'a str),
+    /// Set the version to the specified new version string.
     NewVersion(&'a str),
 }
 
@@ -151,38 +220,60 @@ where
         .transpose()
 }
 
+/// Errors that can occur when performing a version bump.
+///
+/// This includes missing versions, hook failures, serialization errors,
+/// file replacement failures, and version control errors.
 #[derive(thiserror::Error, Debug)]
 pub enum BumpError<VCS>
 where
     VCS: VersionControlSystem,
 {
+    /// Current version was not found in configuration or tags.
     #[error("missing current version")]
     MissingCurrentVersion,
+    /// Parsed version string was empty or invalid.
     #[error("version is empty")]
     EmptyVersion,
+    /// A configured hook (setup, pre-commit, or post-commit) failed.
     #[error("failed to run hook")]
     Hook(#[from] crate::hooks::Error),
+    /// An error occurred while bumping the version component.
     #[error("failed to bump version")]
     Bump(#[from] crate::version::BumpError),
+    /// Failed to serialize the new version string.
     #[error("failed to serialize version")]
     Serialize(#[from] crate::version::SerializeError),
+    /// Error replacing version in project files.
     #[error("failed to replace version")]
     ReplaceVersion(#[from] crate::files::ReplaceVersionError),
+    /// A required template argument was missing.
     #[error(transparent)]
     MissingArgument(#[from] f_string::MissingArgumentError),
+    /// Underlying version control system error.
     #[error(transparent)]
     VCS(VCS::Error),
 }
 
-/// Bumpversion manager
+/// Manager for performing version bumps in a repository.
+///
+/// Holds the VCS interface, configuration, and file mappings needed to
+/// update version numbers, run hooks, and commit/tag changes.
 #[derive(Debug)]
 pub struct BumpVersion<VCS, L> {
+    /// Interface to the version control system (e.g., Git).
     pub repo: VCS,
+    /// Finalized bumpversion configuration.
     pub config: config::FinalizedConfig,
+    /// Logger for outputting messages and diffs.
     pub logger: L,
+    /// Metadata about the current tag and repository revision.
     pub tag_and_revision: TagAndRevision,
+    /// Mapping of files to their associated version change instructions.
     pub file_map: FileMap,
+    /// Component definitions for parsing and serializing versions.
     pub components: config::version::VersionComponentConfigs,
+    /// Path to the configuration file in use, if any.
     pub config_file: Option<config::ConfigFile>,
 }
 
@@ -216,7 +307,7 @@ where
         let parse_version_pattern = &self.config.global.parse_version_pattern;
         let version_spec = version::VersionSpec::from_components(self.components.clone());
 
-        let current_version = version::parse_version(
+        let current_version = version::Version::parse(
             current_version_serialized,
             parse_version_pattern,
             &version_spec,
@@ -261,7 +352,7 @@ where
             }
             Bump::NewVersion(new_version) => {
                 tracing::info!(new_version, "parse new version");
-                version::parse_version(new_version, parse_version_pattern, &version_spec)
+                version::Version::parse(new_version, parse_version_pattern, &version_spec)
                     .ok_or_else(|| BumpError::EmptyVersion)
             }
         }?;
@@ -415,6 +506,25 @@ where
         Ok(())
     }
 
+    /// Update the version string in the bumpversion configuration file.
+    ///
+    /// Detects the file format (INI or TOML), applies version replacement using the provided
+    /// template context, and writes the file if modified (unless dry-run is enabled).
+    /// Supports:
+    /// - `.bumpversion.cfg` and `setup.cfg` (INI)
+    /// - `.bumpversion.toml` and `pyproject.toml` (TOML)
+    ///
+    /// # Arguments
+    /// * `config_file` - The configuration file variant indicating path and format.
+    /// * `ctx` - Mapping of template variables for version substitution.
+    ///
+    /// # Returns
+    /// * `Ok(Some(modification))` when the file was updated and a diff is available.
+    /// * `Ok(None)` when no change was needed or the config file is outside the repository.
+    ///
+    /// # Errors
+    /// Returns `BumpError::ReplaceVersion` if the version replacement fails due to
+    /// I/O, serialization, or template errors.
     pub async fn update_config_file<K, V>(
         &self,
         config_file: &config::ConfigFile,
@@ -466,6 +576,24 @@ where
         }
     }
 
+    /// Stage and commit versioned files, and optionally create a VCS tag.
+    ///
+    /// This will:
+    /// 1. Collect files modified according to `configured_files` and any `additional_files`.
+    /// 2. Stage these files along with the configuration file if present.
+    /// 3. Commit with the configured commit message and arguments.
+    /// 4. If tagging is enabled in config, create a new tag with the configured name and message.
+    ///
+    /// # Arguments
+    /// * `configured_files` - Map of file paths to their version change instructions.
+    /// * `additional_files` - Extra file paths to include in the commit (e.g., config file).
+    /// * `current_version_serialized` - Previous version string before bump.
+    /// * `next_version_serialized` - New version string after bump.
+    /// * `ctx` - Context map used to format commit and tag templates.
+    ///
+    /// # Errors
+    /// Returns a [`BumpError<VCS>`] if staging, committing, or tagging fails,
+    /// or if message/tag formatting encounters an error.
     pub async fn commit_changes(
         &self,
         configured_files: &IndexMap<PathBuf, Vec<config::change::FileChange>>,
@@ -585,6 +713,8 @@ where
 
 #[cfg(test)]
 pub mod tests {
+    //! Crate-level testing utilities.
+
     use similar_asserts::assert_eq as sim_assert_eq;
 
     macro_rules! sim_assert_eq_sorted {

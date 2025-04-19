@@ -5,6 +5,9 @@ use crate::{
 use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 
+/// Raw representation of parsed version segments.
+///
+/// Maps component names (e.g., "major", "minor") to their string values.
 pub type RawVersion<'a> = HashMap<&'a str, &'a str>;
 
 // #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,7 +32,11 @@ pub type RawVersion<'a> = HashMap<&'a str, &'a str>;
 // }
 
 // TODO: refactor this
+/// Numeric parsing and bumping utilities for version components.
 pub mod numeric {
+    /// Regex matching the first numeric substring with optional prefix/suffix.
+    ///
+    /// Captures named groups: `prefix`, `number`, and `suffix`.
     pub static FIRST_NUMERIC_REGEX: std::sync::LazyLock<regex::Regex> =
         std::sync::LazyLock::new(|| {
             regex::RegexBuilder::new(r"(?P<prefix>[^-0-9]*)(?P<number>-?\d+)(?P<suffix>.*)")
@@ -37,33 +44,57 @@ pub mod numeric {
                 .unwrap()
         });
 
+    /// Errors encountered when extracting or bumping numeric components.
     #[derive(thiserror::Error, Debug)]
     pub enum Error {
+        /// No digit found in the version string.
         #[error("version {0:?} does not contain any digit")]
         MissingDigit(String),
-        #[error("version {0:?} has not prefix")]
+        /// Prefix capture group missing from regex match.
+        #[error("version {0:?} has no prefix")]
         MissingPrefix(String),
+        /// Numeric capture group missing from regex match.
         #[error("version {0:?} has no number")]
         MissingNumber(String),
+        /// Suffix capture group missing from regex match.
         #[error("version {0:?} has no suffix")]
         MissingSuffix(String),
+        /// Failed to parse the numeric substring as an integer.
         #[error("{value:?} is not a valid number")]
         InvalidNumber {
+            /// Source parse error.
             #[source]
             source: std::num::ParseIntError,
+            /// The offending numeric text.
             value: String,
         },
+        /// Numeric part out of valid range for the version.
         #[error("{value:?} of version {version:?} is not a valid number")]
         InvalidNumeric {
+            /// Source parse error.
             #[source]
             source: std::num::ParseIntError,
+            /// The full version string.
             version: String,
+            /// The numeric substring.
             value: String,
         },
+        /// Current numeric value is below the configured minimum.
+        /// Current numeric value is below the configured minimum.
         #[error("{value:?} is lower than the first value {first_value:?} and cannot be bumped")]
-        LessThanFirstValue { first_value: usize, value: usize },
+        LessThanFirstValue {
+            /// The minimum allowed value for the component.
+            first_value: usize,
+            /// The numeric value provided.
+            value: usize,
+        },
+        /// Integer overflow or out-of-bounds during bump.
+        /// Numeric bump would overflow or exceed bounds.
         #[error("version component {component:?} exceeds bounds and cannot be bumped")]
-        OutOfBounds { component: usize },
+        OutOfBounds {
+            /// The component value that could not be bumped.
+            component: usize,
+        },
         // #[error("{value:?} of version {version:?} is not a valid number")]
         // InvalidFirstfvalue {
         //     #[source]
@@ -73,10 +104,12 @@ pub mod numeric {
         // },
     }
 
+    /// Function for bumping numeric version components.
     #[derive(Debug)]
-    // pub struct NumericFunction<'a> {
     pub struct NumericFunction {
+        /// Minimum value allowed for the numeric component.
         pub first_value: usize,
+        /// Optional starting value for bumping when unspecified.
         pub optional_value: usize,
         // pub first_value: &'a str,
         // pub optional_value: &'a str,
@@ -86,6 +119,14 @@ pub mod numeric {
 
     // impl<'a> NumericFunction<'a> {
     impl NumericFunction {
+        /// Create a new `NumericFunction` with optional string defaults.
+        ///
+        /// # Arguments
+        /// * `first_value` - Optional minimum value as string (defaults to 0).
+        /// * `optional_value` - Optional starting bump value (defaults to `first_value`).
+        ///
+        /// # Errors
+        /// Returns `Error::InvalidNumber` if provided defaults cannot be parsed.
         #[must_use]
         pub fn new(first_value: Option<&str>, optional_value: Option<&str>) -> Result<Self, Error> {
             // pub fn new(first_value: Option<usize>, optional_value: Option<usize>) -> Self {
@@ -115,6 +156,12 @@ pub mod numeric {
         }
 
         /// Increase the first numerical value by one
+        /// Bump the first numeric component in `value` by one.
+        ///
+        /// Uses `FIRST_NUMERIC_REGEX` to locate a number, increments it, and reinserts.
+        ///
+        /// # Errors
+        /// Returns `Error` variants for missing parts or overflow.
         pub fn bump(&self, value: &str) -> Result<String, Error> {
             let first_numeric = FIRST_NUMERIC_REGEX
                 .captures(value)
@@ -171,9 +218,9 @@ pub mod numeric {
     }
 }
 
-/// Represent part of a version number.
+/// A single version component, combining a value and its bump/reset specification.
 ///
-/// Determines how the component behaves when increased or reset
+/// Determines how the component is bumped and how dependents are reset.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Component {
     // value: String,
@@ -203,15 +250,23 @@ impl AsRef<str> for Component {
     }
 }
 
+/// Errors that can occur when bumping a version component.
 #[derive(thiserror::Error, Debug)]
 pub enum BumpError {
+    /// Underlying numeric bump error (e.g., missing digits, overflow).
     #[error(transparent)]
     Numeric(#[from] numeric::Error),
+    /// Specified component name does not exist in the version.
     #[error("invalid version component {0:?}")]
     InvalidComponent(String),
 }
 
 impl Component {
+    /// Create a new `Component` with an optional initial `value` and its `spec`.
+    ///
+    /// # Arguments
+    /// * `value` - Optional current component string value.
+    /// * `spec` - Component configuration (first value, dependencies, bump rules).
     #[must_use]
     pub fn new(value: Option<&str>, spec: VersionComponentSpec) -> Self {
         // let func = ValuesFunction {
@@ -233,12 +288,17 @@ impl Component {
         }
     }
 
+    /// Return the effective current value of this component.
+    ///
+    /// Falls back to the `spec.first_value` if no explicit value is set.
     #[must_use]
     pub fn value(&self) -> Option<&str> {
         self.value.as_deref().or(self.spec.first_value.as_deref())
     }
 
-    /// Return the component with with first value
+    /// Return a new `Component` initialized with its `spec.first_value`.
+    ///
+    /// Useful for resetting dependent components.
     #[must_use]
     pub fn first(&self) -> Self {
         Self {
@@ -247,7 +307,12 @@ impl Component {
         }
     }
 
-    /// Return a part with bumped value.
+    /// Bump this component according to its specification.
+    ///
+    /// For components with explicit value lists, uses those; otherwise numeric bump.
+    ///
+    /// # Errors
+    /// Returns `BumpError::Numeric` or `BumpError::InvalidComponent` on failure.
     pub fn bump(&self) -> Result<Self, BumpError> {
         let value = if self.spec.values.is_empty() {
             // numeric
@@ -281,6 +346,9 @@ impl Component {
 //     }
 // }
 
+/// Represents a parsed version, storing its components and bumping rules.
+///
+/// Holds component values and the `VersionSpec` that governs dependencies and resets.
 #[derive(Debug, Clone)]
 pub struct Version {
     components: IndexMap<String, Component>,
@@ -312,6 +380,17 @@ impl<'a> IntoIterator for &'a Version {
 }
 
 impl Version {
+    /// Parse a version string into a Version object.
+    #[must_use]
+    pub fn parse(value: &str, regex: &regex::Regex, version_spec: &VersionSpec) -> Option<Self> {
+        let parsed = parse_raw_version(value, regex);
+        if parsed.is_empty() {
+            return None;
+        }
+        let version = version_spec.build(&parsed);
+        Some(version)
+    }
+
     /// Serialize the version using one of the given serialization patterns.
     ///
     /// Patterns that tried in order, except for incompatible patterns, which are attempted at last.
@@ -330,7 +409,15 @@ impl Version {
         serialize_version(self, serialize_version_patterns, ctx)
     }
 
-    /// Get version component by name.
+    /// Retrieve a component by its name.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// let v: bumpversion::version::Version = todo!();
+    /// if let Some(comp) = v.get("minor") {
+    ///     println!("minor = {}", comp.value().unwrap());
+    /// }
+    /// ```
     pub fn get<Q>(&self, component: &Q) -> Option<&Component>
     where
         Q: ?Sized + std::hash::Hash + indexmap::Equivalent<String>,
@@ -338,13 +425,14 @@ impl Version {
         self.components.get(component)
     }
 
-    // Iterate over the components of the version.
+    /// Iterate over the version components in order.
     #[must_use]
     pub fn iter(&self) -> indexmap::map::Iter<String, Component> {
         self.components.iter()
     }
 
-    // Iterator over the required (non-optional) components of the version.
+    /// Iterate over names of non-optional components (those with explicit values).
+    #[must_use]
     pub fn required_component_names(&self) -> impl Iterator<Item = &str> {
         self.iter()
             .filter(|(_, v)| v.value() != v.spec.optional_value.as_deref())
@@ -431,7 +519,9 @@ impl Version {
     }
 }
 
-/// The specification of a version's components and their relationships
+/// Specification of version components, dependencies, and auto-increment rules.
+///
+/// Defines the order of components, which depend on which, and which always increment.
 #[derive(Debug, Clone, Default)]
 #[allow(clippy::module_name_repetitions)]
 pub struct VersionSpec {
@@ -441,6 +531,9 @@ pub struct VersionSpec {
 }
 
 impl VersionSpec {
+    /// Create a `VersionSpec` from component configurations.
+    ///
+    /// Builds the dependency map and identifies always-increment components.
     #[must_use]
     pub fn from_components(components: VersionComponentConfigs) -> Self {
         let mut dependency_map: HashMap<String, Vec<String>> = HashMap::new();
@@ -492,7 +585,7 @@ impl VersionSpec {
         }
     }
 
-    /// Return the components that depend on the given component.
+    /// Return the set of component names that transitively depend on `comp_name`.
     #[must_use]
     pub fn dependents(&self, comp_name: &str) -> HashSet<&str> {
         use std::collections::VecDeque;
@@ -520,7 +613,10 @@ impl VersionSpec {
         visited
     }
 
-    /// Generate a version from the given values
+    /// Build a `Version` instance from raw parsed values.
+    ///
+    /// # Arguments
+    /// * `raw_components` - Mapping from component names to parsed string values.
     #[must_use]
     pub fn build(&self, raw_components: &RawVersion) -> Version {
         let components = self
@@ -539,14 +635,18 @@ impl VersionSpec {
     }
 }
 
+/// Errors that can occur when serializing a `Version`.
 #[derive(thiserror::Error, Debug)]
 pub enum SerializeError {
+    /// No provided pattern could serialize the given version.
     #[error("version {version} has no valid formats")]
     NoValidFormat {
+        /// The version that failed to serialize.
         version: Version,
+        /// List of attempted (index, format pattern) pairs.
         formats: Vec<(usize, PythonFormatString)>,
-        // could not find a valid serialization format in {patterns:?} for {version:?}"
     },
+    /// A required argument for formatting was missing.
     #[error(transparent)]
     MissingArgument(#[from] crate::f_string::MissingArgumentError),
 }
@@ -635,20 +735,20 @@ fn parse_raw_version<'a>(version: &'a str, pattern: &'a regex::Regex) -> RawVers
     parsed
 }
 
-/// Parse a version string into a Version object.
-#[must_use]
-pub fn parse_version(
-    value: &str,
-    regex: &regex::Regex,
-    version_spec: &VersionSpec,
-) -> Option<Version> {
-    let parsed = parse_raw_version(value, regex);
-    if parsed.is_empty() {
-        return None;
-    }
-    let version = version_spec.build(&parsed);
-    Some(version)
-}
+// /// Parse a version string into a Version object.
+// #[must_use]
+// pub fn parse_version(
+//     value: &str,
+//     regex: &regex::Regex,
+//     version_spec: &VersionSpec,
+// ) -> Option<Version> {
+//     let parsed = parse_raw_version(value, regex);
+//     if parsed.is_empty() {
+//         return None;
+//     }
+//     let version = version_spec.build(&parsed);
+//     Some(version)
+// }
 
 #[cfg(test)]
 mod tests {

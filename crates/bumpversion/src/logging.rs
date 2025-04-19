@@ -1,13 +1,20 @@
+//! Logging utilities for formatting version and change output based on verbosity.
+//!
+//! Provides traits and helpers for displaying modifications and hooks.
 use crate::version::Version;
 use colored::{Color, Colorize};
 
-/// Logging verbosity.
+/// Controls level of detail emitted by loggers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
 pub enum Verbosity {
+    /// No logs will be emitted.
     Off = 0,
+    /// Minimal output, e.g., current/new version and file modifications.
     Low = 1,
+    /// Show diffs and more detailed logs.
     Medium = 2,
+    /// Verbose debug-level output.
     High = 3,
 }
 
@@ -22,18 +29,56 @@ impl From<u8> for Verbosity {
     }
 }
 
-/// Logging implementation to use.
+/// A no-op logger implementation.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NoOpLogger {}
+
+impl Log for NoOpLogger {
+    fn log(&self, _: Verbosity, _: &str) {}
+}
+
+/// A `tracing` based logger implementation.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TracingLogger {
+    /// The maximum verbosity.
+    ///
+    /// Only messages with lower or equal verbosity will be logged.
+    verbosity: Verbosity,
+}
+
+impl TracingLogger {
+    pub fn new(verbosity: Verbosity) -> Self {
+        Self { verbosity }
+    }
+}
+
+impl Log for TracingLogger {
+    fn log(&self, verbosity: Verbosity, message: &str) {
+        if verbosity > self.verbosity {
+            return;
+        }
+        tracing::info!("{message}");
+    }
+}
+
+/// Abstraction for logger implementations.
+///
+/// Provides a method to emit log messages at a given `Verbosity` level.
 pub trait Log {
+    /// Log a message if `verbosity` is within the configured level.
     fn log(&self, verbosity: Verbosity, message: &str);
 }
 
+/// Extension methods on `Log` for common bumpversion log patterns.
 pub trait LogExt {
+    /// Log a file modification, including search/replace details and diff if any.
     fn log_modification(
         &self,
         path: &std::path::Path,
         modification: Option<crate::files::Modification>,
     );
 
+    /// Log configured hooks with their names (e.g., 'setup', 'pre-commit').
     fn log_hooks(&self, hook_name: &str, hooks: &[String]);
 }
 

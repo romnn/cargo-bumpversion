@@ -1,3 +1,7 @@
+//! Version control integration layer.
+//!
+//! Defines the `VersionControlSystem` trait and related data structures
+//! for interacting with git and other VCS backends.
 pub mod git;
 
 #[cfg(test)]
@@ -7,7 +11,7 @@ use crate::f_string::PythonFormatString;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 
-/// Info on the latest tag of the VCS.
+/// Information about the latest VCS tag, including version and commit data.
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TagInfo {
     /// Whether the repository contains dirty files
@@ -22,7 +26,7 @@ pub struct TagInfo {
     pub current_version: String,
 }
 
-/// Info on the latest revision of the VCS.
+/// Information about the current VCS revision (branch, repository root).
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RevisionInfo {
     /// The name of the current branch.
@@ -35,7 +39,7 @@ pub struct RevisionInfo {
     pub repository_root: PathBuf,
 }
 
-/// Wrapper that contains both the current tag and the latest revision of the repository.
+/// Combined container for both optional `TagInfo` and `RevisionInfo`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TagAndRevision {
     /// The current tag information.
@@ -44,18 +48,21 @@ pub struct TagAndRevision {
     pub revision: Option<RevisionInfo>,
 }
 
+/// Abstract interface for version control systems.
+///
+/// Implementors can open repositories, add/commit files, tag releases, and query history.
 pub trait VersionControlSystem {
     type Error: std::error::Error + Send + Sync + 'static;
 
-    /// Open the VCS repository.
+    /// Open the VCS repository at the given path.
     fn open(path: impl Into<PathBuf>) -> Result<Self, Self::Error>
     where
         Self: Sized;
 
-    /// Get the path to the VCS directory.
+    /// Return the root path of the repository.
     fn path(&self) -> &Path;
 
-    /// Add files to the staging area of the VCS.
+    /// Stage a set of files for commit.
     fn add<P>(
         &self,
         files: impl IntoIterator<Item = P>,
@@ -63,7 +70,7 @@ pub trait VersionControlSystem {
     where
         P: AsRef<std::ffi::OsStr>;
 
-    /// Commit current changes to the VCS.
+    /// Create a commit with the given message and environment.
     fn commit<A, E, AS, EK, EV>(
         &self,
         message: &str,
@@ -77,7 +84,7 @@ pub trait VersionControlSystem {
         EK: AsRef<std::ffi::OsStr>,
         EV: AsRef<std::ffi::OsStr>;
 
-    /// Create a new tag for the VCS.
+    /// Create a new tag (annotated or lightweight) in the repository.
     fn tag(
         &self,
         name: &str,
@@ -85,13 +92,13 @@ pub trait VersionControlSystem {
         sign: bool,
     ) -> impl Future<Output = Result<(), Self::Error>>;
 
-    /// Get all tags for the VCS
+    /// List all tags in the repository.
     fn tags(&self) -> impl Future<Output = Result<Vec<String>, Self::Error>>;
 
-    /// Get the list of dirty files in the VCS.
+    /// List files with uncommitted changes.
     fn dirty_files(&self) -> impl Future<Output = Result<Vec<PathBuf>, Self::Error>>;
 
-    /// Get the information on the latest tag and revision for the VCS.
+    /// Retrieve combined tag and revision metadata using the given templates.
     fn latest_tag_and_revision(
         &self,
         tag_name: &PythonFormatString,

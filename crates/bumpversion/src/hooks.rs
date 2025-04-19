@@ -1,3 +1,6 @@
+//! Hook execution for setup, pre-commit, and post-commit scripts.
+//!
+//! Runs user-defined shell commands with enriched environment variables.
 use crate::{
     command::{self, Error as CommandError, Output},
     logging::LogExt,
@@ -8,6 +11,7 @@ use async_process::Command;
 use std::collections::HashMap;
 use std::path::Path;
 
+/// Prefix applied to environment variables for hook scripts.
 pub const ENV_PREFIX: &str = "BVHOOK_";
 
 /// Provide the base environment variables
@@ -203,11 +207,13 @@ where
     }
 }
 
-/// An Error that can occur when executing hooks
+/// Errors that can occur during hook execution.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    /// Error running an external command.
     #[error(transparent)]
     Command(#[from] CommandError),
+    /// Failed to parse the hook script into shell tokens.
     #[error("failed to split shell script {0:?}")]
     Shell(String),
 }

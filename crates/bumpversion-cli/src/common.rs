@@ -1,3 +1,6 @@
+//! Common logic for the bumpversion CLI and subcommands.
+//!
+//! Sets up logging, loads configuration, and orchestrates the bump process.
 use crate::options;
 use bumpversion::{
     config,
@@ -5,6 +8,10 @@ use bumpversion::{
 };
 use color_eyre::eyre::{self, WrapErr};
 
+/// Ensure the working directory is clean, unless `allow_dirty` is set.
+///
+/// # Errors
+/// Returns an error if the repo is dirty and not allowed by config.
 async fn check_is_dirty(
     repo: &GitRepository,
     config: &config::FinalizedConfig,
@@ -24,6 +31,9 @@ async fn check_is_dirty(
     Ok(())
 }
 
+/// Entry point for the `bumpversion` CLI.
+///
+/// Processes command-line `options`, loads the project config, and performs the bump.
 pub async fn bumpversion(mut options: options::Options) -> eyre::Result<()> {
     let start = std::time::Instant::now();
 
@@ -35,7 +45,7 @@ pub async fn bumpversion(mut options: options::Options) -> eyre::Result<()> {
     let dir = options.dir.as_deref().unwrap_or(&cwd).canonicalize()?;
     let repo = GitRepository::open(&dir)?;
 
-    let printer = bumpversion::diagnostics::Printer::stderr(color_choice);
+    let printer = bumpversion::diagnostics::Printer::stderr(color_choice.into());
 
     let cli_overrides = options::global_cli_config(&options)?;
     let (config_file_path, mut config) = bumpversion::find_config(&dir, &cli_overrides, &printer)

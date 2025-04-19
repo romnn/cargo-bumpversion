@@ -89,6 +89,11 @@ tasks:
     cmds:
       - cargo test --workspace --all-targets {{.CLI_ARGS}}
 
+  test:doc:
+    desc: "run doctests in cargo workspace"
+    cmds:
+      - cargo test --doc {{.CLI_ARGS}}
+
   test:fc:
     desc: "test cargo workspace for all combinations of features"
     cmds:
