@@ -7,6 +7,14 @@
 - setup goreleaser
 - release the bumpversion crate
 
+exclude = [
+  "TODO.md",
+  ".bumpversion.toml",
+  ".goreleaser.yaml",
+  ".typos.toml",
+  ".ignore",
+]
+
 #### long-term
 
 - test and improve nom error messages

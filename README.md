@@ -1,8 +1,8 @@
 ## bumpversion
 
-[<img alt="build status" src="https://img.shields.io/github/actions/workflow/status/romnn/cargo-bumpversion/build.yaml?branch=main&label=build">](https://github.com/romnn/cargo-bumpversion/actions/workflows/build.yaml)
-[<img alt="test status" src="https://img.shields.io/github/actions/workflow/status/romnn/cargo-bumpversion/test.yaml?branch=main&label=test">](https://github.com/romnn/cargo-bumpversion/actions/workflows/test.yaml)
-[![dependency status](https://deps.rs/repo/github/romnn/cargo-bumpversion/status.svg)](https://deps.rs/repo/github/romnn/cargo-bumpversion)
+[<img alt="build status" src="https://img.shields.io/github/actions/workflow/status/romnn/bumpversion/build.yaml?branch=main&label=build">](https://github.com/romnn/bumpversion/actions/workflows/build.yaml)
+[<img alt="test status" src="https://img.shields.io/github/actions/workflow/status/romnn/bumpversion/test.yaml?branch=main&label=test">](https://github.com/romnn/bumpversion/actions/workflows/test.yaml)
+[![dependency status](https://deps.rs/repo/github/romnn/bumpversion/status.svg)](https://deps.rs/repo/github/romnn/bumpversion)
 [<img alt="crates.io" src="https://img.shields.io/crates/v/bumpversion">](https://crates.io/crates/bumpversion)
 [<img alt="docs.rs" src="https://img.shields.io/docsrs/bumpversion/latest?label=docs.rs">](https://docs.rs/taski)
 
@@ -15,28 +15,22 @@ This is an improved version of the popular [callowayproject/bump-my-version](htt
 - Also supports configuration in your `Cargo.toml`
 - Additional hook system
 
-### Improvements
+### Installation
 
-The main added benefit of this library is the ability to use it as a library component for your local build and deployment scripts.
+```bash
+# will install `bumpversion` binary
+brew install romnn/tap/bumpversion
 
-Often, people tag a new release using `bumpversion` and push a tag into CI (e.g. GitHub actions).
-But what if your project requires a lot of data that is not accessible from the CI/CD host?
+# will install `cargo-bumpversion` binary
+brew install romnn/tap/cargo-bumpversion
 
-You could use this library to write build scripts using the pre and post hooks provided to e.g. build and package your application and upon success tag a new release to be pushed into CI for deploying the packages built.
+# or install from source (will install both `cargo-bumpversion` and `bumpversion` binaries)
+cargo install bumpversion-cli
+```
 
 ### CLI usage
 
-You can also just use this version as a drop-in replacement for the Python `bump2version`.
-
-Install it with
-
-```bash
-cargo install bumpversion
-
-# TODO:
-brew install ...
-```
-
+You can use this as a drop-in replacement for the Python `bumpversion`, `bump2version`, or `bump-my-version`.
 For usage instructions, please refer to [the Python version](https://github.com/callowayproject/bump-my-version).
 
 #### Development

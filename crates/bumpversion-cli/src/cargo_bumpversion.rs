@@ -1,46 +1,32 @@
 #![forbid(unsafe_code)]
 
+mod common;
 mod logging;
 mod options;
+mod verbose;
 
-use bumpversion::{Config, GitRepository};
 use clap::Parser;
 use color_eyre::eyre;
-use options::Opts;
 
-fn main() -> eyre::Result<()> {
-    let opts: Opts = Opts::parse();
-    let cwd = std::env::current_dir()?;
-    // .ok_or(anyhow::anyhow!("could not determine current working dir"))?;
-    // let repo = NativeRepo::open(cwd);
-    let repo = GitRepository::native(cwd);
-    // let current_version = repo.latest_tag_info();
-    // println!("current version: {}", current_version);
+#[tokio::main]
+async fn main() -> eyre::Result<()> {
+    color_eyre::install()?;
 
-    // let config = Config::open(opts.config_file);
-    // config_file = _determine_config_file(explicit_config)
-    // config, config_file_exists, config_newlines, part_configs, files = _load_configuration(
-    //     config_file, explicit_config, defaults,
-    // )
-    //
-    // version_config = _setup_versionconfig(known_args, part_configs)
-    // current_version = version_config.parse(known_args.current_version)
+    let bin_name = env!("CARGO_BIN_NAME");
+    let bin_name = bin_name.strip_prefix("cargo-").unwrap_or(bin_name);
 
-    // # calculate the desired new version
-    // new_version = _assemble_new_version(
-    //     context, current_version, defaults, known_args.current_version, positionals, version_config
-    // )
+    let args: Vec<String> = std::env::args_os()
+        // skip executable name
+        .skip(1)
+        // skip our own cargo-* command name
+        .skip_while(|arg| {
+            let arg = arg.as_os_str();
+            arg == bin_name || arg == "cargo"
+        })
+        .map(|s| s.to_string_lossy().to_string())
+        .collect();
 
-    // if not os.path.exists(".bumpversion.cfg") and os.path.exists("setup.cfg"):
-    //     return "setup.cfg"
-    // return ".bumpversion.cfg"
-
-    // if let Some(subcommand) = opts.commands {
-    // match subcommand.bump {
-    //     Bump::Major => {}
-    //     Bump::Major => {}
-    //     Bump::Major => {}
-    // }
-    // }
-    Ok(())
+    let mut options = options::Options::parse_from(args);
+    options::fix(&mut options);
+    common::bumpversion(options).await
 }

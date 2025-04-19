@@ -571,7 +571,7 @@ impl config::Config {
                         diagnostics.push(diagnostic);
                     }
                 }
-            };
+            }
         }
 
         if found { Ok(Some(out)) } else { Ok(None) }

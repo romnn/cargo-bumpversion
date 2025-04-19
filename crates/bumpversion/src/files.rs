@@ -211,7 +211,7 @@ where
         // search_for_og, _ = self.file_change.get_search_pattern(og_context)
         // file_content_after = search_for_og.sub(replace_with, file_content_before)
         // return Ok(());
-    };
+    }
 
     if !dry_run {
         use tokio::io::AsyncWriteExt;

@@ -5,42 +5,45 @@ on:
     tags:
       - "*"
 
+permissions:
+  contents: write
+
 jobs:
+  tests:
+    uses: ./.github/workflows/test.yaml
+
   publish-crate:
     runs-on: ubuntu-24.04
+    needs: [tests]
     steps:
-      - uses: actions/checkout@v2
-      - id: query
-        uses: romnn/query-git-action@master
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          override: true
-
-      - uses: katyo/publish-crates@v1
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Publish crates
+        uses: romnn/publish-crates@main
         with:
           registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          resolve-versions: true
+          publish-delay: 30s
 
-  publish-release-binaries:
+  release:
     runs-on: ubuntu-24.04
+    needs: [tests]
     steps:
-      - uses: actions/checkout@v2
-      - id: query
-        uses: romnn/query-git-action@master
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@v4
         with:
-          toolchain: stable
-          override: true
-
-      - name: Compile binaries
-        run: >-
-          cargo build --release --all-targets
-      - name: Upload release binaries
-        uses: svenstaro/upload-release-action@v2
+          fetch-depth: 0
+      - uses: arduino/setup-task@v2
         with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: target/release/bumpversion
-          tag: ${{ steps.query.outputs.stable_semver_version }}
-          release_name: ${{ steps.query.outputs.stable_semver_version }}
-          overwrite: true
-          file_glob: true
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: Homebrew/actions/setup-homebrew@master
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: |
+          sudo apt install mingw-w64
+          brew install zig
+          brew install goreleaser
+      - name: Release
+        run: task release
+        env:
+          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+          TAP_GITHUB_TOKEN: "${{ secrets.TAP_GITHUB_TOKEN }}"

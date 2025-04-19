@@ -49,7 +49,7 @@ where
             let path = config_file.path();
             if !path.is_file() {
                 return Ok(None);
-            };
+            }
             let Ok(path) = path.canonicalize() else {
                 return Ok(None);
             };

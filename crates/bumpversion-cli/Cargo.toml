@@ -2,9 +2,8 @@
 name = "bumpversion-cli"
 license-file = "../../LICENSE"
 readme = "../../README.md"
-default-run = "bumpversion"
-exclude = []
-publish = false
+documentation = "https://docs.rs/bumpversion-cli"
+publish = true
 
 version.workspace = true
 edition.workspace = true
@@ -12,26 +11,30 @@ authors.workspace = true
 description.workspace = true
 homepage.workspace = true
 repository.workspace = true
-categories.workspace = true
-keywords.workspace = true
+categories = [
+  "command-line-utilities",
+]
+keywords = [
+  "semver",
+  "bumpversion",
+  "bump2version",
+]
+
+default-run = "bumpversion"
 
 [[bin]]
 name = "bumpversion"
 path = "src/bumpversion.rs"
 
-# [[bin]]
-# name = "cargo-bumpversion"
-# path = "src/cargo_bumpversion.rs"
-
-[package.metadata.cargo-feature-combinations]
-denylist = ["default"]
+[[bin]]
+name = "cargo-bumpversion"
+path = "src/cargo_bumpversion.rs"
 
 [dependencies]
 color-eyre.workspace = true
 
 # cli
 clap = { version = "4", features = ["derive", "env", "color"] }
-# clap-verbosity-flag = "3"
 
 # logging
 tracing.workspace = true
@@ -46,7 +49,4 @@ codespan-reporting = "0"
 tokio.workspace = true
 futures.workspace = true
 
-bumpversion.workspace = true
-
-# [dev-dependencies]
-# similar-asserts.workspace = true
+bumpversion = { path = "../bumpversion" }

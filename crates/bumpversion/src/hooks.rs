@@ -251,10 +251,10 @@ async fn run_hooks(
                 if let Error::Command(CommandError::Failed { ref output, .. }) = err {
                     tracing::warn!(output.stdout);
                     tracing::warn!(output.stderr);
-                };
+                }
                 return Err(err);
             }
-        };
+        }
     }
     Ok(())
 }

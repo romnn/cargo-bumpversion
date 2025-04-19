@@ -6,24 +6,34 @@ tasks:
       - task: run
 
   run:
-    ignore_error: true
-    interactive: true
+    desc: "run bumpversion"
     cmds:
       - cargo run -p bumpversion-cli --bin bumpversion -- {{.CLI_ARGS}}
 
   run:cargo:
-    ignore_error: true
-    interactive: true
+    desc: "run cargo-bumpversion"
     cmds:
       - cargo run -p bumpversion-cli --bin cargo-bumpversion -- {{.CLI_ARGS}}
 
   build:
+    desc: "build in debug mode"
     cmds:
       - cargo build --all-targets {{.CLI_ARGS}}
 
   build:release:
+    desc: "build in release mode"
     cmds:
       - cargo build --all-targets --release {{.CLI_ARGS}}
+
+  build:goreleaser:
+    desc: "build in release mode using goreleaser"
+    cmds:
+      - goreleaser build --snapshot --clean
+
+  release:
+    desc: "release using goreleaser"
+    cmds:
+      - goreleaser release --clean
 
   typos:
     desc: "check repository for typos"
@@ -33,17 +43,16 @@ tasks:
 
   check:
     desc: "check cargo workspace"
-    dir: "{{.ROOT_DIR}}"
     cmds:
       - cargo check --workspace --all-targets {{.CLI_ARGS}}
 
   check:fc:
     desc: "check cargo workspace"
-    dir: "{{.ROOT_DIR}}"
     cmds:
       - cargo fc check --workspace --all-targets {{.CLI_ARGS}}
 
   clean:
+    desc: "clean cargo workspace"
     cmds:
       - cargo clean {{.CLI_ARGS}}
 
@@ -91,17 +100,17 @@ tasks:
       # prettier-ignore
       - >-
         cargo clippy
-        --tests --benches --examples --all-features
+        --all-targets --all-features
         {{.CLI_ARGS}}
         -- -Dclippy::all -Dclippy::pedantic
 
   lint:fc:
-    desc: "lint cargo workspace for feature combinations"
+    desc: "lint cargo workspace for all combinations of features"
     cmds:
       # prettier-ignore
       - >-
         cargo fc clippy
-        --tests --benches --examples --all-features
+        --all-targets --all-features
         {{.CLI_ARGS}}
         -- -Dclippy::all -Dclippy::pedantic
 
@@ -113,6 +122,6 @@ tasks:
       - >-
         cargo clippy
         --fix --allow-dirty --allow-staged
-        --tests --benches --examples --all-features
+        --all-targets --all-features
         {{.CLI_ARGS}}
         -- -Dclippy::all -Dclippy::pedantic

@@ -51,17 +51,17 @@ where
         Ok(())
     }
 
-    async fn add(&self, files: &[impl AsRef<Path>]) -> eyre::Result<()> {
-        let files = files
-            .iter()
-            .map(|f| f.as_ref().to_string_lossy().to_string());
-        let mut cmd = Command::new("git");
-        cmd.arg("add");
-        cmd.args(files);
-        cmd.current_dir(self.path());
-        let _ = run_command(&mut cmd).await?;
-        Ok(())
-    }
+    // async fn add(&self, files: &[impl AsRef<Path>]) -> eyre::Result<()> {
+    //     let files = files
+    //         .iter()
+    //         .map(|f| f.as_ref().to_string_lossy().to_string());
+    //     let mut cmd = Command::new("git");
+    //     cmd.arg("add");
+    //     cmd.args(files);
+    //     cmd.current_dir(self.path());
+    //     let _ = run_command(&mut cmd).await?;
+    //     Ok(())
+    // }
 }
 
 impl<VCS> std::ops::Deref for EphemeralRepository<VCS> {

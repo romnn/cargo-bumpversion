@@ -1,4 +1,6 @@
+use bumpversion::config;
 use clap::Parser;
+use color_eyre::eyre;
 use std::path::PathBuf;
 
 pub trait Invert {
@@ -299,4 +301,160 @@ pub struct Options {
 
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub args: Vec<String>,
+}
+
+pub fn fix(options: &mut Options) {
+    // HACK(roman):
+    //
+    // For some reason, clap v4 may set `options.allow_dirty = Some(false)` when using
+    // `clap::ArgAction::SetTrue` and the flag is not specified.
+    //
+    // It's fine to check for these cases, since `clap::ArgAction::SetTrue` does not allow
+    // users to set `--allow-dirty=false`.
+    for boolean_option in [
+        &mut options.allow_dirty,
+        &mut options.no_allow_dirty,
+        &mut options.regex,
+        &mut options.no_regex,
+        &mut options.no_configured_files,
+        &mut options.ignore_missing_files,
+        &mut options.no_ignore_missing_files,
+        &mut options.ignore_missing_version,
+        &mut options.no_ignore_missing_version,
+        &mut options.dry_run,
+        &mut options.commit,
+        &mut options.no_commit,
+        &mut options.tag,
+        &mut options.no_tag,
+        &mut options.sign_tags,
+        &mut options.no_sign_tag,
+    ] {
+        if *boolean_option != Some(true) {
+            *boolean_option = None;
+        }
+    }
+}
+
+pub fn parse_positional_arguments(
+    options: &mut Options,
+    components: &config::VersionComponentConfigs,
+) -> eyre::Result<(Option<String>, Vec<PathBuf>)> {
+    let mut cli_files = vec![];
+    let mut bump: Option<String> = options
+        .bump
+        .as_ref()
+        .map(AsRef::as_ref)
+        .map(ToString::to_string);
+
+    // first, check for invalid flags
+    for arg in &options.args {
+        if arg.starts_with("--") {
+            eyre::bail!("unknown flag {arg:?}");
+        }
+    }
+
+    if !options.args.is_empty() {
+        if options.bump.is_none() {
+            // first argument must be version component to bump
+            let component = options.args.remove(0);
+            if components.contains_key(&component) {
+                bump = Some(component);
+
+                // remaining arguments are files
+                cli_files.extend(options.args.drain(..).map(PathBuf::from));
+            } else {
+                eyre::bail!(
+                    "first argument must be one of the version components {:?}",
+                    components.keys().collect::<Vec<_>>()
+                )
+            }
+        } else {
+            // assume all arguments are files to run on
+            cli_files.extend(options.args.drain(..).map(PathBuf::from));
+        }
+    }
+    Ok((bump, cli_files))
+}
+
+pub fn global_cli_config(options: &Options) -> eyre::Result<bumpversion::config::GlobalConfig> {
+    let search_as_regex = options
+        .allow_dirty
+        .or(options.no_allow_dirty.invert())
+        .unwrap_or(false);
+
+    let search = options
+        .search
+        .as_ref()
+        .map(|search| {
+            let format_string = bumpversion::f_string::PythonFormatString::parse(search)?;
+            let search = if search_as_regex {
+                bumpversion::config::RegexTemplate::Regex(format_string)
+            } else {
+                bumpversion::config::RegexTemplate::Escaped(format_string)
+            };
+            Ok::<_, eyre::Report>(search)
+        })
+        .transpose()?;
+
+    let parse_version_pattern = options
+        .parse_version_pattern
+        .as_deref()
+        .map(bumpversion::config::Regex::try_from)
+        .transpose()?;
+
+    let serialize_version_patterns = options
+        .serialize_version_patterns
+        .as_ref()
+        .map(|patterns| {
+            patterns
+                .iter()
+                .map(String::as_str)
+                .map(bumpversion::f_string::PythonFormatString::parse)
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?;
+
+    let tag_name = options
+        .tag_name
+        .as_deref()
+        .map(bumpversion::f_string::PythonFormatString::parse)
+        .transpose()?;
+
+    let tag_message = options
+        .tag_name
+        .as_deref()
+        .map(bumpversion::f_string::PythonFormatString::parse)
+        .transpose()?;
+
+    let commit_message = options
+        .commit_message
+        .as_deref()
+        .map(bumpversion::f_string::PythonFormatString::parse)
+        .transpose()?;
+
+    let cli_overrides = bumpversion::config::GlobalConfig {
+        allow_dirty: options.allow_dirty.or(options.no_allow_dirty.invert()),
+        current_version: options.current_version.clone(),
+        parse_version_pattern,
+        serialize_version_patterns,
+        search,
+        replace: options.replace.clone(),
+        no_configured_files: options.no_configured_files,
+        ignore_missing_files: options
+            .ignore_missing_files
+            .or(options.no_ignore_missing_files.invert()),
+        ignore_missing_version: options
+            .ignore_missing_version
+            .or(options.no_ignore_missing_version.invert()),
+        dry_run: options.dry_run,
+        commit: options.commit.or(options.no_commit.invert()),
+        tag: options.tag.or(options.no_tag.invert()),
+        sign_tags: options.sign_tags.or(options.no_sign_tag.invert()),
+        tag_name,
+        tag_message,
+        commit_message,
+        commit_args: options.commit_args.clone(),
+        ..bumpversion::config::GlobalConfig::empty()
+    };
+    Ok(cli_overrides)
 }
