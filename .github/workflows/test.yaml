@@ -40,6 +40,14 @@ jobs:
           --features "${{ matrix.package.features }}"
           --all-targets
 
+      - name: Doctests
+        # prettier-ignore
+        run: >-
+          cargo test
+          --package "${{ matrix.package.name }}"
+          --features "${{ matrix.package.features }}"
+          --doc
+
   publish:
     name: publish (dry-run)
     runs-on: ubuntu-24.04

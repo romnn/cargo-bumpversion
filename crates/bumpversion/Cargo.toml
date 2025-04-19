@@ -23,8 +23,6 @@ keywords = [
 [lib]
 crate-type = ["cdylib", "lib"]
 
-doctest = true
-
 [dependencies]
 thiserror.workspace = true
 tracing.workspace = true
