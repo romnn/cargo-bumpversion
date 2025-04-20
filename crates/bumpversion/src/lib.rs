@@ -17,46 +17,46 @@
 //! use std::path::PathBuf;
 //!
 //! # async fn example() -> color_eyre::eyre::Result<()> {
-//!   // Locate and parse the configuration
-//!   let repo_path: PathBuf = ".".into();
-//!   let printer = Printer::stderr(None);
+//! // Locate and parse the configuration
+//! let repo_path: PathBuf = ".".into();
+//! let printer = Printer::stderr(None);
 //!
-//!   // find and parse configuration
-//!   let (config_file, mut config) = bumpversion::find_config(
-//!     &repo_path,
-//!     &Default::default(),
-//!     &printer,
-//!   ).await?.unwrap();
+//! // find and parse configuration
+//! let (config_file, mut config) = bumpversion::find_config(
+//!   &repo_path,
+//!   &Default::default(),
+//!   &printer,
+//! ).await?.unwrap();
 //!
-//!   // open version control system
-//!   let repo = GitRepository::open(&repo_path)?;
-//!   let components = config::version::version_component_configs(&config);
+//! // open version control system
+//! let repo = GitRepository::open(&repo_path)?;
+//! let components = config::version::version_component_configs(&config);
 //!
-//!   // build resolved file map
-//!   let file_map = bumpversion::files::resolve_files_from_config(
-//!     &mut config,
-//!     &components,
-//!     Some(repo.path()),
-//!   )?;
+//! // build resolved file map
+//! let file_map = bumpversion::files::resolve_files_from_config(
+//!   &mut config,
+//!   &components,
+//!   Some(repo.path()),
+//! )?;
 //!
-//!   let TagAndRevision { tag, revision } = repo.latest_tag_and_revision(
-//!     &config.global.tag_name,
-//!     &config.global.parse_version_pattern,
-//!   )
-//!   .await?;
+//! let TagAndRevision { tag, revision } = repo.latest_tag_and_revision(
+//!   &config.global.tag_name,
+//!   &config.global.parse_version_pattern,
+//! )
+//! .await?;
 //!
-//!   let logger = logging::TracingLogger::new(logging::Verbosity::High);
-//!   let manager = BumpVersion {
-//!     repo,
-//!     config,
-//!     logger,
-//!     tag_and_revision: TagAndRevision { tag, revision },
-//!     file_map,
-//!     components,
-//!     config_file: Some(config_file),
-//!   };
-//!   manager.bump(Bump::Component("patch")).await?;
-//!   # Ok(())
+//! let logger = logging::TracingLogger::new(logging::Verbosity::High);
+//! let manager = BumpVersion {
+//!   repo,
+//!   config,
+//!   logger,
+//!   tag_and_revision: TagAndRevision { tag, revision },
+//!   file_map,
+//!   components,
+//!   config_file: Some(config_file),
+//! };
+//! manager.bump(Bump::Component("patch")).await?;
+//! # Ok(())
 //! # }
 //! ```
 #![forbid(unsafe_code)]

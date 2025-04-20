@@ -46,14 +46,5 @@ jobs:
       - uses: arduino/setup-task@v2
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: dtolnay/rust-toolchain@stable
       - name: Release (dry-run)
         run: task build:goreleaser
-      # - name: Release (dry-run)
-      #   # pretter-ignore
-      #   run: >-
-      #     docker run --rm
-      #     -v "$(pwd):/workspace"
-      #     -w /workspace
-      #     ghcr.io/rust-cross/cargo-zigbuild
-      #     bash -c './release.sh && ls -liah && git status && git ls-remote --get-url && goreleaser build --snapshot --clean'
