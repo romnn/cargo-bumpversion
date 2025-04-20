@@ -34,7 +34,7 @@ tasks:
         -v "$(pwd):/workspace"
         -w /workspace
         ghcr.io/rust-cross/cargo-zigbuild
-        bash -c "./release.sh && ls -liah && goreleaser build --snapshot --clean"
+        bash -c "./release.sh && ls -liah && git status && git ls-remote --get-url && goreleaser build --snapshot --clean"
 
   release:
     desc: "release using goreleaser"
@@ -47,7 +47,7 @@ tasks:
         -v "$(pwd):/workspace"
         -w /workspace
         ghcr.io/rust-cross/cargo-zigbuild
-        bash -c "./release.sh && ls -liah && goreleaser release --clean"
+        bash -c "./release.sh && ls -liah && git status && git ls-remote --get-url && goreleaser release --clean"
 
   typos:
     desc: "check repository for typos"
