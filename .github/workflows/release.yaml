@@ -35,13 +35,6 @@ jobs:
       - uses: arduino/setup-task@v2
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: Homebrew/actions/setup-homebrew@master
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install dependencies
-        run: |
-          sudo apt install mingw-w64
-          brew install zig
-          brew install goreleaser
       - name: Release
         run: task release
         env:

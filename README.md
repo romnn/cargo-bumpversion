@@ -11,9 +11,12 @@ This is an improved version of the popular [callowayproject/bump-my-version](htt
 #### Features
 
 - No more global `pip` installs! Easy to install via `brew`, `cargo`, or precompiled static binary.
-- Fully compatible with your existing configuration in `.bumpversion.cfg`, `setup.cfg`, or `pyproject.toml`
-- Also supports configuration in your `Cargo.toml`
-- Additional hook system
+- Fully compatible with your existing configuration:
+    - `pyproject.toml`
+    - `.bumpversion.toml`
+    - `.bumpversion.cfg`
+    - `setup.cfg`
+    - `Cargo.toml` (planned)
 
 ### Installation
 
