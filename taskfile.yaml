@@ -28,6 +28,7 @@ tasks:
   build:goreleaser:
     desc: "build in release mode using goreleaser"
     cmds:
+      - echo "mapping $(pwd) into container"
       # pretter-ignore
       - >-
         docker run --rm
@@ -39,6 +40,7 @@ tasks:
   release:
     desc: "release using goreleaser"
     cmds:
+      - echo "mapping $(pwd) into container"
       # pretter-ignore
       - >-
         docker run --rm
