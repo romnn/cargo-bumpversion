@@ -6,7 +6,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.0.3"
+version = "0.0.4"
 edition = "2024"
 authors = ["romnn <contact@romnn.com>"]
 description = "Update all version strings in your project and optionally commit and tag the changes"
