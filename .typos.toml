@@ -1,6 +1,3 @@
 [files]
 ignore-files = true
-extend-exclude = [
-  "crates/serde-ini-spanned/test-data/**/*",
-  "crates/serde-ini-spanned/tests/pest/**/*",
-]
+extend-exclude = []

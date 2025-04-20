@@ -1,26 +1,15 @@
-#### short-term
+#### TODO
 
-- final config that has all the values set...
-- lint
 - read configuration from Cargo.toml
-- rename repo to bumpversion only
-- setup goreleaser
-- release the bumpversion crate
-
-exclude = [
-  "TODO.md",
-  ".bumpversion.toml",
-  ".goreleaser.yaml",
-  ".typos.toml",
-  ".ignore",
-]
-
-#### long-term
-
-- test and improve nom error messages
+- test and improve winnow error messages
 - include spans in all the configs
-- publish serde-ini-spanend as a separate crate
 
+- DONE: final config that has all the values set...
+- DONE: lint
+- DONE: rename repo to bumpversion only
+- DONE: release the bumpversion crate
+- DONE: setup goreleaser
+- DONE: publish serde-ini-spanend as a separate crate
 - DONE: implement pretty verbose mode
 - DONE: remove different log formats
 - DONE: remove deprecated code
