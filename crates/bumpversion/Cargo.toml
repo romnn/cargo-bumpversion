@@ -38,7 +38,7 @@ glob = "0"
 similar-asserts = "1"
 
 # time for env context
-chrono = "^0.4.40"
+chrono = { version = "^0.4.40", default-features = true }
 
 # commands
 shlex = "^1.3"
