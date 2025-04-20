@@ -48,4 +48,4 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: dtolnay/rust-toolchain@stable
       - name: Release (dry-run)
-        run: task build:goreleaser
+        run: sudo task build:goreleaser
