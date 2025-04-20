@@ -31,10 +31,10 @@ tasks:
       # pretter-ignore
       - >-
         docker run --rm
-        -v "$(pwd)":/workspace
+        -v "$(pwd):/workspace"
         -w /workspace
         ghcr.io/rust-cross/cargo-zigbuild
-        bash -c "./release.sh && goreleaser build --snapshot --clean"
+        bash -c "./release.sh && ls -liah && goreleaser build --snapshot --clean"
 
   release:
     desc: "release using goreleaser"
@@ -42,12 +42,12 @@ tasks:
       # pretter-ignore
       - >-
         docker run --rm
-        -e GITHUB_TOKEN="${GITHUB_TOKEN}}"
-        -e TAP_GITHUB_TOKEN="${TAP_GITHUB_TOKEN}}"
-        -v "$(pwd)":/workspace
+        -e "GITHUB_TOKEN=${GITHUB_TOKEN}}"
+        -e "TAP_GITHUB_TOKEN=${TAP_GITHUB_TOKEN}}"
+        -v "$(pwd):/workspace"
         -w /workspace
         ghcr.io/rust-cross/cargo-zigbuild
-        bash -c "./release.sh && goreleaser release --clean"
+        bash -c "./release.sh && ls -liah && goreleaser release --clean"
 
   typos:
     desc: "check repository for typos"
