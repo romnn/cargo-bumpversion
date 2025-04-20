@@ -60,6 +60,7 @@
 //! # }
 //! ```
 #![forbid(unsafe_code)]
+#![allow(clippy::missing_errors_doc)]
 // #![warn(missing_docs)]
 
 pub mod command;
@@ -277,11 +278,159 @@ pub struct BumpVersion<VCS, L> {
     pub config_file: Option<config::ConfigFile>,
 }
 
+pub async fn apply_modifications<'a, VCS, S>(
+    configured_files: &'a IndexMap<PathBuf, Vec<config::change::FileChange>>,
+    current_version: &version::Version,
+    new_version: &version::Version,
+    ctx_with_new_version: &HashMap<String, String, S>,
+    dry_run: bool,
+) -> Result<Vec<(&'a PathBuf, Option<files::Modification>)>, BumpError<VCS>>
+where
+    VCS: VersionControlSystem,
+    S: std::hash::BuildHasher + Clone,
+{
+    let mut modifications: Vec<(&PathBuf, Option<files::Modification>)> =
+        futures::stream::iter(configured_files.iter())
+            .map(|file| async move { file })
+            .buffer_unordered(8)
+            .then(|(path, change)| {
+                let current_version = current_version.clone();
+                let new_version = new_version.clone();
+                let ctx_with_new_version = ctx_with_new_version.clone();
+                async move {
+                    debug_assert!(path.is_absolute());
+                    let modification = files::replace_version_in_file(
+                        path,
+                        change,
+                        &current_version,
+                        &new_version,
+                        &ctx_with_new_version,
+                        dry_run,
+                    )
+                    .await?;
+                    Ok::<_, BumpError<VCS>>((path, modification))
+                }
+            })
+            .try_collect()
+            .await?;
+
+    modifications.sort_by_key(|(path, _)| (*path).clone());
+    Ok(modifications)
+}
+
 impl<VCS, L> BumpVersion<VCS, L>
 where
     VCS: VersionControlSystem,
     L: logging::Log,
 {
+    async fn apply_version_bump(
+        &self,
+        bump: Bump<'_>,
+        current_version: version::Version,
+        current_version_serialized: &str,
+        new_version: version::Version,
+        new_version_serialized: String,
+    ) -> Result<(), BumpError<VCS>> {
+        if current_version_serialized == new_version_serialized {
+            tracing::info!(
+                version = new_version_serialized,
+                "next version matches current version"
+            );
+            return Ok(());
+        }
+
+        if self.config.global.dry_run {
+            tracing::info!("dry run active, won't touch any files.");
+        }
+
+        let mut configured_files: IndexMap<PathBuf, Vec<config::change::FileChange>> =
+            files::files_to_modify(&self.config, self.file_map.clone()).collect();
+
+        // filter the files that are not valid for this bump
+        if let Bump::Component(version_component_to_bump) = bump {
+            for changes in configured_files.values_mut() {
+                changes.retain(|change| change.will_bump_component(version_component_to_bump));
+                changes.retain(|change| !change.will_not_bump_component(version_component_to_bump));
+            }
+        }
+
+        let ctx_with_new_version: HashMap<String, String> = context::get_context(
+            Some(&self.tag_and_revision),
+            Some(&current_version),
+            Some(&new_version),
+            Some(current_version_serialized),
+            Some(&new_version_serialized),
+        )
+        .collect();
+
+        let configured_files = Arc::new(configured_files);
+
+        let modifications = apply_modifications(
+            &configured_files,
+            &current_version,
+            &new_version,
+            &ctx_with_new_version,
+            self.config.global.dry_run,
+        )
+        .await?;
+
+        for (path, modification) in modifications {
+            self.logger.log(Verbosity::Low, "");
+            self.logger.log_modification(path, modification);
+        }
+
+        if let Some(ref config_file) = self.config_file {
+            let modification = self
+                .update_config_file(config_file, &ctx_with_new_version)
+                .await?;
+            self.logger.log(Verbosity::Low, "");
+            self.logger
+                .log_modification(config_file.path(), modification);
+        }
+
+        self.run_pre_commit_hooks(
+            Some(&current_version),
+            Some(&new_version),
+            &new_version_serialized,
+        )
+        .await?;
+
+        let additional_files: Vec<_> = self
+            .config
+            .global
+            .additional_files
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .map(|path| {
+                if path.is_absolute() {
+                    path.clone()
+                } else {
+                    self.repo.path().join(path)
+                }
+            })
+            .collect();
+
+        // TODO: warn for files that dirty but not in either configured or additional files
+        self.commit_changes(
+            &configured_files,
+            &additional_files,
+            current_version_serialized.to_string(),
+            new_version_serialized.clone(),
+            &ctx_with_new_version,
+        )
+        .await?;
+
+        self.run_post_commit_hooks(
+            Some(&current_version),
+            Some(&new_version),
+            &new_version_serialized,
+        )
+        .await?;
+
+        Ok(())
+    }
+
     /// Bump the desired version component to the next value or set the version to `new_version`.
     ///
     /// # Errors
@@ -306,12 +455,12 @@ where
 
         let parse_version_pattern = &self.config.global.parse_version_pattern;
         let version_spec = version::VersionSpec::from_components(self.components.clone());
-
         let current_version = version::Version::parse(
             current_version_serialized,
             parse_version_pattern,
             &version_spec,
         );
+        // let current_version = self.current_version()?;
         let current_version = current_version.ok_or_else(|| BumpError::EmptyVersion)?;
 
         self.logger
@@ -336,18 +485,6 @@ where
                     component = comp_name.to_string(),
                     "attempting to increment version component"
                 );
-                // self.logger.log(
-                //     Verbosity::Low,
-                //     &format!(
-                //         "incrementing component {}={}",
-                //         comp_name.to_string().yellow(),
-                //         current_version
-                //             .get(comp_name)
-                //             .and_then(|component| component.value())
-                //             .as_deref()
-                //             .unwrap_or("?")
-                //     ),
-                // );
                 current_version.bump(comp_name).map_err(Into::into)
             }
             Bump::NewVersion(new_version) => {
@@ -387,123 +524,14 @@ where
             ),
         );
 
-        if current_version_serialized == &new_version_serialized {
-            tracing::info!(
-                version = new_version_serialized,
-                "next version matches current version"
-            );
-            return Ok(());
-        }
-
-        if self.config.global.dry_run {
-            tracing::info!("dry run active, won't touch any files.");
-        }
-
-        let mut configured_files: IndexMap<PathBuf, Vec<config::change::FileChange>> =
-            files::files_to_modify(&self.config, self.file_map.clone()).collect();
-
-        // filter the files that are not valid for this bump
-        if let Bump::Component(version_component_to_bump) = bump {
-            for changes in configured_files.values_mut() {
-                changes.retain(|change| change.will_bump_component(version_component_to_bump));
-                changes.retain(|change| !change.will_not_bump_component(version_component_to_bump));
-            }
-        }
-
-        let ctx_with_new_version: HashMap<String, String> = context::get_context(
-            Some(&self.tag_and_revision),
-            Some(&current_version),
-            Some(&new_version),
-            Some(current_version_serialized),
-            Some(&new_version_serialized),
+        self.apply_version_bump(
+            bump,
+            current_version,
+            current_version_serialized,
+            new_version,
+            new_version_serialized,
         )
-        .collect();
-
-        let configured_files = Arc::new(configured_files);
-
-        let mut modifications: Vec<(&PathBuf, Option<files::Modification>)> =
-            futures::stream::iter(configured_files.iter())
-                .map(|file| async move { file })
-                .buffer_unordered(8)
-                .then(|(path, change)| {
-                    let current_version = current_version.clone();
-                    let new_version = new_version.clone();
-                    let ctx_with_new_version = ctx_with_new_version.clone();
-                    async move {
-                        debug_assert!(path.is_absolute());
-                        let modification = files::replace_version_in_file(
-                            path,
-                            change,
-                            &current_version,
-                            &new_version,
-                            &ctx_with_new_version,
-                            self.config.global.dry_run,
-                        )
-                        .await?;
-                        Ok::<_, BumpError<VCS>>((path, modification))
-                    }
-                })
-                .try_collect()
-                .await?;
-
-        modifications.sort_by_key(|(path, _)| (*path).clone());
-
-        for (path, modification) in modifications {
-            self.logger.log(Verbosity::Low, "");
-            self.logger.log_modification(path, modification);
-        }
-
-        if let Some(ref config_file) = self.config_file {
-            let modification = self
-                .update_config_file(config_file, &ctx_with_new_version)
-                .await?;
-            self.logger.log(Verbosity::Low, "");
-            self.logger
-                .log_modification(config_file.path(), modification);
-        }
-
-        self.run_pre_commit_hooks(
-            Some(&current_version),
-            Some(&new_version),
-            &new_version_serialized,
-        )
-        .await?;
-
-        let additional_files: Vec<_> = self
-            .config
-            .global
-            .additional_files
-            .as_deref()
-            .unwrap_or_default()
-            .iter()
-            .map(|path| {
-                if path.is_absolute() {
-                    path.clone()
-                } else {
-                    self.repo.path().join(path)
-                }
-            })
-            .collect();
-
-        // TODO: warn for files that dirty but not in either configured or additional
-        // files
-        self.commit_changes(
-            &configured_files,
-            &additional_files,
-            current_version_serialized.clone(),
-            new_version_serialized.clone(),
-            &ctx_with_new_version,
-        )
-        .await?;
-
-        self.run_post_commit_hooks(
-            Some(&current_version),
-            Some(&new_version),
-            &new_version_serialized,
-        )
-        .await?;
-
-        Ok(())
+        .await
     }
 
     /// Update the version string in the bumpversion configuration file.

@@ -126,7 +126,7 @@ mod diagnostics {
 }
 
 #[inline]
-pub fn as_bool(value: ini::Spanned<String>) -> Result<bool, ParseError> {
+pub fn as_bool(value: &ini::Spanned<String>) -> Result<bool, ParseError> {
     match value.as_ref().trim().to_ascii_lowercase().as_str() {
         "true" => Ok(true),
         "false" => Ok(false),
@@ -172,7 +172,7 @@ pub fn as_spanned_string_array(
     if inner.contains('\n') {
         Ok(inner
             .trim()
-            .split('\n')
+            .lines()
             .map(ToString::to_string)
             .map(|inner| ini::Spanned::new(span.clone(), inner))
             .collect())
@@ -201,7 +201,7 @@ pub fn as_string_array(
 ) -> Result<Vec<String>, ParseError> {
     let ini::Spanned { inner, span } = value;
     if inner.contains('\n') {
-        Ok(inner.trim().split('\n').map(ToString::to_string).collect())
+        Ok(inner.trim().lines().map(ToString::to_string).collect())
     } else if inner.contains(',') {
         Ok(inner.trim().split(',').map(ToString::to_string).collect())
     } else if allow_single_value {
@@ -225,11 +225,12 @@ pub fn as_optional(value: ini::Spanned<String>) -> Option<ini::Spanned<String>> 
     }
 }
 
-pub(crate) fn parse_part_config<'de>(
+pub(crate) fn parse_part_config(
     mut value: ini::SectionProxyMut<'_>,
 ) -> Result<VersionComponentSpec, ParseError> {
     let independent = value
         .remove_option("independent")
+        .as_ref()
         .map(as_bool)
         .transpose()?;
 
@@ -258,6 +259,7 @@ fn parse_search_pattern(
     let search_is_regex_compat = value
         .remove_option("regex")
         .and_then(as_optional)
+        .as_ref()
         .map(as_bool)
         .transpose()?
         .or(is_regex);
@@ -277,6 +279,7 @@ fn parse_search_pattern(
     Ok((search_is_regex_compat, search))
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn parse_global_config(
     mut value: ini::SectionProxyMut<'_>,
 ) -> Result<(Option<bool>, GlobalConfig), ParseError> {
@@ -290,6 +293,7 @@ pub(crate) fn parse_global_config(
     let allow_dirty = value
         .remove_option("allow_dirty")
         .and_then(as_optional)
+        .as_ref()
         .map(as_bool)
         .transpose()?;
     let parse_version_pattern = value.remove_option("parse").map(as_regex).transpose()?;
@@ -315,37 +319,44 @@ pub(crate) fn parse_global_config(
     let no_configured_files = value
         .remove_option("no_configured_files")
         .and_then(as_optional)
+        .as_ref()
         .map(as_bool)
         .transpose()?;
     let ignore_missing_files = value
         .remove_option("ignore_missing_files")
         .and_then(as_optional)
+        .as_ref()
         .map(as_bool)
         .transpose()?;
     let ignore_missing_version = value
         .remove_option("ignore_missing_version")
         .and_then(as_optional)
+        .as_ref()
         .map(as_bool)
         .transpose()?;
     let dry_run = value
         .remove_option("dry_run")
         .and_then(as_optional)
+        .as_ref()
         .map(as_bool)
         .transpose()?;
     let commit = value
         .remove_option("commit")
         .and_then(as_optional)
+        .as_ref()
         .map(as_bool)
         .transpose()?;
     let tag = value
         .remove_option("tag")
         .and_then(as_optional)
+        .as_ref()
         .map(as_bool)
         .transpose()?;
     let sign_tags = value
         .remove_option("sign_tag")
         .or(value.remove_option("sign_tags"))
         .and_then(as_optional)
+        .as_ref()
         .map(as_bool)
         .transpose()?;
     let tag_name = value
@@ -463,11 +474,13 @@ pub(crate) fn parse_file_config(
         .remove_option("ignore_missing_files")
         .or(value.remove_option("ignore_missing_file"))
         .and_then(as_optional)
+        .as_ref()
         .map(as_bool)
         .transpose()?;
     let ignore_missing_version = value
         .remove_option("ignore_missing_version")
         .and_then(as_optional)
+        .as_ref()
         .map(as_bool)
         .transpose()?;
 
@@ -508,10 +521,10 @@ impl config::Config {
 
         let section_names = config.section_names().cloned().collect::<Vec<_>>();
         for section_name in section_names {
-            let section = config.section_mut(&section_name).unwrap();
-            // let section_name = section.name.as_ref().trim();
+            let Some(section) = config.section_mut(&section_name) else {
+                continue;
+            };
             let span = section.span();
-            // dbg!(&section_name);
 
             if !section_name.starts_with("bumpversion") {
                 if !allow_unknown {
@@ -606,7 +619,7 @@ impl config::Config {
 
 static CONFIG_CURRENT_VERSION_REGEX: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(
     || {
-        regex::RegexBuilder::new(r"(?P<section_prefix>\\[bumpversion]\n[^[]*current_version\\s*=\\s*)(?P<version>{current_version})").multi_line(true).build().unwrap()
+        regex::RegexBuilder::new(r"(?P<section_prefix>\\[bumpversion]\n[^\[]*current_version\\s*=\\s*)(?P<version>\{current_version\})").multi_line(true).build().unwrap()
     },
 );
 
@@ -616,17 +629,16 @@ static CONFIG_CURRENT_VERSION_REGEX: std::sync::LazyLock<regex::Regex> = std::sy
 /// it will use a regular expression to just replace the `current_version` value.
 /// The idea is it will avoid unintentional changes (like formatting) to the
 /// config file.
-pub async fn replace_version<K, V>(
+pub async fn replace_version<K, V, S>(
     path: &Path,
     _config: &config::FinalizedConfig,
-    _ctx: &HashMap<K, V>,
-    // current_version: &str,
-    // new_version: &str,
+    _ctx: &HashMap<K, V, S>,
     dry_run: bool,
 ) -> Result<Option<files::Modification>, IoError>
 where
     K: std::borrow::Borrow<str> + std::hash::Hash + Eq + std::fmt::Debug,
     V: AsRef<str> + std::fmt::Debug,
+    S: std::hash::BuildHasher,
 {
     let as_io_error = |source: std::io::Error| -> IoError { IoError::new(source, path) };
     let before = tokio::fs::read_to_string(path).await.map_err(as_io_error)?;

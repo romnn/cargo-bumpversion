@@ -36,7 +36,7 @@ impl Value {
     pub fn as_argument(&self) -> Option<&str> {
         match self {
             Self::Argument(arg) => Some(arg),
-            _ => None,
+            Self::String(_) => None,
         }
     }
 
@@ -293,6 +293,22 @@ impl std::fmt::Display for PythonFormatString {
 impl FromIterator<Value> for PythonFormatString {
     fn from_iter<T: IntoIterator<Item = Value>>(iter: T) -> Self {
         Self(iter.into_iter().collect())
+    }
+}
+
+impl IntoIterator for PythonFormatString {
+    type Item = Value;
+    type IntoIter = <Vec<Value> as IntoIterator>::IntoIter;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a PythonFormatString {
+    type Item = &'a Value;
+    type IntoIter = std::slice::Iter<'a, Value>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
     }
 }
 

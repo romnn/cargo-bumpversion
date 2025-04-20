@@ -117,7 +117,6 @@ pub mod numeric {
         // pub optional_value: String,
     }
 
-    // impl<'a> NumericFunction<'a> {
     impl NumericFunction {
         /// Create a new `NumericFunction` with optional string defaults.
         ///
@@ -127,7 +126,6 @@ pub mod numeric {
         ///
         /// # Errors
         /// Returns `Error::InvalidNumber` if provided defaults cannot be parsed.
-        #[must_use]
         pub fn new(first_value: Option<&str>, optional_value: Option<&str>) -> Result<Self, Error> {
             // pub fn new(first_value: Option<usize>, optional_value: Option<usize>) -> Self {
             let first_value = first_value
@@ -397,14 +395,15 @@ impl Version {
     ///
     /// # Errors
     /// If the version cannot be serialized using the first pattern.
-    pub fn serialize<'a, K, V>(
+    pub fn serialize<'a, K, V, S>(
         &self,
         serialize_version_patterns: impl IntoIterator<Item = &'a PythonFormatString>,
-        ctx: &HashMap<K, V>,
+        ctx: &HashMap<K, V, S>,
     ) -> Result<String, SerializeError>
     where
         K: std::borrow::Borrow<str> + std::hash::Hash + Eq + std::fmt::Debug,
         V: AsRef<str> + std::fmt::Debug,
+        S: std::hash::BuildHasher,
     {
         serialize_version(self, serialize_version_patterns, ctx)
     }
@@ -432,7 +431,6 @@ impl Version {
     }
 
     /// Iterate over names of non-optional components (those with explicit values).
-    #[must_use]
     pub fn required_component_names(&self) -> impl Iterator<Item = &str> {
         self.iter()
             .filter(|(_, v)| v.value() != v.spec.optional_value.as_deref())
@@ -508,7 +506,9 @@ impl Version {
             // dbg!(&self.components);
             let is_independent = self.components[comp_name].spec.independent == Some(true);
             if !is_independent {
-                *new_components.get_mut(comp_name).unwrap() = self.components[comp_name].first();
+                new_components.insert(comp_name.to_string(), self.components[comp_name].first());
+                // *new_components.entry(comp_name.to_string()).or_default() =
+                //     self.components[comp_name].first();
             }
         }
 
@@ -642,7 +642,7 @@ pub enum SerializeError {
     #[error("version {version} has no valid formats")]
     NoValidFormat {
         /// The version that failed to serialize.
-        version: Version,
+        version: Box<Version>,
         /// List of attempted (index, format pattern) pairs.
         formats: Vec<(usize, PythonFormatString)>,
     },
@@ -658,14 +658,15 @@ pub enum SerializeError {
 /// - the shortest valid serialization pattern is used
 /// - if two patterns are equally short, the first one is used
 /// - if no valid serialization pattern is found, an error is raised
-fn serialize_version<'a, K, V>(
+fn serialize_version<'a, K, V, S>(
     version: &Version,
     serialize_patterns: impl IntoIterator<Item = &'a PythonFormatString>,
-    ctx: &HashMap<K, V>,
+    ctx: &HashMap<K, V, S>,
 ) -> Result<String, SerializeError>
 where
     K: std::borrow::Borrow<str> + std::hash::Hash + Eq + std::fmt::Debug,
     V: AsRef<str> + std::fmt::Debug,
+    S: std::hash::BuildHasher,
 {
     tracing::debug!(?version, "serializing");
 
@@ -693,7 +694,7 @@ where
             .first()
             .copied()
             .ok_or_else(|| SerializeError::NoValidFormat {
-                version: version.clone(),
+                version: Box::new(version.clone()),
                 formats: patterns
                     .into_iter()
                     .map(|(idx, format_string)| (idx, format_string.clone()))

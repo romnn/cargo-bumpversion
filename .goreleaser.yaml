@@ -56,7 +56,7 @@ builds:
     command: zigbuild
     flags:
       - "--release"
-      - "--package=cargo-bumpversion"
+      - "--package=bumpversion-cli"
       - "--bin=cargo-bumpversion"
       - "--target-dir=./target" # TODO: can we remove this once rust support is better?
 
@@ -75,7 +75,7 @@ builds:
     command: zigbuild
     flags:
       - "--release"
-      - "--package=cargo-bumpversion"
+      - "--package=bumpversion-cli"
       - "--bin=bumpversion"
       - "--target-dir=./target" # TODO: can we remove this once rust support is better?
 

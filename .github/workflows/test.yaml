@@ -40,13 +40,22 @@ jobs:
           --features "${{ matrix.package.features }}"
           --all-targets
 
-      - name: Doctests
-        # prettier-ignore
-        run: >-
-          cargo test
-          --package "${{ matrix.package.name }}"
-          --features "${{ matrix.package.features }}"
-          --doc
+  doc-tests:
+    name: doc-tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-task@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: romnn/cargo-feature-combinations@main
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Doc-tests
+        run: cargo fc test --only-packages-with-lib-target --doc
 
   publish:
     name: publish (dry-run)

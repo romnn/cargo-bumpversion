@@ -486,10 +486,10 @@ pub(crate) fn parse_file_config<'de>(
 
 impl Config {
     pub fn from_pyproject_value(
-        config: toml::Value,
+        config: &toml::Value,
         _file_id: FileId,
         _strict: bool,
-        _diagnostics: &mut Vec<Diagnostic<FileId>>,
+        _diagnostics: &mut [Diagnostic<FileId>],
     ) -> Result<Option<Self>, ParseError> {
         let Some((_, config)) = config
             .as_table()
@@ -567,10 +567,10 @@ impl Config {
         config: &str,
         file_id: FileId,
         strict: bool,
-        diagnostics: &mut Vec<Diagnostic<FileId>>,
+        diagnostics: &mut [Diagnostic<FileId>],
     ) -> Result<Option<Self>, ParseError> {
         let config = toml_span::parse(config).map_err(|source| ParseError::Toml { source })?;
-        Self::from_pyproject_value(config, file_id, strict, diagnostics)
+        Self::from_pyproject_value(&config, file_id, strict, diagnostics)
     }
 }
 

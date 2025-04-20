@@ -52,16 +52,17 @@ pub enum ReplaceVersionError {
 ///
 /// # Errors
 /// Returns `ReplaceVersionError` if serialization, I/O, or formatting fails.
-pub fn replace_version<'a, K, V>(
+pub fn replace_version<'a, K, V, S>(
     before: String,
     changes: &'a [FileChange],
     current_version: &'a Version,
     new_version: &'a Version,
-    ctx: &'a HashMap<K, V>,
+    ctx: &'a HashMap<K, V, S>,
 ) -> Result<Modification, ReplaceVersionError>
 where
     K: std::borrow::Borrow<str> + std::hash::Hash + Eq + std::fmt::Debug,
     V: AsRef<str> + std::fmt::Debug,
+    S: std::hash::BuildHasher,
 {
     let mut after = before.to_string();
     let mut replacements = vec![];
@@ -196,17 +197,18 @@ impl Modification {
 /// Read a file at `path`, apply version replacement, and write back if changed.
 ///
 /// Honors `dry_run` to skip writing. Returns `None` if file unchanged or missing (when allowed).
-pub async fn replace_version_in_file<K, V>(
+pub async fn replace_version_in_file<K, V, S>(
     path: &Path,
     changes: &[FileChange],
     current_version: &Version,
     new_version: &Version,
-    ctx: &HashMap<K, V>,
+    ctx: &HashMap<K, V, S>,
     dry_run: bool,
 ) -> Result<Option<Modification>, ReplaceVersionError>
 where
     K: std::borrow::Borrow<str> + std::hash::Hash + Eq + std::fmt::Debug,
     V: AsRef<str> + std::fmt::Debug,
+    S: std::hash::BuildHasher,
 {
     let as_io_error = |source: std::io::Error| -> IoError { IoError::new(source, path) };
     if !path.is_file() {
@@ -327,7 +329,7 @@ pub type FileMap = IndexMap<PathBuf, Vec<FileChange>>;
 /// Build the file map from `config`, expanding glob patterns and relative paths.
 ///
 /// Applies `parts` (version component configs) and resolves paths under `base_dir`.
-pub fn resolve_files_from_config<'a>(
+pub fn resolve_files_from_config(
     config: &mut config::FinalizedConfig,
     parts: &VersionComponentConfigs,
     base_dir: Option<&Path>,

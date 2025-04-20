@@ -1,13 +1,10 @@
 //! Diagnostics utilities for reporting and emitting parsing errors with source spans.
-//! Diagnostics utilities for reporting parsing and emitting errors with source spans.
-//!
-// Module provides traits and types for capturing and rendering diagnostics.
 use codespan_reporting::{
     diagnostic::{Diagnostic, Severity},
     files, term,
 };
+use parking_lot::{Mutex, RwLock};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, RwLock};
 
 /// Identifier for a source file in the diagnostics registry.
 pub type FileId = usize;
@@ -282,7 +279,7 @@ impl Printer<term::termcolor::Buffer> {
     /// This is a workaround for <https://github.com/BurntSushi/termcolor/issues/51>.
     pub fn print(&self) -> Result<(), std::io::Error> {
         use std::io::Write;
-        let mut writer = self.writer.lock().unwrap();
+        let mut writer = self.writer.lock();
         writer.flush()?;
         eprintln!("{}", String::from_utf8_lossy(writer.as_slice()));
         Ok(())
@@ -319,14 +316,13 @@ impl<W> Printer<W> {
             .map(|label| {
                 self.files
                     .read()
-                    .unwrap()
                     .line_index(label.file_id, label.range.start)
             })
             .collect()
     }
 
     pub fn add_source_file(&self, name: impl ToSourceName, source: String) -> usize {
-        let mut files = self.files.write().unwrap();
+        let mut files = self.files.write();
         files.add(name.to_source_name(), source)
     }
 }
@@ -337,9 +333,9 @@ where
 {
     pub fn emit(&self, diagnostic: &Diagnostic<usize>) -> Result<(), files::Error> {
         term::emit(
-            &mut *self.writer.lock().unwrap(),
+            &mut *self.writer.lock(),
             &self.diagnostic_config,
-            &*self.files.read().unwrap(),
+            &*self.files.read(),
             diagnostic,
         )
     }

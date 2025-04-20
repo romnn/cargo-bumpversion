@@ -26,6 +26,7 @@ crate-type = ["cdylib", "lib"]
 [dependencies]
 thiserror.workspace = true
 tracing.workspace = true
+parking_lot = "0"
 
 # temporary file for git messages
 tempfile = "3"

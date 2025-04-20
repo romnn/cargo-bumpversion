@@ -82,6 +82,7 @@ pub enum ConfigFile {
 impl ConfigFile {
     #[must_use]
     pub fn path(&self) -> &Path {
+        #[allow(clippy::match_same_arms)]
         match self {
             Self::BumpversionToml(path) => path.as_ref(),
             Self::PyProject(path) => path.as_ref(),
@@ -147,7 +148,7 @@ impl InputFile {
     pub fn as_path(&self) -> Option<&Path> {
         match self {
             Self::Path(path) => Some(path.as_path()),
-            _ => None,
+            Self::GlobPattern { .. } => None,
         }
     }
 }

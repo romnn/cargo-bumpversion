@@ -47,6 +47,7 @@ pub struct TracingLogger {
 }
 
 impl TracingLogger {
+    #[must_use]
     pub fn new(verbosity: Verbosity) -> Self {
         Self { verbosity }
     }
@@ -104,8 +105,8 @@ where
 
         let diff = modification.diff(None);
         for replacement in modification.replacements {
-            let search = unescape(replacement.search);
-            let replace = unescape(replacement.replace);
+            let search = unescape(&replacement.search);
+            let replace = unescape(&replacement.replace);
             self.log(
                 Verbosity::Low,
                 &format!(
@@ -149,7 +150,7 @@ where
     }
 }
 
-pub(crate) fn unescape(value: String) -> String {
+pub(crate) fn unescape(value: &str) -> String {
     let mut n = String::new();
     let mut chars = value.chars();
     while let Some(c) = chars.next() {
